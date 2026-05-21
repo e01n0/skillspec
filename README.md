@@ -224,6 +224,32 @@ skillspec build my-skill.agent  # compile to SKILL.md
 
 [Quickstart guide](docs/quickstart.md) has more. [Language reference](docs/language-reference.md) has everything.
 
+## Migrating an existing skill
+
+You don't have to start from scratch. If you've got a SKILL.md that works and you want to bring it under SkillSpec:
+
+```bash
+# 1. Mechanical extraction: pulls out frontmatter, headings, obvious conditionals
+skillspec migrate my-skill/SKILL.md
+# -> my-skill.agent.partial (with TODO markers where it couldn't infer structure)
+
+# 2. LLM-powered completion: infers types, step deps, context priorities
+#    Run the migrate skill in your agent runtime (Claude Code, Cursor, etc)
+#    It reads the .agent.partial and your original SKILL.md, fills in the gaps
+
+# 3. Rename when you're happy with it
+mv my-skill.agent.partial my-skill.agent
+
+# 4. Check and compile
+skillspec check my-skill.agent
+skillspec build my-skill.agent
+# -> my-skill/SKILL.md (your runtimes never notice the difference)
+```
+
+Step 1 gets you maybe 10-20% of the way. The migrate skill (`skills/skillspec-migrate.agent`) does the real work. How good that is depends on your LLM, not on SkillSpec.
+
+You don't need to migrate everything at once. Start with the skills that break most often or that multiple people edit. The rest can stay as markdown until you need them.
+
 ## CLI
 
 | Command   | Does |
@@ -240,10 +266,6 @@ skillspec build my-skill.agent  # compile to SKILL.md
 | `test`    | List test blocks (doesn't run them) |
 
 No LLM calls, no network. Anything that needs reasoning runs as a skill in your agent runtime.
-
-## Migration
-
-`skillspec migrate existing/SKILL.md` does mechanical extraction into `.agent.partial` with TODO markers. Gets you maybe 10-20% of the way. The migrate skill (`skills/skillspec-migrate.agent`, runs in your runtime) handles the rest. `skillspec build` compiles back to SKILL.md and your runtimes never notice.
 
 ## Roadmap
 
