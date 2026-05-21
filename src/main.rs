@@ -101,7 +101,11 @@ fn read_and_parse(path: &str) -> Result<SourceFile> {
 
 fn cmd_check(path: &str) -> Result<()> {
     let ast = read_and_parse(path)?;
-    let mut checker = Checker::new();
+    let base_dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
     match checker.check(&ast) {
         Ok(()) => {
             println!("✓ {}: no errors", path);
@@ -124,7 +128,11 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
     match target {
         "skillmd" => {
             let ast = read_and_parse(path)?;
-            let mut checker = Checker::new();
+            let base_dir = std::path::Path::new(path)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let mut checker = Checker::with_base_dir(base_dir);
             if let Err(errors) = checker.check(&ast) {
                 for err in &errors {
                     eprintln!("error: {}", err);
@@ -150,7 +158,7 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
                 })?;
 
                 let out_path = skill_dir.join("SKILL.md");
-                let content = compiler.compile(skill);
+                let content = compiler.compile(skill, &ast);
                 fs::write(&out_path, &content).map_err(|e| {
                     miette::miette!(
                         "Failed to write '{}': {}",
@@ -389,7 +397,7 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
                 miette::miette!("Failed to create skill dir '{}': {}", skill_dir.display(), e)
             })?;
             let skill_md_path = skill_dir.join("SKILL.md");
-            let content = compiler.compile(skill);
+            let content = compiler.compile(skill, &ast);
             fs::write(&skill_md_path, &content).map_err(|e| {
                 miette::miette!("Failed to write '{}': {}", skill_md_path.display(), e)
             })?;
@@ -568,7 +576,7 @@ fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool) -> Result<()> {
             .map_err(|e| miette::miette!("Failed to read '{path_b}': {e}"))?;
 
         for skill in &ast.skills {
-            let compiled = compiler.compile(skill);
+            let compiled = compiler.compile(skill, &ast);
             let report = skillmd_diff(&compiled, &actual);
             if report.is_empty() {
                 eprintln!("✓ No differences between compiled '{}' and '{path_b}'", skill.name);

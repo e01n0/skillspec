@@ -1,0 +1,254 @@
+type AssertionResult {
+    path: string
+    assertion: string
+    passed: bool
+    actual?: string
+    expected?: string
+    error?: string
+}
+
+type TestCaseResult {
+    name: string
+    passed: bool
+    assertions: AssertionResult[]
+    runs_completed: int
+    runs_passed: int
+    confidence_met: bool
+    duration_ms: int
+}
+
+type TestResult {
+    skill_name: string
+    total: int
+    passed: int
+    failed: int
+    results: TestCaseResult[]
+    summary: string
+}
+
+skill "skillspec-test" {
+    input {
+        source_file: string
+        test_name?: string
+        model?: string
+        verbose?: bool = false
+    }
+
+    output {
+        result: TestResult
+    }
+
+    tools {
+        require Read
+        require Bash
+    }
+
+    permissions {
+        filesystem: read_write("**/*.agent", "**/fixtures/**")
+    }
+
+    pre {
+        assert input.source_file != "" message "Source file path is required"
+    }
+
+    post {
+        assert output.result.total >= 0 message "Total must be non-negative"
+        assert output.result.passed >= 0 message "Passed count must be non-negative"
+    }
+
+    body {
+        persona {
+            """
+            You are a SkillSpec test executor. You run test blocks from
+            .agent files by simulating the skill's behaviour against the
+            given inputs, evaluating assertions, and reporting structured
+            results. You are rigorous — a test either passes or it doesn't.
+            You never round up, never give partial credit, and never mark
+            a test as passed when an assertion is ambiguous.
+            """
+        }
+
+        reasoning extended
+
+        sampling {
+            temperature: 0.2
+            top_p: 0.9
+        }
+
+        format {
+            style: json
+            structure: output
+        }
+
+        reinforce every 3 steps {
+            "Evaluate assertions strictly. 'Close enough' is not passing."
+        }
+
+        examples {
+            example "deterministic assertion passes" {
+                input: "output.status: equals(\"success\") with actual output.status = \"success\""
+                output: "AssertionResult { passed: true, actual: \"success\", expected: \"success\" }"
+            }
+            example "semantic assertion needs judgment" {
+                input: "output.summary: resembles(\"A list of security findings\") with actual = \"Found 3 vulnerabilities: SQL injection, XSS, and CSRF\""
+                output: "AssertionResult { passed: true } — the output semantically matches the description"
+                note: "resembles is about semantic meaning, not string similarity"
+            }
+            example "confidence threshold not met" {
+                input: "Test with confidence 0.9, runs 10: passed 8 of 10"
+                output: "confidence_met: false — 0.8 < 0.9 threshold"
+                note: "8/10 = 0.8 which is below the 0.9 confidence requirement"
+            }
+        }
+
+        context(priority: 100) {
+            """
+            Execute test blocks from a SkillSpec .agent file. For each
+            test case: set up the given inputs, apply mocks, simulate the
+            skill's behaviour, and evaluate every assertion in the expect
+            block. Report structured results.
+            """
+        }
+
+        lazy context "assertion-reference" (priority: 80) {
+            summary "How to evaluate each assertion type — deterministic vs LLM-judged."
+            index {
+                section "deterministic" {
+                    summary "equals, matches, >=, <=, between — evaluate mechanically, no judgment needed."
+                    ref "./references/assertions-deterministic.md"
+                }
+                section "llm-judged" {
+                    summary "resembles, satisfies — require semantic judgment. Use reasoning to decide pass/fail."
+                    ref "./references/assertions-llm-judged.md"
+                }
+                section "quantifiers" {
+                    summary "contains(where:), all(where:), none(where:) — iterate over collections and test predicates."
+                    ref "./references/assertions-quantifiers.md"
+                }
+            }
+        }
+
+        lazy context "mock-reference" (priority: 60) {
+            summary "How to apply mock declarations — fake responses, unavailable tools, simulated failures."
+            ref "./references/mock-application.md"
+        }
+
+        step parse_tests {
+            context(priority: 95) {
+                """
+                Read the source .agent file. Extract all test blocks.
+                If a specific test_name is provided, filter to just that
+                test. For each test, identify:
+                - given: the input values
+                - mocks: tool mock declarations
+                - expect: the assertions to evaluate
+                - confidence/runs: statistical requirements (if any)
+
+                Also read the skill's input/output types, pre/post
+                contracts, and step structure — you need to understand
+                what the skill DOES to simulate its behaviour.
+                """
+            }
+        }
+
+        step execute_tests {
+            requires parse_tests
+            load "assertion-reference"
+            load "mock-reference"
+
+            context(priority: 90) {
+                """
+                For each test case, execute it:
+
+                1. SET UP: Apply the given inputs. Apply mock declarations
+                   (substitute tool responses, mark tools as unavailable).
+
+                2. SIMULATE: Reason through what the skill would produce
+                   given these inputs. Walk through each step in dependency
+                   order. Apply context blocks (respecting priority and
+                   when guards). Use the mocked tool responses where the
+                   skill would call tools.
+
+                3. EVALUATE: For each assertion in the expect block:
+                   - Deterministic (equals, matches, >=, between):
+                     Compare the simulated output mechanically. Pass or fail.
+                   - LLM-judged (resembles, satisfies):
+                     Use your reasoning to determine if the simulated output
+                     semantically matches the assertion. Be strict.
+                   - Quantifiers (contains/all/none with where):
+                     Iterate over the collection and test each element.
+
+                4. CONFIDENCE: If the test has confidence + runs, you need
+                   to run the simulation multiple times (with slight
+                   variation in your reasoning). Count passes. The test
+                   passes only if passes/runs >= confidence threshold.
+
+                Record every assertion result with actual vs expected values.
+                """
+            }
+        }
+
+        step report_results {
+            requires execute_tests
+            emit output
+
+            context(priority: 85) {
+                """
+                Produce the TestResult:
+                - Aggregate pass/fail counts
+                - Include per-test-case results with every assertion
+                - For failed assertions, include actual value, expected
+                  value, and a clear explanation of why it failed
+                - Write a one-line summary: "3/3 passed" or
+                  "2/3 passed — 'catches injection' failed: output.findings
+                  was empty (expected contains(where: .category == 'security'))"
+
+                If verbose mode is on, include the full simulated output
+                for each test case, not just the assertion results.
+                """
+            }
+        }
+    }
+
+    tests {
+        test "runs deterministic assertions" {
+            given {
+                source_file: "fixtures/simple_tested_skill.agent"
+            }
+            expect {
+                output.result.total: >= 1
+                output.result.passed: equals(output.result.total)
+            }
+            confidence 0.9
+            runs 5
+        }
+
+        test "fails on incorrect assertion" {
+            given {
+                source_file: "fixtures/failing_test_skill.agent"
+            }
+            expect {
+                output.result.failed: >= 1
+                output.result.results: contains(where: .passed == false)
+            }
+        }
+
+        test "respects confidence threshold" {
+            given {
+                source_file: "fixtures/confidence_test_skill.agent"
+            }
+            expect {
+                output.result.results: contains(where: .runs_completed >= 5)
+            }
+        }
+
+        test "handles mocked tools" {
+            given {
+                source_file: "fixtures/mocked_tool_skill.agent"
+            }
+            expect {
+                output.result.passed: >= 1
+            }
+        }
+    }
+}

@@ -1,13 +1,5 @@
 import { Finding } from "@types/review"
 
-type Finding {
-    file: string
-    line: int
-    severity: enum("critical", "high", "medium", "low")
-    message: string
-    suggestion?: string
-}
-
 skill "code-review" {
     input {
         files: string[]

@@ -71,6 +71,13 @@ pub struct Skill {
     pub tests: Vec<TestBlock>,
 }
 
+#[derive(Debug, Clone)]
+pub enum BodyItemRef {
+    Context(usize),
+    LazyContext(usize),
+    Step(usize),
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Body {
     pub contexts: Vec<ContextBlock>,
@@ -78,6 +85,9 @@ pub struct Body {
     pub steps: Vec<Step>,
     pub on_error: Option<Vec<UseCall>>,
     pub directives: PromptDirectives,
+    // Indices valid only for this body's own vecs; not meaningful after extends/mixin merging.
+    #[serde(skip)]
+    pub source_order: Vec<BodyItemRef>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

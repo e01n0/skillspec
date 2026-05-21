@@ -1,5 +1,3 @@
-import { BackportResult, Change, Conflict } from "@types/backport"
-
 type Change {
     section: string
     change_type: enum("added", "modified", "removed")

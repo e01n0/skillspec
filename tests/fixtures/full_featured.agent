@@ -1,17 +1,4 @@
-import { Finding } from "@types/review"
-
-type Finding {
-    file: string
-    line: int
-    severity: enum("critical", "high", "medium", "low")
-    message: string
-}
-
-type ReviewReport {
-    findings: Finding[]
-    summary: string
-    score: int
-}
+import { Finding, ReviewReport } from "@types/review"
 
 mixin observability {
     step log_start {

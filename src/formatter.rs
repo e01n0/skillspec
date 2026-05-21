@@ -269,12 +269,7 @@ impl Formatter {
         self.line("body {");
         self.indent += 1;
 
-        // Canonical order within body:
-        // 1. Directives (persona, reasoning, sampling, format, reinforce, examples)
-        // 2. Eager contexts (priority desc)
-        // 3. Lazy contexts
-        // 4. Steps (source order)
-
+        // Directives first (persona, reasoning, sampling, format, reinforce, examples)
         let d = &body.directives;
 
         if let Some(persona) = &d.persona {
@@ -296,25 +291,38 @@ impl Formatter {
             self.emit_examples(&d.examples);
         }
 
-        // Eager contexts sorted by priority desc
-        let mut sorted_contexts: Vec<&ContextBlock> = body.contexts.iter().collect();
-        sorted_contexts.sort_by(|a, b| {
-            let pa = a.priority.unwrap_or(0);
-            let pb = b.priority.unwrap_or(0);
-            pb.cmp(&pa)
-        });
-        for ctx in sorted_contexts {
-            self.emit_context_block(ctx);
-        }
-
-        // Lazy contexts
-        for lc in &body.lazy_contexts {
-            self.emit_lazy_context(lc);
-        }
-
-        // Steps in source order
-        for step in &body.steps {
-            self.emit_step(step);
+        // Contexts, lazy contexts, and steps in source order
+        if !body.source_order.is_empty() {
+            for item in &body.source_order {
+                match item {
+                    BodyItemRef::Context(i) => {
+                        if let Some(ctx) = body.contexts.get(*i) {
+                            self.emit_context_block(ctx);
+                        }
+                    }
+                    BodyItemRef::LazyContext(i) => {
+                        if let Some(lc) = body.lazy_contexts.get(*i) {
+                            self.emit_lazy_context(lc);
+                        }
+                    }
+                    BodyItemRef::Step(i) => {
+                        if let Some(step) = body.steps.get(*i) {
+                            self.emit_step(step);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback for programmatically constructed ASTs without source_order
+            for ctx in &body.contexts {
+                self.emit_context_block(ctx);
+            }
+            for lc in &body.lazy_contexts {
+                self.emit_lazy_context(lc);
+            }
+            for step in &body.steps {
+                self.emit_step(step);
+            }
         }
 
         // on_error
@@ -1003,5 +1011,44 @@ mod tests {
     fn round_trip_minimal_fixture() {
         let source = include_str!("../tests/fixtures/minimal.agent");
         assert_round_trips(source);
+    }
+
+    #[test]
+    fn preserves_interleaved_context_step_order() {
+        let input = r#"
+            skill "x" {
+                body {
+                    context(priority: 100) { "Top-level instruction." }
+                    step explore {
+                        context { "Explore." }
+                    }
+                    context(priority: 75, when: input.constraints) { "Constraint context." }
+                    step propose {
+                        context { "Propose." }
+                    }
+                }
+            }
+        "#;
+        let formatted = format_source(input).unwrap();
+
+        let top_ctx = formatted.find("Top-level instruction").unwrap();
+        let explore = formatted.find("step explore").unwrap();
+        let constraint = formatted.find("Constraint context").unwrap();
+        let propose = formatted.find("step propose").unwrap();
+
+        assert!(
+            top_ctx < explore,
+            "first context should precede explore step"
+        );
+        assert!(
+            explore < constraint,
+            "explore step should precede interleaved context:\n{}",
+            formatted
+        );
+        assert!(
+            constraint < propose,
+            "interleaved context should precede propose step:\n{}",
+            formatted
+        );
     }
 }

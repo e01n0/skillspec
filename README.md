@@ -2,21 +2,22 @@
 
 A typed, composable language for AI agent skills and workflows. Compiles to SKILL.md for backwards compatibility with Claude Code, Codex, Cursor, Gemini CLI, and 30+ other agent runtimes.
 
+## Who This Is For
+
+SkillSpec is for **teams maintaining shared skill libraries** — the people who have 20+ skills that compose, evolve, and get shared across developers. If you're writing a one-off skill for personal use, markdown is fine. If you're maintaining a skill ecosystem where changes ripple across dependencies, where multiple people edit the same skills, and where "it worked last week" is a recurring incident — that's where SkillSpec earns its keep.
+
 ## The Problem
 
-There are 280,000+ agent skills in the wild. They're all markdown files. And they're all fragile.
+A skill starts as a clean, focused markdown file. Then someone adds an edge case. Then a conditional. Then a 200-line reference section. Then another developer copy-pastes half of it into a new skill and changes three lines. Six months later, both skills have drifted, neither matches the original intent, and nobody knows which version is authoritative.
 
-A skill starts as a clean, focused instruction set. Then someone adds an edge case. Then a conditional. Then a 200-line reference section. Then another developer copy-pastes half of it into a new skill and changes three lines. Six months later, both skills have drifted, neither matches the original intent, and nobody knows which version is authoritative — because **markdown has no version control semantics, no type system, no composition model, and no tests.**
+The failure modes are well-documented:
 
-The specific failure modes are well-documented:
+- **Context rot.** Skills bloat until the core intent is buried. LLMs deprioritise instructions in the middle of their context window, so instructions you added last silently suppress the ones you wrote first.
+- **No contracts.** A skill that expects `files: string[]` will happily receive `files: 42` and produce garbage. There's no way to declare what a skill needs or what invariants it guarantees.
+- **No composition.** Reuse means copy-paste. Update means update everywhere. Miss one? Good luck debugging.
+- **No versioning.** Skills evolve but there's no diff, no changelog, no way to review what changed. A "small tweak" to a shared skill silently breaks every workflow that depends on it.
 
-- **Context rot.** Skills bloat with edge cases until the core intent is buried. LLMs deprioritise instructions in the middle of their context window (the "lost-in-the-middle" effect), so the instructions you added last silently suppress the ones you wrote first.
-- **No contracts.** A skill that expects `files: string[]` will happily receive `files: 42` and produce garbage. There's no way to declare what a skill needs, what it produces, or what invariants it guarantees.
-- **No composition.** Want to reuse a "validate input" routine across five skills? Copy-paste it. Want to update it? Update it in five places. Miss one? Good luck debugging.
-- **No testing.** The only way to verify a skill works is to run it against an LLM and read the output. There's no way to write assertions, no regression detection, no CI integration.
-- **No versioning.** Skills evolve but there's no diff, no changelog, no way to review what changed between versions. A "small tweak" to a shared skill can silently break every workflow that depends on it.
-
-SkillSpec fixes this with a structured language that compiles down to the same SKILL.md format agents already understand — while adding everything markdown doesn't have.
+SkillSpec fixes this with a structured language that compiles down to the same SKILL.md format agents already understand.
 
 ## Why SkillSpec
 
@@ -56,19 +57,22 @@ Real-world agent systems aren't single skills. They're ecosystems — shared typ
 
 You don't have to rewrite everything. SkillSpec meets you where you are:
 
-1. **`skillspec migrate existing/SKILL.md`** — mechanically extracts what it can from your existing markdown skills into `.agent.partial` files with TODO markers where reasoning is needed.
-2. **The migrate skill** (LLM-powered, runs in your agent runtime) finishes the job — inferring types, step dependencies, and context priorities from your prose.
+1. **`skillspec migrate existing/SKILL.md`** — mechanically extracts what it can (frontmatter, section headings, conditional patterns) into `.agent.partial` files with TODO markers. This is scaffolding, not magic — it handles maybe 10-20% of a real migration.
+2. **The migrate skill** (LLM-powered, runs in your agent runtime) does the real work — inferring types, step dependencies, and context priorities from your prose. Migration quality is bottlenecked by LLM quality, not SkillSpec quality. The structured `.agent.partial` gives the LLM a better target to aim at.
 3. **`skillspec build --target skillmd`** compiles back to SKILL.md — your existing runtimes don't need to change. The `.agent` file is the source of truth; the SKILL.md is the build artifact.
-4. **Adopt incrementally.** Start with types and contracts on your most critical skills. Add context management when you hit token budget issues. Add tests when you need regression detection. Add pipelines when your workflows outgrow single skills.
+4. **Adopt incrementally.** Start with types and contracts on your most critical skills. Add context management when you hit token budget issues. Add test definitions when you need regression detection. Add pipelines when your workflows outgrow single skills.
 
 ## Quick Start
 
 ```bash
-cargo install skillspec
+git clone git@github.com:e01n0/skillspec.git
+cd skillspec && cargo install --path .
 skillspec init my-skill        # scaffold a new .agent file
 skillspec check my-skill.agent # type-check and validate
 skillspec build my-skill.agent # compile to SKILL.md
 ```
+
+For a full walkthrough, see the [Quickstart Guide](docs/quickstart.md). For the complete language, see the [Language Reference](docs/language-reference.md).
 
 ## Hello World
 
@@ -268,7 +272,7 @@ permissions {
 
 ### Composition
 
-Reuse skills with `use`, extend them with `extend`, and share behaviour across skills with `mixin` and `include`.
+Reuse skills with `use`, extend them with `extend`, and share behaviour across skills with `mixin` and `include`. **Important caveat:** when compiling to SKILL.md, composition is expressed as prose annotations (`*Uses: X*`, `*Includes mixin: Y*`). The LLM interprets these as instructions — there's no runtime dispatch. Real executable composition requires the native target (`.agentpkg`) and a runtime that supports it.
 
 ```skillspec
 mixin conversation_logging {
@@ -335,7 +339,7 @@ orchestration "code-review" {
 
 ### Testing
 
-Test blocks live inside the skill file. Assertions can be exact, pattern-based, or LLM-judged (with confidence thresholds and multiple runs for non-deterministic checks).
+Test definitions are a first-class language feature — they live inside the skill file, get type-checked, and survive compilation. **What exists today:** the compiler parses test blocks, validates their structure, and `skillspec test` lists them. **What doesn't exist yet:** actual test execution. Running LLM-judged assertions with confidence thresholds requires LLM integration, which the CLI deliberately avoids (it's a deterministic tool). Test execution is a roadmap item — it will be a SkillSpec skill that runs in your agent runtime, not a CLI command.
 
 ```skillspec
 tests {
@@ -419,12 +423,22 @@ skillspec build my-skill.agent --target native
 
 **Progressive disclosure.** A valid skill is three lines. Types, steps, tools, tests, context priorities, lazy loading, pipelines, orchestrations — all opt-in. You pay syntax cost only for the features you use.
 
+## Limitations
+
+Being honest about what SkillSpec is and isn't:
+
+- **Composition is compile-time, not runtime.** When targeting SKILL.md, `use`, `pipeline`, and `orchestration` compile to prose annotations. The LLM interprets them as instructions — there's no executable dispatch. Real runtime composition requires the native target (`.agentpkg`) and runtimes that support it, which don't exist yet.
+- **Test execution is LLM-powered, not CLI-powered.** Test blocks are parsed, type-checked, and included in compiled output. The CLI (`skillspec test`) lists tests but doesn't run them — it's a deterministic tool. Execution is handled by the `skillspec-test` skill (in `skills/skillspec-test.agent`), which runs in your agent runtime and simulates skill behaviour against given inputs, evaluates assertions (deterministic and LLM-judged), and handles confidence thresholds with multiple runs.
+- **Migration is scaffolding, not magic.** `skillspec migrate` does mechanical extraction. For real skills, the LLM-powered migrate skill does 90% of the work. Migration quality depends on your LLM, not on SkillSpec.
+- **The value inflects at scale.** If you maintain 3 simple skills, the overhead isn't worth it. SkillSpec pays for itself when you have enough skills, enough shared ownership, and enough evolution over time that the engineering rigour saves you from the failure modes markdown can't prevent.
+
 ## Roadmap
 
+- **Test execution** — a `skillspec-test` skill that runs test blocks against LLMs with result aggregation and CI-friendly output
 - **Remote registry** — `skillspec publish` / `skillspec install` from a central package registry
-- **LLM-powered test execution** — run `tests` blocks against real LLMs with result aggregation
 - **Language server / IDE support** — LSP for syntax highlighting, completions, and inline diagnostics
 - **Formal grammar specification** — a complete EBNF grammar for the `.agent` format
+- **Native runtime SDK** — libraries for runtimes to consume `.agentpkg` with real executable composition
 
 ## Contributing
 

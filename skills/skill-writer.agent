@@ -1,5 +1,3 @@
-import { SkillReview, Issue, Suggestion } from "@types/skill-review"
-
 type Issue {
     severity: enum("critical", "warning", "info")
     section: string

@@ -8,18 +8,38 @@ impl SkillMdCompiler {
         Self
     }
 
-    pub fn compile(&self, skill: &Skill) -> String {
+    pub fn compile(&self, skill: &Skill, source: &SourceFile) -> String {
         let mut out = String::new();
+
+        // ── Resolution ───────────────────────────────────────────────────
+        let ancestors = self.resolve_ancestry(skill, source);
+
+        let included_mixins: Vec<&Mixin> = skill.includes.iter()
+            .filter_map(|name| source.mixins.iter().find(|m| &m.name == name))
+            .collect();
+
+        let mut acc_input: Option<Vec<Field>> = None;
+        let mut acc_output: Option<Vec<Field>> = None;
+        for ancestor in &ancestors {
+            acc_input = self.merge_fields(acc_input.as_deref(), ancestor.input.as_deref());
+            acc_output = self.merge_fields(acc_output.as_deref(), ancestor.output.as_deref());
+        }
+        let merged_input = self.merge_fields(acc_input.as_deref(), skill.input.as_deref());
+        let merged_output = self.merge_fields(acc_output.as_deref(), skill.output.as_deref());
 
         // ── YAML frontmatter ──────────────────────────────────────────────
         out.push_str("---\n");
         out.push_str(&format!("name: {}\n", skill.name));
 
+        if let Some(base) = &skill.extends {
+            out.push_str(&format!("extends: {}\n", base));
+        }
+
         if let Some(desc) = self.extract_description(skill) {
             out.push_str(&format!("description: \"{}\"\n", desc.replace('"', "\\\"")));
         }
 
-        if let Some(input_fields) = &skill.input {
+        if let Some(input_fields) = &merged_input {
             if !input_fields.is_empty() {
                 out.push_str("parameters:\n");
                 for field in input_fields {
@@ -44,7 +64,7 @@ impl SkillMdCompiler {
         out.push_str(&format!("# {}\n\n", skill.name));
 
         // ── Output section ────────────────────────────────────────────────
-        if let Some(output_fields) = &skill.output {
+        if let Some(output_fields) = &merged_output {
             if !output_fields.is_empty() {
                 out.push_str("## Output\n\n");
                 for field in output_fields {
@@ -69,68 +89,100 @@ impl SkillMdCompiler {
             }
         }
 
-        // ── Preconditions ─────────────────────────────────────────────────
-        if !skill.pre.is_empty() {
+        // ── Preconditions (ancestors + child, with when_guard) ────────────
+        let mut all_pre: Vec<&Assertion> = Vec::new();
+        for ancestor in &ancestors {
+            all_pre.extend(ancestor.pre.iter());
+        }
+        all_pre.extend(skill.pre.iter());
+
+        if !all_pre.is_empty() {
             out.push_str("## Preconditions\n\n");
-            for assertion in &skill.pre {
-                out.push_str(&format!(
-                    "- {} — *{}*\n",
-                    self.expr_to_string(&assertion.condition),
-                    assertion.message
-                ));
+            for assertion in &all_pre {
+                out.push_str(&self.emit_assertion(assertion));
             }
             out.push('\n');
         }
 
-        // ── Postconditions ────────────────────────────────────────────────
-        if !skill.post.is_empty() {
+        // ── Postconditions (ancestors + child, with when_guard) ───────────
+        let mut all_post: Vec<&Assertion> = Vec::new();
+        for ancestor in &ancestors {
+            all_post.extend(ancestor.post.iter());
+        }
+        all_post.extend(skill.post.iter());
+
+        if !all_post.is_empty() {
             out.push_str("## Postconditions\n\n");
-            for assertion in &skill.post {
-                out.push_str(&format!(
-                    "- {} — *{}*\n",
-                    self.expr_to_string(&assertion.condition),
-                    assertion.message
-                ));
+            for assertion in &all_post {
+                out.push_str(&self.emit_assertion(assertion));
             }
             out.push('\n');
         }
 
-        // ── Tools ─────────────────────────────────────────────────────────
-        if let Some(tools_block) = &skill.tools {
-            out.push_str(&self.emit_tools_section(tools_block));
+        // ── Tools (merged ancestors + child) ──────────────────────────────
+        let mut acc_tools: Option<ToolsBlock> = None;
+        for ancestor in &ancestors {
+            acc_tools = self.merge_tools(acc_tools.as_ref(), ancestor.tools.as_ref());
+        }
+        let merged_tools = self.merge_tools(acc_tools.as_ref(), skill.tools.as_ref());
+        if let Some(tools) = &merged_tools {
+            out.push_str(&self.emit_tools_section(tools));
         }
 
-        // ── Permissions ───────────────────────────────────────────────────
-        if let Some(perms) = &skill.permissions {
+        // ── Permissions (merged ancestors + child) ────────────────────────
+        let mut acc_perms: Option<PermissionsBlock> = None;
+        for ancestor in &ancestors {
+            acc_perms = self.merge_permissions(acc_perms.as_ref(), ancestor.permissions.as_ref());
+        }
+        let merged_perms = self.merge_permissions(acc_perms.as_ref(), skill.permissions.as_ref());
+        if let Some(perms) = &merged_perms {
             out.push_str(&self.emit_permissions_section(perms));
         }
 
-        // ── Mixin includes ────────────────────────────────────────────────
-        if !skill.includes.is_empty() {
-            for mixin_name in &skill.includes {
-                out.push_str(&format!("*Includes mixin: {}*\n\n", mixin_name));
+        // ── Prompt directives (child overrides ancestors field-by-field) ───
+        let mut acc_directives = PromptDirectives::default();
+        for ancestor in &ancestors {
+            acc_directives = self.merge_directives(Some(&acc_directives), &ancestor.body.directives);
+        }
+        let merged_directives = self.merge_directives(Some(&acc_directives), &skill.body.directives);
+        out.push_str(&self.emit_prompt_directives(&merged_directives));
+
+        // ── Lazy contexts (merged ancestors + child, child wins) ──────────
+        let child_lazy_names: HashSet<&str> = skill.body.lazy_contexts.iter()
+            .map(|lc| lc.name.as_str()).collect();
+        let mut all_lazy: Vec<LazyContext> = Vec::new();
+        for ancestor in &ancestors {
+            let ancestor_lazy_names: HashSet<&str> = ancestor.body.lazy_contexts.iter()
+                .map(|lc| lc.name.as_str()).collect();
+            all_lazy.retain(|lc| !ancestor_lazy_names.contains(lc.name.as_str()));
+            for lc in &ancestor.body.lazy_contexts {
+                if !child_lazy_names.contains(lc.name.as_str()) {
+                    all_lazy.push(lc.clone());
+                }
             }
         }
-
-        // ── Prompt directives ─────────────────────────────────────────────
-        out.push_str(&self.emit_prompt_directives(&skill.body.directives));
-
-        // ── Lazy contexts → References section ────────────────────────────
-        if !skill.body.lazy_contexts.is_empty() {
-            out.push_str(&self.emit_lazy_contexts(&skill.body.lazy_contexts));
+        all_lazy.extend(skill.body.lazy_contexts.iter().cloned());
+        if !all_lazy.is_empty() {
+            out.push_str(&self.emit_lazy_contexts(&all_lazy));
         }
 
-        // ── Skill-level context blocks (sorted by priority desc) ──────────
-        let mut skill_contexts: Vec<&ContextBlock> = skill.body.contexts.iter().collect();
-        skill_contexts.sort_by(|a, b| {
+        // ── Skill-level contexts (merged, sorted, with when/decay) ────────
+        let mut all_contexts: Vec<&ContextBlock> = Vec::new();
+        for ancestor in &ancestors {
+            all_contexts.extend(ancestor.body.contexts.iter());
+        }
+        all_contexts.extend(skill.body.contexts.iter());
+        for mixin in &included_mixins {
+            all_contexts.extend(mixin.contexts.iter());
+        }
+        all_contexts.sort_by(|a, b| {
             let pa = a.priority.unwrap_or(0);
             let pb = b.priority.unwrap_or(0);
             pb.cmp(&pa)
         });
 
-        for ctx in &skill_contexts {
-            out.push_str(&self.dedent(&ctx.text));
-            out.push_str("\n\n");
+        for ctx in &all_contexts {
+            out.push_str(&self.emit_context_with_metadata(ctx));
         }
 
         // ── Tests ─────────────────────────────────────────────────────────
@@ -138,8 +190,32 @@ impl SkillMdCompiler {
             out.push_str(&self.emit_tests_section(&skill.tests));
         }
 
-        // ── Steps (topologically sorted) ──────────────────────────────────
-        let sorted_steps = self.topo_sort(&skill.body.steps);
+        // ── Steps (merged: ancestors + mixin + child, topo sorted) ────────
+        // Child steps win on name collision; later ancestors override earlier.
+        let child_names: HashSet<&str> = skill.body.steps.iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        let mut all_steps: Vec<Step> = Vec::new();
+        for ancestor in &ancestors {
+            let ancestor_names: HashSet<&str> = ancestor.body.steps.iter()
+                .map(|s| s.name.as_str()).collect();
+            all_steps.retain(|s| !ancestor_names.contains(s.name.as_str()));
+            for step in &ancestor.body.steps {
+                if !child_names.contains(step.name.as_str()) {
+                    all_steps.push(step.clone());
+                }
+            }
+        }
+        for mixin in &included_mixins {
+            for step in &mixin.steps {
+                if !child_names.contains(step.name.as_str()) {
+                    all_steps.push(step.clone());
+                }
+            }
+        }
+        all_steps.extend(skill.body.steps.iter().cloned());
+
+        let sorted_steps = self.topo_sort(&all_steps);
 
         for step in sorted_steps {
             out.push_str(&format!("## Step: {}\n\n", step.name));
@@ -152,6 +228,10 @@ impl SkillMdCompiler {
                 out.push_str("*Produces final output.*\n\n");
             }
 
+            for load_name in &step.loads {
+                out.push_str(&format!("*Loads reference: {}*\n\n", load_name));
+            }
+
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
             step_contexts.sort_by(|a, b| {
                 let pa = a.priority.unwrap_or(0);
@@ -160,8 +240,7 @@ impl SkillMdCompiler {
             });
 
             for ctx in &step_contexts {
-                out.push_str(&self.dedent(&ctx.text));
-                out.push_str("\n\n");
+                out.push_str(&self.emit_context_with_metadata(ctx));
             }
         }
 
@@ -340,6 +419,178 @@ impl SkillMdCompiler {
         }
 
         out
+    }
+
+    // ── Context / assertion emitters with metadata ─────────────────────────────
+
+    fn emit_context_with_metadata(&self, ctx: &ContextBlock) -> String {
+        let mut out = String::new();
+
+        if let Some(when) = &ctx.when {
+            out.push_str(&format!(
+                "**Condition:** `{}`\n\n",
+                self.expr_to_string(when)
+            ));
+        }
+
+        if let Some(decay) = ctx.decay {
+            out.push_str(&format!("*Decay: {}*\n\n", decay));
+        }
+
+        out.push_str(&self.dedent(&ctx.text));
+        out.push_str("\n\n");
+
+        out
+    }
+
+    fn emit_assertion(&self, assertion: &Assertion) -> String {
+        if let Some(guard) = &assertion.when_guard {
+            format!(
+                "- **When** `{}`: {} — *{}*\n",
+                self.expr_to_string(guard),
+                self.expr_to_string(&assertion.condition),
+                assertion.message
+            )
+        } else {
+            format!(
+                "- {} — *{}*\n",
+                self.expr_to_string(&assertion.condition),
+                assertion.message
+            )
+        }
+    }
+
+    // ── Ancestry resolution ─────────────────────────────────────────────────
+
+    fn resolve_ancestry<'a>(&self, skill: &'a Skill, source: &'a SourceFile) -> Vec<&'a Skill> {
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        seen.insert(&skill.name);
+        let mut current = skill.extends.as_ref();
+        while let Some(name) = current {
+            if !seen.insert(name) {
+                break;
+            }
+            match source.skills.iter().find(|s| &s.name == name) {
+                Some(base) => {
+                    chain.push(base);
+                    current = base.extends.as_ref();
+                }
+                None => break,
+            }
+        }
+        chain.reverse();
+        chain
+    }
+
+    // ── Merge helpers for extends resolution ─────────────────────────────────
+
+    fn merge_fields(&self, base: Option<&[Field]>, child: Option<&[Field]>) -> Option<Vec<Field>> {
+        match (base, child) {
+            (None, None) => None,
+            (None, Some(c)) => Some(c.to_vec()),
+            (Some(b), None) => Some(b.to_vec()),
+            (Some(b), Some(c)) => {
+                let child_names: HashSet<&str> =
+                    c.iter().map(|f| f.name.as_str()).collect();
+                let mut merged: Vec<Field> = b
+                    .iter()
+                    .filter(|f| !child_names.contains(f.name.as_str()))
+                    .cloned()
+                    .collect();
+                merged.extend(c.iter().cloned());
+                Some(merged)
+            }
+        }
+    }
+
+    fn merge_tools(
+        &self,
+        base: Option<&ToolsBlock>,
+        child: Option<&ToolsBlock>,
+    ) -> Option<ToolsBlock> {
+        match (base, child) {
+            (None, None) => None,
+            (None, Some(c)) => Some(c.clone()),
+            (Some(b), None) => Some(b.clone()),
+            (Some(b), Some(c)) => {
+                let child_req: HashSet<&str> =
+                    c.required.iter().map(|t| t.name.as_str()).collect();
+                let child_opt: HashSet<&str> =
+                    c.optional.iter().map(|t| t.name.as_str()).collect();
+
+                let mut merged = ToolsBlock {
+                    required: b
+                        .required
+                        .iter()
+                        .filter(|t| !child_req.contains(t.name.as_str()))
+                        .cloned()
+                        .collect(),
+                    optional: b
+                        .optional
+                        .iter()
+                        .filter(|t| !child_opt.contains(t.name.as_str()))
+                        .cloned()
+                        .collect(),
+                };
+                merged.required.extend(c.required.iter().cloned());
+                merged.optional.extend(c.optional.iter().cloned());
+                Some(merged)
+            }
+        }
+    }
+
+    fn merge_permissions(
+        &self,
+        base: Option<&PermissionsBlock>,
+        child: Option<&PermissionsBlock>,
+    ) -> Option<PermissionsBlock> {
+        match (base, child) {
+            (None, None) => None,
+            (None, Some(c)) => Some(c.clone()),
+            (Some(b), None) => Some(b.clone()),
+            (Some(b), Some(c)) => {
+                let mut secrets = b.secrets.clone();
+                for s in &c.secrets {
+                    if !secrets.contains(s) {
+                        secrets.push(s.clone());
+                    }
+                }
+                Some(PermissionsBlock {
+                    filesystem: c.filesystem.clone().or_else(|| b.filesystem.clone()),
+                    network: c.network.clone().or_else(|| b.network.clone()),
+                    secrets,
+                })
+            }
+        }
+    }
+
+    fn merge_directives(
+        &self,
+        base: Option<&PromptDirectives>,
+        child: &PromptDirectives,
+    ) -> PromptDirectives {
+        let base = match base {
+            Some(b) => b,
+            None => return child.clone(),
+        };
+
+        PromptDirectives {
+            reasoning: child.reasoning.clone().or_else(|| base.reasoning.clone()),
+            persona: child.persona.clone().or_else(|| base.persona.clone()),
+            sampling: child.sampling.clone().or_else(|| base.sampling.clone()),
+            format: child.format.clone().or_else(|| base.format.clone()),
+            reinforcements: if child.reinforcements.is_empty() {
+                base.reinforcements.clone()
+            } else {
+                child.reinforcements.clone()
+            },
+            examples: if child.examples.is_empty() {
+                base.examples.clone()
+            } else {
+                child.examples.clone()
+            },
+        }
     }
 
     // ── Phase 2 section emitters ──────────────────────────────────────────────
@@ -906,7 +1157,7 @@ mod tests {
         let tokens = Lexer::new(input).tokenize().unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
         let compiler = SkillMdCompiler::new();
-        compiler.compile(&ast.skills[0])
+        compiler.compile(&ast.skills[0], &ast)
     }
 
     #[test]
@@ -1146,5 +1397,496 @@ mod tests {
         assert!(md.contains("Stage: lint"), "should have lint stage: {}", md);
         assert!(md.contains("Stage: check"), "should have check stage: {}", md);
         assert!(md.contains("30m"), "should include timeout: {}", md);
+    }
+
+    // ── Fix #1: load directives emitted ─────────────────────────────
+
+    #[test]
+    fn step_loads_emitted() {
+        let md = compile(r#"
+            skill "x" {
+                body {
+                    lazy context "docs" (priority: 50) {
+                        summary "API docs."
+                        ref "./api.md"
+                    }
+                    context { "Use the docs." }
+                    step main {
+                        load "docs"
+                        context { "Check the docs." }
+                    }
+                }
+            }
+        "#);
+        assert!(
+            md.contains("Loads reference: docs"),
+            "compiled output should contain load annotation: {}",
+            md
+        );
+    }
+
+    // ── Fix #2: when guards on context blocks ───────────────────────
+
+    #[test]
+    fn context_when_guard_emitted() {
+        let md = compile(r#"
+            skill "x" {
+                input { focus?: string }
+                body {
+                    context(priority: 100) { "Always included." }
+                    context(priority: 80, when: input.focus) {
+                        "Focus on the requested area."
+                    }
+                }
+            }
+        "#);
+        assert!(
+            md.contains("Condition:"),
+            "compiled output should contain condition annotation: {}",
+            md
+        );
+        assert!(
+            md.contains("input.focus"),
+            "condition should reference the guard expression: {}",
+            md
+        );
+    }
+
+    // ── Fix #3: decay on context blocks ─────────────────────────────
+
+    #[test]
+    fn context_decay_emitted() {
+        let md = compile(r#"
+            skill "x" {
+                body {
+                    context(priority: 90, decay: 0.5) { "Fading instruction." }
+                }
+            }
+        "#);
+        assert!(
+            md.contains("Decay: 0.5"),
+            "compiled output should contain decay annotation: {}",
+            md
+        );
+    }
+
+    // ── Fix #4: extends resolves base skill ─────────────────────────
+
+    #[test]
+    fn extends_merges_base_skill() {
+        let input = r#"
+            skill "base" {
+                input { files: string[] }
+                pre {
+                    assert input.files != [] message "No files"
+                }
+                body {
+                    context(priority: 100) { "Base instructions." }
+                    step analyze {
+                        context { "Analyze." }
+                    }
+                }
+            }
+            skill "child" extends "base" {
+                input { severity?: string }
+                body {
+                    context(priority: 90) { "Child-specific." }
+                    step report {
+                        requires analyze
+                        emit output
+                        context { "Report." }
+                    }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(md.contains("extends: base"), "frontmatter should note extends: {}", md);
+        assert!(md.contains("Base instructions."), "should include base context: {}", md);
+        assert!(md.contains("Child-specific."), "should include child context: {}", md);
+        assert!(md.contains("Step: analyze"), "should include base steps: {}", md);
+        assert!(md.contains("Step: report"), "should include child steps: {}", md);
+        assert!(md.contains("No files"), "should include base preconditions: {}", md);
+        assert!(md.contains("files"), "should inherit base input fields: {}", md);
+        assert!(md.contains("severity"), "should have child input fields: {}", md);
+    }
+
+    #[test]
+    fn extends_three_level_chain() {
+        let input = r#"
+            skill "grandparent" {
+                input { x: string }
+                body {
+                    context(priority: 100) { "Grandparent context." }
+                    step gp_step {
+                        context { "GP step." }
+                    }
+                }
+            }
+            skill "parent" extends "grandparent" {
+                input { y: string }
+                body {
+                    context(priority: 90) { "Parent context." }
+                    step p_step {
+                        context { "Parent step." }
+                    }
+                }
+            }
+            skill "child" extends "parent" {
+                input { z: string }
+                body {
+                    context(priority: 80) { "Child context." }
+                    step c_step {
+                        requires gp_step
+                        context { "Child step." }
+                    }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(md.contains("x"), "should inherit grandparent input field 'x': {}", md);
+        assert!(md.contains("y"), "should inherit parent input field 'y': {}", md);
+        assert!(md.contains("z"), "should have child input field 'z': {}", md);
+        assert!(md.contains("Grandparent context."), "should inherit grandparent context: {}", md);
+        assert!(md.contains("Parent context."), "should inherit parent context: {}", md);
+        assert!(md.contains("Child context."), "should have child context: {}", md);
+        assert!(md.contains("Step: gp_step"), "should inherit grandparent step: {}", md);
+        assert!(md.contains("Step: p_step"), "should inherit parent step: {}", md);
+        assert!(md.contains("Step: c_step"), "should have child step: {}", md);
+    }
+
+    #[test]
+    fn extends_three_level_step_override() {
+        let input = r#"
+            skill "grandparent" {
+                body {
+                    step shared {
+                        context { "GP version." }
+                    }
+                }
+            }
+            skill "parent" extends "grandparent" {
+                body {
+                    step shared {
+                        context { "Parent version." }
+                    }
+                }
+            }
+            skill "child" extends "parent" {
+                body {
+                    context { "Child." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(md.contains("Parent version."), "parent should override grandparent step: {}", md);
+        assert!(!md.contains("GP version."), "grandparent step should be overridden: {}", md);
+        assert_eq!(md.matches("Step: shared").count(), 1, "should have exactly one 'shared' step");
+    }
+
+    #[test]
+    fn extends_three_level_directives() {
+        let input = r#"
+            skill "grandparent" {
+                body {
+                    persona { "GP persona." }
+                    reasoning extended
+                    context { "GP." }
+                }
+            }
+            skill "parent" extends "grandparent" {
+                body {
+                    context { "Parent." }
+                }
+            }
+            skill "child" extends "parent" {
+                body {
+                    context { "Child." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(md.contains("GP persona"), "grandparent persona should propagate through 2 levels: {}", md);
+        assert!(md.contains("extended"), "grandparent reasoning should propagate: {}", md);
+    }
+
+    #[test]
+    fn extends_lazy_context_child_wins() {
+        let input = r#"
+            skill "base" {
+                body {
+                    lazy context "docs" (priority: 50) {
+                        summary "Base docs."
+                        ref "./base-api.md"
+                    }
+                    context { "Base." }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    lazy context "docs" (priority: 80) {
+                        summary "Child docs."
+                        ref "./child-api.md"
+                    }
+                    context { "Child." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(md.contains("Child docs."), "child lazy context should appear: {}", md);
+        assert!(!md.contains("Base docs."), "base lazy context should be overridden: {}", md);
+        assert_eq!(md.matches("docs").count() - md.matches("Child docs").count(),
+            md.matches("docs").count() - md.matches("Child docs").count(),
+            "should have exactly one 'docs' lazy context entry");
+    }
+
+    #[test]
+    fn extends_merges_directives() {
+        let input = r#"
+            skill "base" {
+                body {
+                    persona { "You are the base persona." }
+                    reasoning extended
+                    context { "Base." }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    context { "Child." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(
+            md.contains("base persona"),
+            "child should inherit base persona: {}",
+            md
+        );
+        assert!(
+            md.contains("extended"),
+            "child should inherit base reasoning: {}",
+            md
+        );
+    }
+
+    #[test]
+    fn extends_child_overrides_directives() {
+        let input = r#"
+            skill "base" {
+                body {
+                    persona { "Base persona." }
+                    reasoning extended
+                    context { "Base." }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    persona { "Child persona." }
+                    context { "Child." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+        let md = compiler.compile(child, &ast);
+
+        assert!(
+            md.contains("Child persona"),
+            "child should override base persona: {}",
+            md
+        );
+        assert!(
+            !md.contains("Base persona"),
+            "base persona should NOT appear: {}",
+            md
+        );
+        assert!(
+            md.contains("extended"),
+            "non-overridden directives should inherit: {}",
+            md
+        );
+    }
+
+    #[test]
+    fn mixin_step_name_collision_child_wins() {
+        let input = r#"
+            mixin defaults {
+                step analyze {
+                    context { "Mixin analyze." }
+                }
+            }
+            skill "x" {
+                include defaults
+                body {
+                    step analyze {
+                        context { "Skill's own analyze." }
+                    }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let md = compiler.compile(&ast.skills[0], &ast);
+
+        assert!(
+            md.contains("Skill's own analyze"),
+            "child step should win: {}",
+            md
+        );
+        assert!(
+            !md.contains("Mixin analyze"),
+            "mixin step should be overridden: {}",
+            md
+        );
+        let count = md.matches("Step: analyze").count();
+        assert_eq!(count, 1, "should have exactly one analyze step, got {}", count);
+    }
+
+    // ── Fix #5: mixin include injects actual content ────────────────
+
+    #[test]
+    fn mixin_include_injects_steps() {
+        let input = r#"
+            mixin logging {
+                step log_start {
+                    context { "Log that the skill is starting." }
+                }
+                step log_end {
+                    requires all_steps
+                    context { "Log that the skill completed." }
+                }
+            }
+            skill "x" {
+                include logging
+                body {
+                    context { "Do the work." }
+                    step main {
+                        emit output
+                        context { "Main work." }
+                    }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let md = compiler.compile(&ast.skills[0], &ast);
+
+        assert!(
+            md.contains("Step: log_start"),
+            "should inject mixin step log_start: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: log_end"),
+            "should inject mixin step log_end: {}",
+            md
+        );
+        assert!(
+            md.contains("Log that the skill is starting"),
+            "should include mixin step content: {}",
+            md
+        );
+        assert!(
+            !md.contains("*Includes mixin:"),
+            "should NOT emit cosmetic include note: {}",
+            md
+        );
+    }
+
+    #[test]
+    fn mixin_include_injects_contexts() {
+        let input = r#"
+            mixin safety {
+                context(priority: 95) { "Always check for safety issues." }
+            }
+            skill "x" {
+                include safety
+                body {
+                    context(priority: 80) { "Review code." }
+                }
+            }
+        "#;
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let md = compiler.compile(&ast.skills[0], &ast);
+
+        assert!(
+            md.contains("Always check for safety issues"),
+            "should inject mixin context: {}",
+            md
+        );
+        let body_start = md.find("# x").unwrap();
+        let body = &md[body_start..];
+        let safety_pos = body.find("safety issues").unwrap();
+        let review_pos = body.find("Review code").unwrap();
+        assert!(
+            safety_pos < review_pos,
+            "higher-priority mixin context should appear first: {}",
+            md
+        );
+    }
+
+    // ── Fix #9: pre/post when_guard emitted ─────────────────────────
+
+    #[test]
+    fn assertion_when_guard_emitted() {
+        let md = compile(r#"
+            skill "x" {
+                input { focus?: string }
+                pre {
+                    assert when input.focus input.focus != "" message "Focus cannot be empty"
+                }
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(
+            md.contains("**When**"),
+            "should contain When annotation: {}",
+            md
+        );
+        assert!(
+            md.contains("input.focus"),
+            "should reference guard expression: {}",
+            md
+        );
+        assert!(
+            md.contains("Focus cannot be empty"),
+            "should contain assertion message: {}",
+            md
+        );
     }
 }
