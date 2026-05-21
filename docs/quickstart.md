@@ -1,4 +1,4 @@
-# Quickstart: Zero to Compiled Skill in 5 Minutes
+# Quickstart
 
 ## Install
 
@@ -8,15 +8,15 @@ cd skillspec
 cargo install --path .
 ```
 
-Verify: `skillspec --version` should print `skillspec 0.1.0`.
+`skillspec --version` should print `skillspec 0.1.0`.
 
-## Create a skill
+## Scaffold and build
 
 ```sh
 skillspec init code-helper
 ```
 
-This creates `code-helper.agent`:
+That gives you `code-helper.agent`:
 
 ```skillspec
 skill "code-helper" {
@@ -36,9 +36,7 @@ skill "code-helper" {
 }
 ```
 
-## Make it yours
-
-Open `code-helper.agent` and replace the contents with something real:
+Edit it into something useful:
 
 ```skillspec
 type CodeReview {
@@ -109,62 +107,36 @@ skill "code-helper" {
 }
 ```
 
-## Validate
+Then:
 
 ```sh
-skillspec check code-helper.agent
+skillspec check code-helper.agent   # type-check
+skillspec build code-helper.agent   # compile to code-helper/SKILL.md
+skillspec budget code-helper.agent  # token estimate
+skillspec deps code-helper.agent    # step graph
+skillspec fmt code-helper.agent     # canonical formatting
 ```
 
-```
-✓ code-helper.agent: no errors
-```
-
-If you have a type error or broken dependency, the compiler tells you exactly what's wrong and where.
-
-## Compile to SKILL.md
-
-```sh
-skillspec build code-helper.agent
-```
-
-This creates `code-helper/SKILL.md` — a standard skill file that Claude Code, Codex, Cursor, Gemini CLI, or any agent runtime can consume directly.
-
-## Explore what you built
-
-```sh
-# Token budget estimate
-skillspec budget code-helper.agent
-
-# Step dependency graph
-skillspec deps code-helper.agent
-
-# Format with canonical style
-skillspec fmt code-helper.agent
-
-# List test cases (if you add any)
-skillspec test code-helper.agent
-```
-
-## What's next
+## Where to go from here
 
 | Want to... | Read |
 |-----------|------|
-| Add lazy context loading | [User Guide: Context Management](guide.md#5-context-management) |
-| Declare tool dependencies | [User Guide: Tools and Permissions](guide.md#8-tools-and-permissions) |
-| Compose skills into pipelines | [User Guide: Pipelines](guide.md#10-pipelines) |
-| Write inline tests | [User Guide: Adding Tests](guide.md#6-adding-tests) |
-| Run tests against an LLM | Use the `skillspec-test` skill in `skills/skillspec-test.agent` |
-| Review a skill for quality | Use the `skill-writer` skill in `skills/skill-writer.agent` |
-| Migrate an existing SKILL.md | `skillspec migrate existing/SKILL.md`, then use `skills/skillspec-migrate.agent` |
+| Add lazy context loading | [Guide: Context](guide.md#context) |
+| Declare tool dependencies | [Guide: Tools and permissions](guide.md#tools-and-permissions) |
+| Compose skills into pipelines | [Guide: Pipelines](guide.md#pipelines) |
+| Write inline tests | [Guide: Tests](guide.md#tests) |
+| Run tests against an LLM | `skills/skillspec-test.agent` (runs in your runtime) |
+| Review a skill for quality | `skills/skill-writer.agent` |
+| Migrate an existing SKILL.md | `skillspec migrate existing/SKILL.md`, then `skills/skillspec-migrate.agent` |
 | Full language syntax | [Language Reference](language-reference.md) |
 
-## Core Skills
+## Bundled skills
 
-SkillSpec ships with four skills that extend the CLI with LLM-powered capabilities. These run in your agent runtime (Claude Code, Codex, etc.), not the CLI:
+These run in your agent runtime, not the CLI:
 
-| Skill | What it does |
-|-------|-------------|
-| `skills/skillspec-test.agent` | Executes test blocks — deterministic + LLM-judged assertions |
-| `skills/skill-writer.agent` | Reviews .agent files against SkillSpec design principles |
-| `skills/skillspec-migrate.agent` | Completes .agent.partial files with inferred types and dependencies |
-| `skills/skillspec-backport.agent` | Maps SKILL.md changes back to .agent source locations |
+| Skill | Purpose |
+|-------|---------|
+| `skills/skillspec-test.agent` | Run test blocks (deterministic + LLM-judged) |
+| `skills/skill-writer.agent` | Review `.agent` files for quality |
+| `skills/skillspec-migrate.agent` | Complete `.agent.partial` files from migration |
+| `skills/skillspec-backport.agent` | Map SKILL.md edits back to `.agent` source |
