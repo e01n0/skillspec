@@ -1,4 +1,4 @@
-# SkillSpec Language Reference
+# Language Reference
 
 File extension: `.agent`. Encoding: UTF-8.
 
@@ -171,7 +171,7 @@ Parameters (all optional, any combination):
 
 | Parameter | Type | Description |
 |---|---|---|
-| `priority` | integer 0–100 | Higher priority is retained when context is trimmed |
+| `priority` | integer 0-100 | Higher priority is retained when context is trimmed |
 | `when` | expression | Only inject if expression is truthy |
 | `decay` | float | Rate at which this context fades from the window over time |
 
@@ -191,7 +191,7 @@ lazy context "name" (priority: 40) {
 
 Content variants:
 
-**ref** — loads a file path:
+**ref** loads a file path:
 ```agent
 lazy context "patterns" (priority: 40) {
   summary "Design patterns reference."
@@ -199,7 +199,7 @@ lazy context "patterns" (priority: 40) {
 }
 ```
 
-**index** — loads one of several named sections:
+**index** loads one of several named sections:
 ```agent
 lazy context "catalog" (priority: 35) {
   summary "Error pattern catalog."
@@ -216,7 +216,7 @@ lazy context "catalog" (priority: 35) {
 }
 ```
 
-**inline** — embeds prose directly:
+**inline** embeds prose directly:
 ```agent
 lazy context "note" (priority: 20) {
   summary "A reminder."
@@ -231,11 +231,11 @@ lazy context "note" (priority: 20) {
 ```agent
 step step_name {
   requires <dependency>     // optional
-  when <expr>               // optional — skip step if false
-  use skill_name(args)      // optional — delegate to another skill
+  when <expr>               // optional, skip step if false
+  use skill_name(args)      // optional, delegate to another skill
   let name = <expr>         // zero or more local bindings
   load "lazy-context-name"  // zero or more lazy context loads
-  emit output               // optional — signals this step produces final output
+  emit output               // optional, signals this step produces final output
   context { ... }           // zero or more context blocks
 }
 ```
@@ -467,8 +467,8 @@ tools {
 
 ### require vs optional
 
-- `require` — the skill cannot run without this tool.
-- `optional` — the skill degrades gracefully if unavailable.
+- `require`: the skill cannot run without this tool.
+- `optional`: the skill degrades gracefully if unavailable.
 
 ### Builtin tools
 
@@ -611,7 +611,7 @@ confidence 0.85
 runs 5
 ```
 
-`confidence` (0.0–1.0): minimum fraction of runs that must pass for the test
+`confidence` (0.0 to 1.0): minimum fraction of runs that must pass for the test
 to be considered passing. `runs` defaults to 1. Applies to `resembles` and
 `satisfies` assertions.
 
@@ -766,7 +766,7 @@ mixin mixin_name {
   }
   step step_b {
     requires all_steps
-    context { "Final step — always runs last." }
+    context { "Final step, always runs last." }
   }
 }
 ```
