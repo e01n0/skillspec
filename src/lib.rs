@@ -11,3 +11,4 @@ pub mod formatter;
 pub mod budget;
 pub mod migrate;
 pub mod diff;
+pub mod resolve;
