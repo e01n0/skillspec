@@ -1,13 +1,5 @@
 import { Design } from "@types/design"
 
-type Design {
-  title: string
-  summary: string
-  approach: string
-  tradeoffs: string
-  open_questions: string[]
-}
-
 mixin conversation_logging {
   step log_outcome {
     requires all_steps

@@ -1,0 +1,13 @@
+type Finding {
+    file: string
+    line: int
+    severity: enum("critical", "high", "medium", "low")
+    message: string
+    suggestion?: string
+}
+
+type ReviewReport {
+    findings: Finding[]
+    summary: string
+    score: int
+}

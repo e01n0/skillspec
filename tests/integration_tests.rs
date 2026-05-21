@@ -10,7 +10,22 @@ fn full_pipeline(input: &str) -> String {
     let mut checker = Checker::new();
     checker.check(&ast).expect("checker failed");
     let compiler = SkillMdCompiler::new();
-    compiler.compile(&ast.skills[0])
+    compiler.compile(&ast.skills[0], &ast)
+}
+
+fn full_pipeline_from_file(path: &str) -> String {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", path));
+    let tokens = Lexer::new(&source).tokenize().expect("lexer failed");
+    let ast = Parser::new(tokens).parse().expect("parser failed");
+    let base_dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    checker.check(&ast).expect("checker failed");
+    let compiler = SkillMdCompiler::new();
+    compiler.compile(&ast.skills[0], &ast)
 }
 
 #[test]
@@ -22,8 +37,8 @@ fn minimal_skill_round_trip() {
 
 #[test]
 fn code_review_fixture() {
-    let source = include_str!("fixtures/code_review.agent");
-    let md = full_pipeline(source);
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/code_review.agent");
+    let md = full_pipeline_from_file(fixture_path);
 
     // Frontmatter
     assert!(md.contains("name: code-review"));
@@ -110,16 +125,20 @@ fn conditional_context_preserved() {
     "#);
     assert!(md.contains("Always here."));
     assert!(md.contains("Only when focused."));
+    assert!(md.contains("Condition:"), "when guard should be emitted as condition annotation");
+    assert!(md.contains("input.focus"), "condition should reference the guard expression");
 }
 
 #[test]
 fn full_featured_fixture() {
-    let source = include_str!("fixtures/full_featured.agent");
-    let tokens = Lexer::new(source).tokenize().expect("lexer failed");
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/full_featured.agent");
+    let source = std::fs::read_to_string(fixture_path).expect("read failed");
+    let tokens = Lexer::new(&source).tokenize().expect("lexer failed");
     let ast = Parser::new(tokens).parse().expect("parser failed");
 
-    // Verify top-level structure
-    assert_eq!(ast.type_defs.len(), 2, "expected 2 type defs (Finding, ReviewReport)");
+    // Verify top-level structure (types now imported, not local)
+    assert_eq!(ast.imports.len(), 1, "expected 1 import statement");
+    assert_eq!(ast.type_defs.len(), 0, "types are imported, not locally defined");
     assert_eq!(ast.mixins.len(), 1, "expected 1 mixin (observability)");
     assert_eq!(ast.skills.len(), 1, "expected 1 skill (full-review)");
     assert_eq!(ast.pipelines.len(), 1, "expected 1 pipeline (ci-review)");
@@ -172,13 +191,14 @@ fn full_featured_fixture() {
     assert_eq!(orch.phases.len(), 2, "orchestration should have 2 phases");
     assert_eq!(orch.timeout.as_deref(), Some("1h"));
 
-    // Run checker — all types and references must resolve cleanly
-    let mut checker = Checker::new();
+    // Run checker with base_dir so imports resolve
+    let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut checker = Checker::with_base_dir(base_dir);
     checker.check(&ast).expect("checker failed");
 
     // Compile skill to SkillMd
     let compiler = SkillMdCompiler::new();
-    let md = compiler.compile(&ast.skills[0]);
+    let md = compiler.compile(&ast.skills[0], &ast);
 
     // Verify compiled skill output
     assert!(md.contains("name: full-review"), "frontmatter should have skill name");
@@ -191,7 +211,8 @@ fn full_featured_fixture() {
     assert!(md.contains("Step: analyze"), "should have analyze step section");
     assert!(md.contains("Step: deep_review"), "should have deep_review step section");
     assert!(md.contains("Step: synthesise"), "should have synthesise step section");
-    assert!(md.contains("Includes mixin: observability"), "should note mixin inclusion");
+    assert!(md.contains("Step: log_start"), "should inject mixin step log_start");
+    assert!(md.contains("Step: log_end"), "should inject mixin step log_end");
 
     // Steps should appear in topological order
     let analyze_pos = md.find("Step: analyze").expect("analyze step missing");
@@ -255,6 +276,7 @@ fn all_example_skills_pass_check() {
         "skills/skill-writer.agent",
         "skills/skillspec-migrate.agent",
         "skills/skillspec-backport.agent",
+        "skills/skillspec-test.agent",
         "examples/brainstorming.agent",
     ] {
         let source = std::fs::read_to_string(path)
@@ -263,7 +285,11 @@ fn all_example_skills_pass_check() {
             .unwrap_or_else(|e| panic!("{}: lexer failed: {}", path, e));
         let ast = Parser::new(tokens).parse()
             .unwrap_or_else(|e| panic!("{}: parser failed: {}", path, e));
-        let mut checker = Checker::new();
+        let base_dir = std::path::Path::new(path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        let mut checker = Checker::with_base_dir(base_dir);
         checker.check(&ast)
             .unwrap_or_else(|errs| panic!("{}: checker failed with {} errors: {:?}", path, errs.len(), errs));
     }
@@ -276,13 +302,14 @@ fn all_example_skills_compile_to_skillmd() {
         "skills/skill-writer.agent",
         "skills/skillspec-migrate.agent",
         "skills/skillspec-backport.agent",
+        "skills/skillspec-test.agent",
         "examples/brainstorming.agent",
     ] {
         let source = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path));
         let tokens = Lexer::new(&source).tokenize().unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
-        let md = compiler.compile(&ast.skills[0]);
+        let md = compiler.compile(&ast.skills[0], &ast);
         assert!(md.contains("---"), "{}: missing frontmatter", path);
         assert!(md.contains("name:"), "{}: missing name in frontmatter", path);
         assert!(!md.is_empty(), "{}: empty output", path);
@@ -328,7 +355,227 @@ fn package_declaration_parsed_and_exported_skill_compiled() {
     let mut checker = Checker::new();
     checker.check(&ast).expect("checker failed");
     let compiler = SkillMdCompiler::new();
-    let md = compiler.compile(&ast.skills[0]);
+    let md = compiler.compile(&ast.skills[0], &ast);
     assert!(md.contains("name: code-review"));
     assert!(md.contains("Review code carefully."));
+}
+
+// ── Multi-file import resolution ───────────────────────────────────
+
+#[test]
+fn multi_file_import_resolves_types() {
+    let fixture_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/code_review.agent"
+    );
+    let source = std::fs::read_to_string(fixture_path).expect("read failed");
+    let tokens = Lexer::new(&source).tokenize().expect("lexer failed");
+    let ast = Parser::new(tokens).parse().expect("parser failed");
+
+    assert_eq!(ast.imports.len(), 1, "should have 1 import");
+    assert_eq!(ast.type_defs.len(), 0, "types should NOT be locally defined");
+    assert!(
+        ast.imports[0].symbols.contains(&"Finding".to_string()),
+        "should import Finding"
+    );
+
+    let base_dir = std::path::Path::new(fixture_path)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    checker
+        .check(&ast)
+        .expect("checker should resolve imported Finding type");
+}
+
+#[test]
+fn multi_file_import_missing_symbol_errors() {
+    let dir = std::env::temp_dir().join("skillspec_import_test_missing_sym");
+    let types_dir = dir.join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::write(
+        types_dir.join("review.agent"),
+        "type Finding { file: string }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("skill.agent"),
+        r#"
+            import { Finding, NonExistent } from "@types/review"
+            skill "x" {
+                input { f: Finding }
+                body { context { "ok" } }
+            }
+        "#,
+    )
+    .unwrap();
+
+    let source = std::fs::read_to_string(dir.join("skill.agent")).unwrap();
+    let tokens = Lexer::new(&source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let mut checker = Checker::with_base_dir(dir.clone());
+    let result = checker.check(&ast);
+
+    assert!(result.is_err(), "should fail — NonExistent is not in the types file");
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| format!("{}", e).contains("NonExistent")),
+        "should report NonExistent as missing: {:?}",
+        errs
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn multi_file_import_unresolved_path_errors() {
+    let dir = std::env::temp_dir().join("skillspec_import_test_bad_path");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("skill.agent"),
+        r#"
+            import { Foo } from "@types/nonexistent"
+            skill "x" {
+                body { context { "ok" } }
+            }
+        "#,
+    )
+    .unwrap();
+
+    let source = std::fs::read_to_string(dir.join("skill.agent")).unwrap();
+    let tokens = Lexer::new(&source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let mut checker = Checker::with_base_dir(dir.clone());
+    let result = checker.check(&ast);
+
+    assert!(result.is_err(), "should fail — import path doesn't exist");
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| format!("{}", e).contains("resolve")),
+        "should report unresolved import: {:?}",
+        errs
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn multi_file_transitive_imports() {
+    let dir = std::env::temp_dir().join("skillspec_import_test_transitive");
+    let types_dir = dir.join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+
+    // base.agent defines Severity
+    std::fs::write(
+        types_dir.join("base.agent"),
+        r#"type Severity { level: string }"#,
+    )
+    .unwrap();
+
+    // review.agent imports Severity and defines Finding using it
+    std::fs::write(
+        types_dir.join("review.agent"),
+        r#"
+            import { Severity } from "./base"
+            type Finding {
+                file: string
+                severity: Severity
+            }
+        "#,
+    )
+    .unwrap();
+
+    // skill imports Finding (which depends on Severity transitively)
+    std::fs::write(
+        dir.join("skill.agent"),
+        r#"
+            import { Finding } from "@types/review"
+            skill "x" {
+                input { f: Finding }
+                body { context { "ok" } }
+            }
+        "#,
+    )
+    .unwrap();
+
+    let source = std::fs::read_to_string(dir.join("skill.agent")).unwrap();
+    let tokens = Lexer::new(&source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let mut checker = Checker::with_base_dir(dir.clone());
+    checker
+        .check(&ast)
+        .expect("transitive imports should resolve");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn extends_with_inherited_requires_full_pipeline() {
+    let source = r#"
+        skill "base" {
+            input { files: string[] }
+            body {
+                lazy context "docs" (priority: 50) {
+                    summary "API docs."
+                    ref "./api.md"
+                }
+                step analyze {
+                    context { "Analyze the files." }
+                }
+            }
+        }
+        skill "child" extends "base" {
+            body {
+                step report {
+                    requires analyze
+                    load "docs"
+                    emit output
+                    context { "Write the report." }
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().expect("lexer failed");
+    let ast = Parser::new(tokens).parse().expect("parser failed");
+    let mut checker = Checker::new();
+    checker.check(&ast).expect("checker should accept requires on inherited step");
+    let compiler = SkillMdCompiler::new();
+    let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
+    let md = compiler.compile(child, &ast);
+    assert!(md.contains("Step: analyze"), "should inherit base step");
+    assert!(md.contains("Step: report"), "should have child step");
+    assert!(md.contains("files"), "should inherit base input");
+}
+
+#[test]
+fn mixin_requires_full_pipeline() {
+    let md = full_pipeline(r#"
+        mixin logging {
+            step log_start { context { "Log start." } }
+        }
+        skill "x" {
+            include logging
+            body {
+                step work {
+                    requires log_start
+                    emit output
+                    context { "Do work." }
+                }
+            }
+        }
+    "#);
+    assert!(md.contains("Step: log_start"), "should have mixin step");
+    assert!(md.contains("Step: work"), "should have child step");
+}
+
+#[test]
+fn brainstorming_example_imports_resolve() {
+    let example_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/brainstorming.agent"
+    );
+    let md = full_pipeline_from_file(example_path);
+    assert!(md.contains("name: brainstorming"));
+    assert!(md.contains("design"), "output should reference Design type");
 }

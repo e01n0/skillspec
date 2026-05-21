@@ -212,16 +212,20 @@ impl Parser {
         let mut steps = Vec::new();
         let mut on_error = None;
         let mut directives = PromptDirectives::default();
+        let mut source_order = Vec::new();
 
         while self.peek_kind() != TokenKind::RBrace {
             match self.peek_kind() {
                 TokenKind::Lazy => {
+                    source_order.push(BodyItemRef::LazyContext(lazy_contexts.len()));
                     lazy_contexts.push(self.parse_lazy_context()?);
                 }
                 TokenKind::Context => {
+                    source_order.push(BodyItemRef::Context(contexts.len()));
                     contexts.push(self.parse_context_block()?);
                 }
                 TokenKind::Step => {
+                    source_order.push(BodyItemRef::Step(steps.len()));
                     steps.push(self.parse_step()?);
                 }
                 TokenKind::OnError => {
@@ -283,6 +287,7 @@ impl Parser {
             steps,
             on_error,
             directives,
+            source_order,
         })
     }
 
