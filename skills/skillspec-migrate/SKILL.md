@@ -45,8 +45,6 @@ parameters:
 
 **Sampling:** temperature=0.2, top_p=0.9
 
-**Output format:** json (output)
-
 **Reinforcement:** every 2 steps — "Preserve the original prose exactly. Your job is to add structure around it, not rewrite it."
 
 ### Examples

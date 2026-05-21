@@ -1,0 +1,25 @@
+skill "greet" {
+    input {
+        name: string
+    }
+
+    output {
+        greeting: string
+    }
+
+    body {
+        context(priority: 100) {
+            "Produce a warm, friendly greeting for the given name."
+        }
+
+        step greet {
+            emit output
+
+            context {
+                """
+                Address the person by name. Keep it brief and genuine.
+                """
+            }
+        }
+    }
+}

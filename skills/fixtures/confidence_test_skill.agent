@@ -1,0 +1,48 @@
+skill "creative-namer" {
+    input {
+        description: string
+    }
+
+    output {
+        name: string
+        tagline: string
+    }
+
+    body {
+        sampling {
+            temperature: 0.9
+        }
+
+        context(priority: 100) {
+            """
+            Generate a creative product name and short tagline based
+            on the provided description. Be inventive but relevant.
+            """
+        }
+
+        step generate {
+            emit output
+
+            context {
+                """
+                Invent a memorable product name and a punchy tagline
+                that captures the essence of the description.
+                """
+            }
+        }
+    }
+
+    tests {
+        test "generates relevant name" {
+            given {
+                description: "A note-taking app for developers that integrates with git"
+            }
+            expect {
+                output.name: satisfies("The name is relevant to note-taking or developer tools")
+                output.tagline: satisfies("The tagline references productivity or development workflow")
+            }
+            confidence 0.8
+            runs 5
+        }
+    }
+}

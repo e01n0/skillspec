@@ -46,6 +46,9 @@ pub enum SkillSpecError {
     #[error("Symbol '{symbol}' not found in imported file '{path}' at {span}")]
     ImportSymbolNotFound { symbol: String, path: String, span: Span },
 
+    #[error("Lazy context '{name}' references missing file '{path}' at {span}")]
+    UnresolvedRef { name: String, path: String, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 

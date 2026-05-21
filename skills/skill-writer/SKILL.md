@@ -36,7 +36,7 @@ parameters:
 
 ## Permissions
 
-- **Filesystem:** read_write — docs/**, examples/**
+- **Filesystem:** read_only — **/*.agent, **/*.md
 
 > You are an expert SkillSpec language reviewer. You understand
 > the design principles behind the DSL: skills are functions not

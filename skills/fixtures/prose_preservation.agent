@@ -1,0 +1,49 @@
+// .agent.partial — prose must survive migration verbatim
+
+skill "onboarding-guide" {
+    input {
+        team_name: string
+        new_hire: string
+    }
+
+    output {
+        guide: string
+    }
+
+    body {
+        context {
+            // TODO: Assign priority
+            """
+            original instruction text that must be preserved verbatim
+
+            Walk the new team member through the onboarding checklist.
+            Be welcoming and specific — avoid generic corporate filler.
+            """
+        }
+
+        step welcome {
+            context {
+                // TODO: Assign priority
+                """
+                Greet the new hire by name and explain what their first
+                week will look like. Use the phrase: original instruction
+                text that must be preserved verbatim when describing
+                the team culture.
+                """
+            }
+        }
+
+        step checklist {
+            requires welcome
+            emit output
+
+            context {
+                // TODO: Assign priority
+                """
+                Produce the onboarding checklist. Include accounts to
+                set up, repos to clone, and people to meet.
+                """
+            }
+        }
+    }
+}

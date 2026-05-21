@@ -1,0 +1,64 @@
+// .agent.partial — step dependencies must be inferred from prose references
+
+type AnalysisReport {
+    findings: string[]
+    risk_level: enum("low", "medium", "high")
+    recommendation: string
+}
+
+skill "risk-assessment" {
+    input {
+        codebase: string
+        scope?: string
+    }
+
+    output {
+        report: AnalysisReport
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Perform a risk assessment on the provided codebase.
+            Analyse the code, review the findings, and produce
+            a final recommendation.
+            """
+        }
+
+        step analyse {
+            // TODO: Determine dependencies
+            context(priority: 90) {
+                """
+                Scan the codebase for potential risk factors.
+                Look for security vulnerabilities, deprecated APIs,
+                and missing error handling. Record each finding.
+                """
+            }
+        }
+
+        step review {
+            // TODO: Determine dependencies
+            context(priority: 80) {
+                """
+                Based on the analysis results, classify each finding
+                by severity. Determine the overall risk level by
+                weighing the most critical issues found during analysis.
+                """
+            }
+        }
+
+        step recommend {
+            // TODO: Determine dependencies
+            emit output
+
+            context(priority: 70) {
+                """
+                Using the reviewed findings and their risk classifications,
+                produce a final recommendation. Reference the specific
+                issues identified during review and suggest remediation
+                steps for each.
+                """
+            }
+        }
+    }
+}
