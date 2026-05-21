@@ -1,36 +1,122 @@
-# Deterministic Assertions
+# Evaluating Deterministic Assertions
 
-These assertions are mechanical comparisons. No judgment needed.
+Deterministic assertions are mechanical checks. They compare an actual value
+against an expected value using a fixed rule. No judgment is needed -- the
+result is always unambiguous.
 
-## `equals value`
+## equals
 
-Exact equality. Strings compared character-by-character, numbers by value, bools by identity.
+```agent
+output.status: equals "success"
+output.count: equals 42
+output.passed: equals true
+```
 
-- `output.status: equals "success"` - passes only if status is exactly "success"
-- `output.count: equals 5` - passes only if count is exactly 5
+**Evaluation:** Exact equality. Type-sensitive.
+- String equality: `"success" == "success"` -> pass. `"Success" == "success"` -> FAIL (case-sensitive).
+- Integer equality: `42 == 42` -> pass. `42 == 42.0` -> type mismatch, FAIL.
+- Boolean equality: `true == true` -> pass.
+- Array equality: element-by-element, same order, same length.
 
-## `contains value`
+**Edge cases:**
+- `null` / missing field equals nothing except another explicit null.
+- Empty string `""` does not equal missing/null.
+- `0` does not equal `false`.
 
-For strings: substring match. For arrays: element presence.
+## contains
 
-- `output.message: contains "error"` - passes if "error" appears anywhere in the string
-- `output.tags: contains "urgent"` - passes if the array includes "urgent"
+```agent
+output.summary: contains "security"
+output.tags: contains "urgent"
+```
 
-## `matches "regex"`
+**Evaluation:** Depends on the actual value's type.
 
-Regex match against string output. Uses full-match semantics (anchored).
+For strings: substring check. `"Found 3 security issues"` contains `"security"` -> pass.
+Case-sensitive. `"Security"` does not match `contains "security"`.
 
-- `output.id: matches "^[a-f0-9]{8}$"` - passes if id is an 8-char hex string
+For arrays: element presence. `["urgent", "review"]` contains `"urgent"` -> pass.
+Uses exact equality for each element comparison.
 
-## Numeric comparisons
+**Edge cases:**
+- Empty string is contained in every string.
+- Empty array contains nothing.
+- `contains` on a non-string, non-array type is an error.
 
-`>= value`, `<= value`, `> value`, `< value`, `== value`, `!= value`
+## matches
 
-- `output.score: >= 70` - passes if score is 70 or above
-- `output.errors: == 0` - passes if exactly zero errors
+```agent
+output.filename: matches "^src/.*\\.rs$"
+output.version: matches "\\d+\\.\\d+\\.\\d+"
+```
 
-## Evaluation rules
+**Evaluation:** Regex match against the string value. The regex must match
+somewhere in the string (not necessarily the full string) unless anchored
+with `^` and `$`.
 
-1. Extract the actual value from the simulated output at the specified path
-2. Apply the comparison operator
-3. Pass or fail. No partial credit, no rounding, no "close enough"
+- `"src/main.rs"` matches `"^src/.*\\.rs$"` -> pass.
+- `"src/main.rs"` matches `"main"` -> pass (substring match).
+- `"src/main.rs"` matches `"^main"` -> FAIL (anchored at start).
+
+**Edge cases:**
+- Invalid regex is an error (report as assertion error, not pass/fail).
+- Matching against a non-string type is an error.
+- Backslashes in the regex string must be escaped: `"\\d+"` not `"\d+"`.
+
+## Numeric Comparisons
+
+```agent
+output.score: >= 70
+output.score: <= 100
+output.score: > 0
+output.score: < 50
+output.score: == 42
+output.score: != 0
+```
+
+**Evaluation:** Standard numeric comparison. Both sides must be numeric
+(int or float).
+
+- `75 >= 70` -> pass.
+- `70 >= 70` -> pass (inclusive).
+- `69 >= 70` -> FAIL.
+
+**Type coercion:** `int` and `float` can be compared. `42 == 42.0` passes
+for numeric comparison (unlike `equals`, which is type-strict).
+
+**Edge cases:**
+- Comparing a non-numeric value is an error.
+- `NaN` comparisons always fail (NaN != NaN).
+- Negative zero equals positive zero.
+
+## Compound Deterministic Assertions
+
+When multiple assertions apply to the same test case, ALL must pass for the
+test to pass. There is no short-circuit -- evaluate all assertions and report
+each result individually.
+
+```agent
+expect {
+  output.score: >= 0
+  output.score: <= 100
+  output.status: equals "complete"
+  output.summary: contains "review"
+}
+```
+
+All four are evaluated. If `score` is 75, `status` is "complete", and
+`summary` is "Code review complete", all pass. If `summary` is "Analysis
+done", the `contains "review"` assertion fails while the others pass.
+
+## Reporting
+
+For each deterministic assertion, report:
+- `path`: the field path (e.g. `output.score`)
+- `assertion`: the assertion text (e.g. `>= 70`)
+- `passed`: true/false
+- `actual`: the actual value (e.g. `65`)
+- `expected`: the expected value/condition (e.g. `>= 70`)
+- `error`: null if passed, explanation if failed (e.g. `65 < 70`)
+
+Keep error messages factual: state what was expected and what was found.
+No hedging, no "almost passed", no partial credit.
