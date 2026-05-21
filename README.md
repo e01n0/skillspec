@@ -65,11 +65,14 @@ You don't have to rewrite everything. SkillSpec meets you where you are:
 ## Quick Start
 
 ```bash
-cargo install skillspec
+git clone git@github.com:e01n0/skillspec.git
+cd skillspec && cargo install --path .
 skillspec init my-skill        # scaffold a new .agent file
 skillspec check my-skill.agent # type-check and validate
 skillspec build my-skill.agent # compile to SKILL.md
 ```
+
+For a full walkthrough, see the [Quickstart Guide](docs/quickstart.md). For the complete language, see the [Language Reference](docs/language-reference.md).
 
 ## Hello World
 
