@@ -1,0 +1,22 @@
+[package]
+name = "skillspec"
+version = "0.1.0"
+edition = "2024"
+description = "A typed, composable language for AI agent skills and workflows"
+
+[lib]
+name = "skillspec_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "skillspec"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+miette = { version = "7", features = ["fancy"] }
+logos = "0.14"
+thiserror = "2"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

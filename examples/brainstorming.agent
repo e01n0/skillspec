@@ -1,0 +1,178 @@
+import { Design } from "@types/design"
+
+type Design {
+  title: string
+  summary: string
+  approach: string
+  tradeoffs: string
+  open_questions: string[]
+}
+
+mixin conversation_logging {
+  step log_outcome {
+    requires all_steps
+    context {
+      """
+      Record the final design decision and rationale for future reference.
+      """
+    }
+  }
+}
+
+skill "brainstorming" {
+  input {
+    idea: string
+    constraints?: string
+    audience?: string
+  }
+  output {
+    design: Design
+    ready_for_planning: bool
+  }
+  tools {
+    require Read
+    require Bash
+    optional mcp("github") {
+      search_issues(query: string) -> string
+    }
+  }
+  permissions {
+    filesystem: read_write("docs/**")
+    network: outbound("api.github.com")
+  }
+  include conversation_logging
+  pre {
+    assert input.idea != "" message "An idea is required to brainstorm"
+  }
+  post {
+    assert output.design.title != "" message "Design must have a title"
+  }
+  body {
+    persona {
+      """
+      You are a pragmatic software architect who values simplicity
+      over cleverness. You push back on over-engineering and always
+      ask "do we actually need this?" before adding complexity.
+      """
+    }
+    reasoning extended
+    sampling {
+      temperature: 0.7
+      top_p: 0.95
+    }
+    format {
+      style: markdown
+      structure: output
+    }
+    reinforce every 2 steps {
+      """
+      Stay focused on the user's actual problem. Resist scope creep.
+      """
+    }
+    examples {
+      example "simple feature" {
+        input: "Add dark mode to the settings page"
+        output: "A design with CSS custom properties approach"
+        note: "Simple features get simple designs — no over-architecting"
+      }
+    }
+    context(priority: 100) {
+      """
+      Help the user turn a raw idea into a well-formed design.
+      Explore the problem space before jumping to solutions.
+      Ask clarifying questions one at a time.
+      """
+    }
+    context(priority: 75, when: input.constraints) {
+      """
+      The user has specified constraints. Respect these as hard
+      boundaries — do not propose solutions that violate them.
+      """
+    }
+    context(priority: 70, when: input.audience) {
+      """
+      Consider the target audience when making design decisions.
+      A tool for developers needs different UX than one for end users.
+      """
+    }
+    lazy context "patterns-catalog" (priority: 40) {
+      summary "Common design patterns and when to use them."
+      ref "./references/design-patterns.md"
+    }
+    lazy context "past-decisions" (priority: 35) {
+      summary "Previous design decisions and their outcomes."
+      index {
+        section "architecture" {
+          summary "Architecture decision records."
+          ref "./references/adrs.md"
+        }
+        section "lessons" {
+          summary "Lessons learned from past projects."
+          ref "./references/lessons.md"
+        }
+      }
+    }
+    step explore {
+      context(priority: 90) {
+        """
+        First, understand the problem deeply. Ask one clarifying
+        question at a time. Do not propose solutions yet.
+        Consider: who is affected, what problem this solves,
+        what happens if we do nothing.
+        """
+      }
+    }
+    step propose {
+      requires explore
+      load "patterns-catalog"
+      context(priority: 80) {
+        """
+        Now propose 2-3 approaches with clear tradeoffs.
+        Lead with your recommendation and explain why.
+        Reference design patterns from the catalog where relevant.
+        """
+      }
+    }
+    step refine {
+      requires propose
+      load "past-decisions"
+      context(priority: 70) {
+        """
+        Refine the chosen approach. Check it against past decisions
+        for consistency. Identify open questions that need answers
+        before implementation can begin.
+        """
+      }
+    }
+    step finalise {
+      requires refine
+      emit output
+      context {
+        """
+        Produce the final Design output. Set ready_for_planning
+        to true only if all open questions are resolved.
+        """
+      }
+    }
+  }
+}
+
+pipeline "design-review" {
+  input {
+    design_doc: string
+  }
+  output {
+    approved: bool
+  }
+  stage technical {
+    use technical_review(doc: input.design_doc)
+  }
+  stage feasibility {
+    use feasibility_check(doc: input.design_doc)
+  }
+  stage approval {
+    requires technical & feasibility
+    use final_approval(technical: technical.result, feasibility: feasibility.result)
+  }
+  timeout 1h
+}
