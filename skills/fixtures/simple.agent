@@ -1,0 +1,30 @@
+skill "formatter" {
+    input {
+        text: string
+        style?: enum("markdown", "plain", "html") = "markdown"
+    }
+
+    output {
+        formatted: string
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Format the input text according to the requested style.
+            Default to markdown if no style is specified.
+            """
+        }
+
+        step format {
+            emit output
+
+            context {
+                """
+                Apply the formatting rules for the chosen style and
+                produce the formatted output.
+                """
+            }
+        }
+    }
+}

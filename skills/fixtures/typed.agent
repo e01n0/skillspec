@@ -1,0 +1,83 @@
+type Metric {
+    name: string
+    value: float
+    unit: string
+    threshold?: float
+}
+
+type HealthReport {
+    service: string
+    status: enum("healthy", "degraded", "down")
+    metrics: Metric[]
+    timestamp: string
+}
+
+skill "health-checker" {
+    input {
+        service_url: string
+        metrics: string[]
+        timeout_ms?: int = 5000
+    }
+
+    output {
+        report: HealthReport
+    }
+
+    tools {
+        require Bash
+    }
+
+    pre {
+        assert input.service_url != "" message "Service URL is required"
+        assert input.metrics != [] message "At least one metric must be specified"
+    }
+
+    post {
+        assert output.report.service != "" message "Service name must be populated"
+        assert output.report.metrics != [] message "Report must contain metrics"
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Check the health of a service by collecting the specified
+            metrics and producing a structured health report.
+            """
+        }
+
+        step probe {
+            context(priority: 90) {
+                """
+                Send a health check request to the service URL.
+                Collect each requested metric. Respect the timeout.
+                """
+            }
+        }
+
+        step evaluate {
+            requires probe
+
+            context(priority: 80) {
+                """
+                Compare each collected metric against its threshold.
+                Determine the overall service status:
+                - healthy: all metrics within thresholds
+                - degraded: some metrics outside thresholds
+                - down: service unreachable or critical metrics failed
+                """
+            }
+        }
+
+        step report {
+            requires evaluate
+            emit output
+
+            context {
+                """
+                Assemble the HealthReport with all metrics, the
+                determined status, and a timestamp.
+                """
+            }
+        }
+    }
+}

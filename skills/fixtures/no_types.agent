@@ -1,0 +1,49 @@
+skill "inventory-check" {
+    input {
+        items: string
+        count: string
+        threshold: string
+        include_expired: string
+    }
+
+    output {
+        results: string
+        total_count: string
+        below_threshold: string
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Check inventory levels. Iterate over the list of items,
+            count how many are below the numeric threshold, and return
+            the filtered results as a list. Flag whether to include
+            expired items based on the boolean toggle.
+            """
+        }
+
+        step scan {
+            context(priority: 80) {
+                """
+                Go through each item in the items array. For each one,
+                compare its stock count against the threshold number.
+                Track how many fall below the threshold as an integer.
+                """
+            }
+        }
+
+        step report {
+            requires scan
+            emit output
+
+            context {
+                """
+                Produce the results array of items below threshold.
+                Set total_count to the number of items checked.
+                Set below_threshold to true if any items are under
+                the threshold, false otherwise.
+                """
+            }
+        }
+    }
+}

@@ -311,6 +311,29 @@ impl Checker {
             }
         }
 
+        // Validate lazy context ref paths point to files that exist
+        if let Some(base) = &self.base_dir {
+            for lc in &body.lazy_contexts {
+                let refs_to_check: Vec<&str> = match &lc.content {
+                    crate::ast::LazyContent::Ref(path) => vec![path.as_str()],
+                    crate::ast::LazyContent::Index(sections) => {
+                        sections.iter().map(|s| s.ref_path.as_str()).collect()
+                    }
+                    crate::ast::LazyContent::Inline(_) => vec![],
+                };
+                for ref_path in refs_to_check {
+                    let resolved = base.join(ref_path);
+                    if !resolved.is_file() {
+                        self.errors.push(SkillSpecError::UnresolvedRef {
+                            name: lc.name.clone(),
+                            path: ref_path.to_string(),
+                            span: lc.span,
+                        });
+                    }
+                }
+            }
+        }
+
         // Validate load references in steps (own + inherited lazy contexts)
         for step in &body.steps {
             for load_name in &step.loads {
@@ -689,6 +712,13 @@ mod tests {
         let tokens = Lexer::new(input).tokenize().unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
         let mut checker = Checker::new();
+        checker.check(&ast)
+    }
+
+    fn check_with_base(input: &str, base: &std::path::Path) -> std::result::Result<(), Vec<SkillSpecError>> {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let mut checker = Checker::with_base_dir(base.to_path_buf());
         checker.check(&ast)
     }
 
@@ -1182,6 +1212,74 @@ mod tests {
             skill "child" extends "base" {
                 body {
                     step produce { emit output context { "overridden" } }
+                }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unresolved_ref_errors() {
+        let base = std::env::temp_dir();
+        let result = check_with_base(r#"
+            skill "x" {
+                body {
+                    lazy context "ghost" (priority: 50) {
+                        summary "Points to nothing."
+                        ref "./does-not-exist.md"
+                    }
+                    step main {
+                        load "ghost"
+                        context { "ok" }
+                    }
+                }
+            }
+        "#, &base);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. })));
+    }
+
+    #[test]
+    fn unresolved_index_ref_errors() {
+        let base = std::env::temp_dir();
+        let result = check_with_base(r#"
+            skill "x" {
+                body {
+                    lazy context "catalog" (priority: 50) {
+                        summary "Indexed sections."
+                        index {
+                            section "missing" {
+                                summary "Not on disk."
+                                ref "./nope.md"
+                            }
+                        }
+                    }
+                    step main {
+                        load "catalog"
+                        context { "ok" }
+                    }
+                }
+            }
+        "#, &base);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. })));
+    }
+
+    #[test]
+    fn ref_skipped_without_base_dir() {
+        let result = check(r#"
+            skill "x" {
+                body {
+                    lazy context "ghost" (priority: 50) {
+                        summary "No base dir, no check."
+                        ref "./does-not-exist.md"
+                    }
+                    step main {
+                        load "ghost"
+                        context { "ok" }
+                    }
                 }
             }
         "#);

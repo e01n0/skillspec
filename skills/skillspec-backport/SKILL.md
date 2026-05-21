@@ -44,8 +44,6 @@ parameters:
 
 **Sampling:** temperature=0.2, top_p=0.9
 
-**Output format:** json (output)
-
 **Reinforcement:** every 2 steps — "Map changes to the most specific .agent location. A new paragraph in a step section maps to that step's context block, not to a skill-level context."
 
 ## References (lazy-loaded)
@@ -84,13 +82,11 @@ WHERE each change belongs in the structured source.
 
 If a changeset file is provided, read it directly.
 
-Otherwise, generate the diff:
+Otherwise, generate the diff by reading both files:
 1. Read the .agent source file
-2. Run 'skillspec build' to compile it to SKILL.md (in memory
-   or to a temp file)
-3. Compare the compiled output against the provided modified
-   SKILL.md using 'skillspec diff --against-skillmd'
-4. Parse the diff output into structured changes
+2. Read the modified SKILL.md
+3. Compare them structurally: identify which sections,
+   parameters, and prose blocks differ
 
 Categorise each change as: added section, modified text,
 removed section, or modified frontmatter.

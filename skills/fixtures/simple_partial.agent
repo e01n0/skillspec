@@ -1,0 +1,47 @@
+// .agent.partial — mechanically extracted, TODOs need human resolution
+
+skill "data-summary" {
+    input {
+        records: string  // TODO: Infer type from usage
+        count: string    // TODO: Infer type from usage
+        format?: string
+    }
+
+    output {
+        summary: string
+        total: string  // TODO: Infer type from usage
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Summarise the provided data records. Iterate over each record,
+            extract key metrics, and produce a total count alongside a
+            human-readable summary.
+            """
+        }
+
+        step gather {
+            // TODO: Determine dependencies
+            context {
+                """
+                Read through all the records and collect the relevant
+                fields. Track the running total as you iterate.
+                """
+            }
+        }
+
+        step summarise {
+            // TODO: Determine dependencies
+            emit output
+
+            context {
+                """
+                Produce the final summary from the gathered data.
+                Include the total count and format according to the
+                requested output format.
+                """
+            }
+        }
+    }
+}
