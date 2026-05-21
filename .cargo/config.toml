@@ -1,0 +1,14 @@
+net.git-fetch-with-cli = true
+net.retry = 5
+
+[http]
+timeout = 120
+
+[source.crates-io]
+replace-with = "databricks-proxy"
+
+[source.databricks-proxy]
+registry = "sparse+https://crates-proxy.cloud.databricks.com/"
+
+[registries]
+databricks-proxy = { index = "sparse+https://crates-proxy.cloud.databricks.com/" }

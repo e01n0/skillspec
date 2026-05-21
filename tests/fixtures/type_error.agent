@@ -1,0 +1,8 @@
+skill "bad" {
+  input {
+    files: UnknownType[]
+  }
+  body {
+    context { "do stuff" }
+  }
+}

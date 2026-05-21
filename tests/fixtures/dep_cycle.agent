@@ -1,0 +1,12 @@
+skill "cycle" {
+  body {
+    step a {
+      requires b
+      context { "a" }
+    }
+    step b {
+      requires a
+      context { "b" }
+    }
+  }
+}

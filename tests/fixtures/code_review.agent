@@ -1,0 +1,77 @@
+import { Finding } from "@types/review"
+
+type Finding {
+    file: string
+    line: int
+    severity: enum("critical", "high", "medium", "low")
+    message: string
+    suggestion?: string
+}
+
+skill "code-review" {
+    input {
+        files: string[]
+        focus?: string
+    }
+
+    output {
+        findings: Finding[]
+        summary: string
+    }
+
+    pre {
+        assert input.files != [] message "No files provided"
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            You are a senior code reviewer. Review the provided files
+            for bugs, security issues, and maintainability problems.
+            """
+        }
+
+        context(priority: 80, when: input.focus) {
+            """
+            The reviewer has asked you to focus on a specific area.
+            Prioritise findings related to this area.
+            """
+        }
+
+        step analyze {
+            use static_analysis(files: input.files)
+
+            context(priority: 70) {
+                """
+                Static analysis found issues.
+                Address these before style issues.
+                """
+            }
+        }
+
+        step review {
+            requires analyze
+
+            context(priority: 60) {
+                """
+                Now review the code holistically. Consider:
+                - Logic errors the linter wouldn't catch
+                - Edge cases and error handling
+                - Naming and readability
+                """
+            }
+        }
+
+        step synthesise {
+            requires review
+            emit output
+
+            context {
+                """
+                Combine your findings into the output format.
+                Lead with the most severe issues.
+                """
+            }
+        }
+    }
+}

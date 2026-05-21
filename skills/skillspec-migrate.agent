@@ -1,0 +1,256 @@
+import { MigrationResult, MigrationTodo, InferredStep } from "@types/migration"
+
+type MigrationTodo {
+    line: int
+    category: enum("type-inference", "step-dependency", "context-priority", "conditional-extraction", "emit-placement")
+    description: string
+    suggestion?: string
+}
+
+type InferredStep {
+    name: string
+    requires: string[]
+    has_use_call: bool
+    has_emit: bool
+    confidence: float
+}
+
+type MigrationResult {
+    agent_file: string
+    confidence: float
+    todos_resolved: int
+    todos_remaining: MigrationTodo[]
+    inferred_steps: InferredStep[]
+}
+
+skill "skillspec-migrate" {
+    input {
+        partial_file: string
+        original_skillmd?: string
+    }
+
+    output {
+        result: MigrationResult
+    }
+
+    tools {
+        require Read
+        require Write
+        require Bash
+    }
+
+    permissions {
+        filesystem: read_write("**/*.agent", "**/*.agent.partial", "**/*.md")
+    }
+
+    pre {
+        assert input.partial_file != "" message "Path to .agent.partial file is required"
+    }
+
+    post {
+        assert output.result.confidence >= 0.0 message "Confidence must be non-negative"
+        assert output.result.confidence <= 1.0 message "Confidence must not exceed 1.0"
+    }
+
+    body {
+        persona {
+            """
+            You are a SkillSpec migration expert. You understand both the
+            SKILL.md format and the SkillSpec .agent syntax deeply. Your job
+            is to complete a mechanically-extracted .agent.partial file by
+            filling in the parts that require reasoning — type inference,
+            step dependency analysis, and context priority assignment.
+            """
+        }
+
+        reasoning extended
+
+        sampling {
+            temperature: 0.2
+            top_p: 0.9
+        }
+
+        format {
+            style: json
+            structure: output
+        }
+
+        reinforce every 2 steps {
+            "Preserve the original prose exactly. Your job is to add structure around it, not rewrite it."
+        }
+
+        examples {
+            example "infer string array type" {
+                input: "files: string  // TODO: Infer type from usage"
+                output: "files: string[]  // used with iteration patterns in context"
+                note: "Look for plural names and iteration language to infer array types"
+            }
+            example "infer step dependency" {
+                input: "step review references 'analysis results' in its context"
+                output: "step review { requires analyze ... }"
+                note: "Prose references to other steps' outputs imply dependencies"
+            }
+        }
+
+        context(priority: 100) {
+            """
+            Complete a .agent.partial file by resolving TODO markers.
+            The partial file was mechanically extracted by 'skillspec migrate'
+            and contains the structure it could determine, with TODO comments
+            where human reasoning is needed.
+            """
+        }
+
+        lazy context "skillspec-spec" (priority: 90) {
+            summary "SkillSpec language reference — syntax for types, steps, contexts, and all constructs."
+            ref "./references/language-reference.md"
+        }
+
+        lazy context "type-inference-patterns" (priority: 60) {
+            summary "Patterns for inferring types from prose descriptions and naming conventions."
+            index {
+                section "naming" {
+                    summary "Plural names suggest arrays. Count/total suggest int. Flag/is_ suggest bool."
+                    ref "./references/type-naming-patterns.md"
+                }
+                section "usage" {
+                    summary "Iteration language suggests arrays. Comparison language suggests enums."
+                    ref "./references/type-usage-patterns.md"
+                }
+            }
+        }
+
+        step read_partial {
+            load "skillspec-spec"
+
+            context(priority: 95) {
+                """
+                Read the .agent.partial file. Identify all TODO markers and
+                categorise them:
+                - type-inference: field types that couldn't be determined
+                - step-dependency: requires clauses that need reasoning
+                - context-priority: priority values that need assignment
+                - conditional-extraction: when guards that need extraction
+                - emit-placement: which step should produce final output
+
+                If the original SKILL.md is provided, read it too for
+                additional context about the author's intent.
+                """
+            }
+        }
+
+        step infer_types {
+            requires read_partial
+            load "type-inference-patterns"
+
+            context(priority: 85) {
+                """
+                For each type-inference TODO:
+                1. Read the field name — plural names suggest arrays,
+                   count/total suggest int, flag/is_ suggest bool
+                2. Read the context that references this field —
+                   iteration language suggests arrays, comparison
+                   language suggests enums
+                3. Check if a custom type definition would be clearer
+                   than a primitive
+                4. Assign a confidence score (0-1) based on evidence
+
+                If confidence is below 0.5, leave the TODO with your
+                best guess as a suggestion rather than committing to it.
+                """
+            }
+        }
+
+        step infer_dependencies {
+            requires read_partial
+
+            context(priority: 85) {
+                """
+                For each step-dependency TODO:
+                1. Read the step's context prose — does it reference
+                   results, outputs, or findings from another step?
+                2. Check for temporal language — "after analysis",
+                   "once reviewed", "based on the findings"
+                3. Look for data flow — if step B uses a term that
+                   step A defines or produces, B likely requires A
+                4. Identify the final step — which step synthesises
+                   or produces the skill's output? That gets emit.
+
+                Map dependencies as: requires single, requires A & B
+                (both needed), or requires A | B (either suffices).
+                """
+            }
+        }
+
+        step assign_priorities {
+            requires read_partial
+
+            context(priority: 80) {
+                """
+                For each context-priority TODO:
+                - Core identity/purpose context: priority 90-100
+                - Step-specific instructions: priority 70-85
+                - Conditional/situational context: priority 60-75
+                - Reference material: priority 40-55
+                - Nice-to-have guidance: priority 20-39
+
+                The first context block (the skill's core purpose)
+                should always be the highest priority. Step contexts
+                should decrease as steps get more specific.
+                """
+            }
+        }
+
+        step generate_agent_file {
+            requires infer_types & infer_dependencies & assign_priorities
+            emit output
+
+            context(priority: 90) {
+                """
+                Generate the completed .agent file by resolving all TODOs.
+
+                Rules:
+                - If confidence >= 0.8 for an inference, apply it directly
+                - If confidence 0.5-0.8, apply it with a comment noting uncertainty
+                - If confidence < 0.5, leave the TODO with your best suggestion
+                - Preserve ALL original prose exactly — do not rephrase or improve it
+                - Validate the result would pass 'skillspec check'
+
+                Write the completed file and report the MigrationResult.
+                """
+            }
+        }
+    }
+
+    tests {
+        test "resolves simple type inference" {
+            given {
+                partial_file: "fixtures/simple_partial.agent"
+            }
+            expect {
+                output.result.confidence: >= 0.7
+                output.result.todos_remaining: satisfies("Fewer TODOs than the input had")
+            }
+            confidence 0.8
+            runs 5
+        }
+
+        test "preserves original prose" {
+            given {
+                partial_file: "fixtures/prose_preservation.agent"
+            }
+            expect {
+                output.result.agent_file: matches(".*original instruction text.*")
+            }
+        }
+
+        test "infers step dependencies from prose" {
+            given {
+                partial_file: "fixtures/dependency_inference.agent"
+            }
+            expect {
+                output.result.inferred_steps: contains(where: .requires != [])
+            }
+        }
+    }
+}
