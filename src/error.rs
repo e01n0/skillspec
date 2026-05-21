@@ -31,6 +31,21 @@ pub enum SkillSpecError {
     #[error("Unknown agent '{name}' referenced in phase at {span}")]
     UnknownAgent { name: String, span: Span },
 
+    #[error("Skill extends unknown skill '{name}' at {span}")]
+    UnresolvedExtends { name: String, span: Span },
+
+    #[error("Import symbol '{name}' shadows local type definition at {span}")]
+    ShadowedImport { name: String, span: Span },
+
+    #[error("Cannot resolve import path '{path}' at {span}")]
+    UnresolvedImport { path: String, span: Span },
+
+    #[error("Failed to parse imported file '{path}': {message} (at {span})")]
+    ImportParseError { path: String, message: String, span: Span },
+
+    #[error("Symbol '{symbol}' not found in imported file '{path}' at {span}")]
+    ImportSymbolNotFound { symbol: String, path: String, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 

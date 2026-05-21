@@ -1,18 +1,16 @@
 use crate::error::{SkillSpecError, Result};
 use crate::token::{Span, Token, TokenKind};
 
-pub struct Lexer<'a> {
-    input: &'a str,
+pub struct Lexer {
     chars: Vec<char>,
     pos: usize,
     line: usize,
     col: usize,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str) -> Self {
+impl Lexer {
+    pub fn new(input: &str) -> Self {
         Lexer {
-            input,
             chars: input.chars().collect(),
             pos: 0,
             line: 1,

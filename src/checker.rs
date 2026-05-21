@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use crate::ast::*;
 use crate::error::SkillSpecError;
+use crate::resolve;
 use crate::token::Span;
 use crate::types::{ResolvedType, TypeRegistry};
 
 pub struct Checker {
     registry: TypeRegistry,
     errors: Vec<SkillSpecError>,
+    base_dir: Option<PathBuf>,
+    resolved_files: HashSet<PathBuf>,
 }
 
 impl Checker {
@@ -14,11 +18,25 @@ impl Checker {
         Checker {
             registry: TypeRegistry::new(),
             errors: Vec::new(),
+            base_dir: None,
+            resolved_files: HashSet::new(),
+        }
+    }
+
+    pub fn with_base_dir(base_dir: PathBuf) -> Self {
+        Checker {
+            registry: TypeRegistry::new(),
+            errors: Vec::new(),
+            base_dir: Some(base_dir),
+            resolved_files: HashSet::new(),
         }
     }
 
     pub fn check(&mut self, file: &SourceFile) -> Result<(), Vec<SkillSpecError>> {
-        // First pass: register all type definitions
+        // Resolve imports first — register imported types before local types
+        self.resolve_imports(file);
+
+        // Register all local type definitions
         for type_def in &file.type_defs {
             self.register_type(type_def);
         }
@@ -26,10 +44,29 @@ impl Checker {
         // Collect mixin names for reference validation
         let mixin_names: HashSet<String> = file.mixins.iter().map(|m| m.name.clone()).collect();
 
-        // Second pass: check each skill
-        for skill in &file.skills {
-            self.check_skill(skill, &mixin_names);
+        // Collect skill names for extends validation
+        let skill_names: HashSet<String> = file.skills.iter().map(|s| s.name.clone()).collect();
+
+        // Check for shadowed imports
+        let type_names: HashSet<String> = file.type_defs.iter().map(|t| t.name.clone()).collect();
+        for import in &file.imports {
+            for symbol in &import.symbols {
+                if type_names.contains(symbol) {
+                    self.errors.push(SkillSpecError::ShadowedImport {
+                        name: symbol.clone(),
+                        span: import.span,
+                    });
+                }
+            }
         }
+
+        // Second pass: check each skill (with access to all skills/mixins for inheritance resolution)
+        for skill in &file.skills {
+            self.check_skill(skill, &mixin_names, &skill_names, &file.skills, &file.mixins);
+        }
+
+        // Check for extends cycles across all skills
+        self.check_extends_cycles(&file.skills);
 
         // Check pipelines
         for pipeline in &file.pipelines {
@@ -48,6 +85,81 @@ impl Checker {
         }
     }
 
+    fn resolve_imports(&mut self, file: &SourceFile) {
+        let base_dir = match &self.base_dir {
+            Some(dir) => dir.clone(),
+            None => return,
+        };
+
+        for import in &file.imports {
+            let resolved_path = match resolve::resolve_import_path(&import.path, &base_dir) {
+                Some(p) => p,
+                None => {
+                    self.errors.push(SkillSpecError::UnresolvedImport {
+                        path: import.path.clone(),
+                        span: import.span,
+                    });
+                    continue;
+                }
+            };
+
+            let canonical = match resolved_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => {
+                    self.errors.push(SkillSpecError::UnresolvedImport {
+                        path: import.path.clone(),
+                        span: import.span,
+                    });
+                    continue;
+                }
+            };
+
+            if self.resolved_files.contains(&canonical) {
+                continue;
+            }
+            self.resolved_files.insert(canonical.clone());
+
+            let imported_ast = match resolve::parse_file(&canonical) {
+                Ok(ast) => ast,
+                Err(e) => {
+                    self.errors.push(SkillSpecError::ImportParseError {
+                        path: import.path.clone(),
+                        message: format!("{}", e),
+                        span: import.span,
+                    });
+                    continue;
+                }
+            };
+
+            // Recursively resolve the imported file's own imports
+            let prev_base = self.base_dir.take();
+            self.base_dir = canonical.parent().map(|p| p.to_path_buf());
+            self.resolve_imports(&imported_ast);
+            self.base_dir = prev_base;
+
+            // Collect type names available in the imported file
+            let available: HashSet<&str> = imported_ast
+                .type_defs
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect();
+
+            for symbol in &import.symbols {
+                if available.contains(symbol.as_str()) {
+                    if let Some(td) = imported_ast.type_defs.iter().find(|t| t.name == *symbol) {
+                        self.register_type(td);
+                    }
+                } else {
+                    self.errors.push(SkillSpecError::ImportSymbolNotFound {
+                        symbol: symbol.clone(),
+                        path: import.path.clone(),
+                        span: import.span,
+                    });
+                }
+            }
+        }
+    }
+
     fn register_type(&mut self, type_def: &TypeDef) {
         let fields: Vec<(String, ResolvedType, bool)> = type_def
             .fields
@@ -63,7 +175,17 @@ impl Checker {
         );
     }
 
-    fn check_skill(&mut self, skill: &Skill, mixin_names: &HashSet<String>) {
+    fn check_skill(&mut self, skill: &Skill, mixin_names: &HashSet<String>, skill_names: &HashSet<String>, all_skills: &[Skill], all_mixins: &[Mixin]) {
+        // Validate extends references an existing skill
+        if let Some(base_name) = &skill.extends {
+            if !skill_names.contains(base_name) {
+                self.errors.push(SkillSpecError::UnresolvedExtends {
+                    name: base_name.clone(),
+                    span: skill.span,
+                });
+            }
+        }
+
         // Check input field types
         if let Some(input_fields) = &skill.input {
             for field in input_fields {
@@ -106,11 +228,47 @@ impl Checker {
             }
         }
 
-        // Check the body steps (with lazy context awareness)
-        self.check_body(&skill.body);
+        // Resolve inherited members for body validation
+        let mut inherited_steps: HashSet<String> = HashSet::new();
+        let mut inherited_lazy: HashSet<String> = HashSet::new();
+
+        let ancestors = Self::resolve_skill_ancestry(skill, all_skills);
+        for ancestor in &ancestors {
+            for step in &ancestor.body.steps {
+                inherited_steps.insert(step.name.clone());
+            }
+            for lc in &ancestor.body.lazy_contexts {
+                inherited_lazy.insert(lc.name.clone());
+            }
+        }
+
+        let child_step_names: HashSet<&str> = skill.body.steps.iter()
+            .map(|s| s.name.as_str()).collect();
+        let mut mixin_step_sources: HashMap<String, Vec<String>> = HashMap::new();
+        for include_name in &skill.includes {
+            if let Some(mixin) = all_mixins.iter().find(|m| &m.name == include_name) {
+                for step in &mixin.steps {
+                    inherited_steps.insert(step.name.clone());
+                    mixin_step_sources.entry(step.name.clone())
+                        .or_default()
+                        .push(mixin.name.clone());
+                }
+            }
+        }
+
+        for (step_name, sources) in &mixin_step_sources {
+            if sources.len() > 1 && !child_step_names.contains(step_name.as_str()) {
+                self.errors.push(SkillSpecError::DuplicateField {
+                    name: step_name.clone(),
+                    span: skill.span,
+                });
+            }
+        }
+
+        self.check_body(&skill.body, &inherited_steps, &inherited_lazy);
     }
 
-    fn check_body(&mut self, body: &Body) {
+    fn check_body(&mut self, body: &Body, inherited_steps: &HashSet<String>, inherited_lazy: &HashSet<String>) {
         // Collect lazy context names declared in this body
         let lazy_names: HashSet<String> = body
             .lazy_contexts
@@ -131,10 +289,10 @@ impl Checker {
             }
         }
 
-        // Validate load references in steps
+        // Validate load references in steps (own + inherited lazy contexts)
         for step in &body.steps {
             for load_name in &step.loads {
-                if !lazy_names.contains(load_name) {
+                if !lazy_names.contains(load_name) && !inherited_lazy.contains(load_name) {
                     self.errors.push(SkillSpecError::UnknownLazyContext {
                         name: load_name.clone(),
                         span: step.span,
@@ -143,36 +301,34 @@ impl Checker {
             }
         }
 
-        // Check the steps (DAG validation etc.)
-        self.check_steps(body);
+        self.check_steps(body, inherited_steps);
     }
 
-    fn check_steps(&mut self, body: &Body) {
+    fn check_steps(&mut self, body: &Body, inherited_steps: &HashSet<String>) {
         let steps = &body.steps;
 
-        // Build a set of all step names to detect duplicates and validate requires
+        // Detect duplicate step names within this body
         let mut seen_names: HashMap<String, Span> = HashMap::new();
         for step in steps {
             if let Some(existing_span) = seen_names.get(&step.name) {
-                // Duplicate step name — report error using the second occurrence's span
                 self.errors.push(SkillSpecError::DuplicateField {
                     name: step.name.clone(),
                     span: step.span,
                 });
-                let _ = existing_span; // already recorded
+                let _ = existing_span;
             } else {
                 seen_names.insert(step.name.clone(), step.span);
             }
         }
 
-        let all_names: HashSet<String> = steps.iter().map(|s| s.name.clone()).collect();
+        let own_names: HashSet<String> = steps.iter().map(|s| s.name.clone()).collect();
 
-        // Validate requires references
+        // Validate requires references (own + inherited steps)
         for step in steps {
             if let Some(dep) = &step.requires {
                 let referenced = dep_names(dep);
                 for name in referenced {
-                    if !all_names.contains(&name) {
+                    if !own_names.contains(&name) && !inherited_steps.contains(&name) {
                         self.errors.push(SkillSpecError::UnknownStep {
                             name: name.clone(),
                             span: step.span,
@@ -182,17 +338,15 @@ impl Checker {
             }
         }
 
-        // Check for dependency cycles
+        // Cycle check within this skill's own steps only
         self.check_cycles(steps);
 
         // Check for multiple unconditional emit statements
         let emit_steps: Vec<&Step> = steps.iter().filter(|s| s.emit).collect();
         if emit_steps.len() >= 2 {
-            // Multiple emits are only OK if ALL of them have `when` guards
             let unconditional_emits: Vec<&&Step> =
                 emit_steps.iter().filter(|s| s.when.is_none()).collect();
             if unconditional_emits.len() >= 2 {
-                // Report error on the second unconditional emit
                 self.errors.push(SkillSpecError::MultipleEmit {
                     span: unconditional_emits[1].span,
                 });
@@ -314,6 +468,55 @@ impl Checker {
             .map(|p| (p.name.clone(), p.requires.clone(), p.span))
             .collect();
         self.check_cycles_named(&named);
+    }
+
+    fn resolve_skill_ancestry<'a>(skill: &'a Skill, all_skills: &'a [Skill]) -> Vec<&'a Skill> {
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        seen.insert(&skill.name);
+        let mut current = skill.extends.as_ref();
+        while let Some(name) = current {
+            if !seen.insert(name) {
+                break;
+            }
+            match all_skills.iter().find(|s| &s.name == name) {
+                Some(base) => {
+                    chain.push(base);
+                    current = base.extends.as_ref();
+                }
+                None => break,
+            }
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn check_extends_cycles(&mut self, skills: &[Skill]) {
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        for skill in skills {
+            let deps = match &skill.extends {
+                Some(base) => vec![base.clone()],
+                None => vec![],
+            };
+            adj.insert(skill.name.clone(), deps);
+        }
+
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut in_stack: HashSet<String> = HashSet::new();
+        let mut stack: Vec<String> = Vec::new();
+
+        for skill in skills {
+            if !visited.contains(&skill.name) {
+                if let Some(cycle) =
+                    Self::dfs_cycle(&skill.name, &adj, &mut visited, &mut in_stack, &mut stack)
+                {
+                    self.errors.push(SkillSpecError::DependencyCycle {
+                        cycle: cycle.join(" -> "),
+                    });
+                    return;
+                }
+            }
+        }
     }
 
     /// Generic DAG cycle check for any sequence of (name, optional requires, span).
@@ -665,5 +868,269 @@ mod tests {
             }
         "#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn extends_unknown_skill_errors() {
+        let result = check(r#"
+            skill "child" extends "nonexistent" {
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedExtends { .. })),
+            "should report UnresolvedExtends: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn extends_valid_skill_passes() {
+        let result = check(r#"
+            skill "base" {
+                body { context { "base." } }
+            }
+            skill "child" extends "base" {
+                body { context { "child." } }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extends_self_cycle_errors() {
+        let result = check(r#"
+            skill "ouroboros" extends "ouroboros" {
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extends_mutual_cycle_errors() {
+        let result = check(r#"
+            skill "a" extends "b" {
+                body { context { "a" } }
+            }
+            skill "b" extends "a" {
+                body { context { "b" } }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
+            "should detect mutual extends cycle: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn extends_three_way_cycle_errors() {
+        let result = check(r#"
+            skill "a" extends "b" {
+                body { context { "a" } }
+            }
+            skill "b" extends "c" {
+                body { context { "b" } }
+            }
+            skill "c" extends "a" {
+                body { context { "c" } }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
+            "should detect 3-way extends cycle: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn extends_chain_no_cycle_passes() {
+        let result = check(r#"
+            skill "grandparent" {
+                body { context { "gp" } }
+            }
+            skill "parent" extends "grandparent" {
+                body { context { "p" } }
+            }
+            skill "child" extends "parent" {
+                body { context { "c" } }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn requires_inherited_step_passes() {
+        let result = check(r#"
+            skill "base" {
+                body {
+                    step analyze { context { "Analyze." } }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    step report {
+                        requires analyze
+                        context { "Report." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "requires on inherited step should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn requires_deeply_inherited_step_passes() {
+        let result = check(r#"
+            skill "grandparent" {
+                body {
+                    step setup { context { "Setup." } }
+                }
+            }
+            skill "parent" extends "grandparent" {
+                body { context { "Middle." } }
+            }
+            skill "child" extends "parent" {
+                body {
+                    step work {
+                        requires setup
+                        context { "Work." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "requires on grandparent step should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn load_inherited_lazy_context_passes() {
+        let result = check(r#"
+            skill "base" {
+                body {
+                    lazy context "docs" (priority: 50) {
+                        summary "API docs."
+                        ref "./api.md"
+                    }
+                    context { "Base." }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    step main {
+                        load "docs"
+                        context { "Use docs." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "load on inherited lazy context should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn requires_mixin_step_passes() {
+        let result = check(r#"
+            mixin logging {
+                step log_start { context { "Log start." } }
+            }
+            skill "x" {
+                include logging
+                body {
+                    step work {
+                        requires log_start
+                        context { "Work." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "requires on mixin step should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn cross_mixin_step_collision_errors() {
+        let result = check(r#"
+            mixin a {
+                step setup { context { "A setup." } }
+            }
+            mixin b {
+                step setup { context { "B setup." } }
+            }
+            skill "x" {
+                include a
+                include b
+                body { context { "Work." } }
+            }
+        "#);
+        assert!(result.is_err(), "cross-mixin step collision should error");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::DuplicateField { .. })),
+            "should report DuplicateField for mixin collision: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn cross_mixin_collision_ok_if_child_overrides() {
+        let result = check(r#"
+            mixin a {
+                step setup { context { "A setup." } }
+            }
+            mixin b {
+                step setup { context { "B setup." } }
+            }
+            skill "x" {
+                include a
+                include b
+                body {
+                    step setup { context { "Child setup." } }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "mixin collision should be ok if child overrides: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn shadowed_import_errors() {
+        let result = check(r#"
+            import { Finding } from "@types/review"
+            type Finding {
+                file: string
+                severity: string
+            }
+            skill "x" {
+                input { f: Finding }
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::ShadowedImport { .. })),
+            "should report ShadowedImport: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn import_without_shadow_passes() {
+        let result = check(r#"
+            import { OtherThing } from "@types/misc"
+            type Finding {
+                file: string
+                severity: string
+            }
+            skill "x" {
+                input { f: Finding }
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_ok());
     }
 }

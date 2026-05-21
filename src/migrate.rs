@@ -15,10 +15,10 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
     let mut output = String::new();
 
     // Parse frontmatter
-    let (frontmatter, body) = parse_frontmatter(source);
+    let (frontmatter, body, raw_fm) = parse_frontmatter(source);
     let name = frontmatter.get("name").cloned().unwrap_or_else(|| "unnamed".to_string());
     let description = frontmatter.get("description").cloned();
-    let parameters = parse_parameters(&frontmatter);
+    let parameters = parse_parameters_from_yaml(&raw_fm);
 
     // Header comment
     output.push_str(&format!("// Auto-migrated from: {}\n", source_path));
@@ -107,11 +107,11 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
 
 // ── Frontmatter parsing ──────────────────────────────────────────────
 
-fn parse_frontmatter(source: &str) -> (std::collections::HashMap<String, String>, String) {
+fn parse_frontmatter(source: &str) -> (std::collections::HashMap<String, String>, String, String) {
     let mut map = std::collections::HashMap::new();
 
     if !source.trim_start().starts_with("---") {
-        return (map, source.to_string());
+        return (map, source.to_string(), String::new());
     }
 
     let after_first = &source.trim_start()[3..];
@@ -127,16 +127,15 @@ fn parse_frontmatter(source: &str) -> (std::collections::HashMap<String, String>
             if let Some(colon_pos) = line.find(':') {
                 let key = line[..colon_pos].trim().to_string();
                 let value = line[colon_pos + 1..].trim().trim_matches('"').to_string();
-                // Skip multi-line values like parameters (those start with -)
                 if !value.starts_with('-') && !key.is_empty() {
                     map.insert(key, value);
                 }
             }
         }
 
-        (map, body.to_string())
+        (map, body.to_string(), fm_text.to_string())
     } else {
-        (map, source.to_string())
+        (map, source.to_string(), String::new())
     }
 }
 
@@ -147,36 +146,72 @@ struct Parameter {
     default: Option<String>,
 }
 
-fn parse_parameters(frontmatter: &std::collections::HashMap<String, String>) -> Vec<Parameter> {
-    // Parameters in frontmatter are typically YAML arrays, which we can't fully
-    // parse without a YAML library. Look for simple key patterns.
+fn parse_parameters_from_yaml(raw_frontmatter: &str) -> Vec<Parameter> {
     let mut params = Vec::new();
+    let mut in_parameters = false;
+    let mut current_fields: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
-    // Check for flattened parameter keys like "param_name", "param_type", etc.
-    // In practice, SKILL.md frontmatter uses a parameters: array.
-    // We'll scan the raw text for `- name:` patterns instead.
-    // Since we only have the HashMap, we can look for common parameter names.
+    for line in raw_frontmatter.lines() {
+        let trimmed = line.trim();
 
-    for key in frontmatter.keys() {
-        if key == "parameters" {
-            // Can't parse YAML array from a flat map; the parse_frontmatter
-            // above skips array entries. Leave a TODO for the user.
+        if trimmed.starts_with("parameters:") {
+            in_parameters = true;
             continue;
+        }
+
+        if !in_parameters {
+            continue;
+        }
+
+        // Non-indented, non-empty line means we've left the parameters block
+        if !line.starts_with(' ') && !line.starts_with('\t') && !trimmed.is_empty() {
+            break;
+        }
+
+        if trimmed.starts_with("- ") {
+            // Save the previous parameter
+            if let Some(p) = build_parameter(&current_fields) {
+                params.push(p);
+            }
+            current_fields.clear();
+
+            let rest = trimmed.strip_prefix("- ").unwrap();
+            if let Some(colon) = rest.find(':') {
+                let key = rest[..colon].trim().to_string();
+                let value = rest[colon + 1..].trim().trim_matches('"').to_string();
+                current_fields.insert(key, value);
+            }
+        } else if !current_fields.is_empty() {
+            if let Some(colon) = trimmed.find(':') {
+                let key = trimmed[..colon].trim().to_string();
+                let value = trimmed[colon + 1..].trim().trim_matches('"').to_string();
+                current_fields.insert(key, value);
+            }
         }
     }
 
-    // If no structured parameters found, check for parameter-like keys
-    // This is intentionally limited — migration is mechanical, not perfect
-    if frontmatter.contains_key("parameters") {
-        params.push(Parameter {
-            name: "param1".to_string(),
-            param_type: "string".to_string(),
-            optional: false,
-            default: None,
-        });
+    if let Some(p) = build_parameter(&current_fields) {
+        params.push(p);
     }
 
     params
+}
+
+fn build_parameter(map: &std::collections::HashMap<String, String>) -> Option<Parameter> {
+    let name = map.get("name")?.to_string();
+    let param_type = map
+        .get("type")
+        .cloned()
+        .unwrap_or_else(|| "string".to_string());
+    let optional = map.get("optional").map(|v| v == "true").unwrap_or(false);
+    let default = map.get("default").cloned();
+    Some(Parameter {
+        name,
+        param_type,
+        optional,
+        default,
+    })
 }
 
 // ── Section splitting ────────────────────────────────────────────────
@@ -314,6 +349,54 @@ Do the second thing.
         assert!(result.output.contains("skill \"unnamed\""));
         assert!(result.output.contains("step first_step"));
         assert!(result.output.contains("step second_step"));
+    }
+
+    #[test]
+    fn migrate_parses_yaml_parameters() {
+        let source = r#"---
+name: review
+description: "Review code"
+parameters:
+  - name: files
+    type: string[]
+  - name: severity
+    type: string
+    optional: true
+    default: medium
+---
+
+# review
+
+## Analyze
+
+Look at the code.
+"#;
+        let result = migrate_skillmd(source, "review/SKILL.md");
+        assert!(
+            result.output.contains("files"),
+            "should have 'files' param: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("string[]"),
+            "should have string[] type: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("severity"),
+            "should have 'severity' param: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("medium"),
+            "should have default value: {}",
+            result.output
+        );
+        assert!(
+            !result.output.contains("param1"),
+            "should NOT use dummy placeholder: {}",
+            result.output
+        );
     }
 
     #[test]

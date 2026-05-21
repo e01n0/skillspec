@@ -1,5 +1,3 @@
-import { MigrationResult, MigrationTodo, InferredStep } from "@types/migration"
-
 type MigrationTodo {
     line: int
     category: enum("type-inference", "step-dependency", "context-priority", "conditional-extraction", "emit-placement")

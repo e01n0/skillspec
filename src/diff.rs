@@ -489,15 +489,73 @@ fn type_expr_eq(a: &TypeExpr, b: &TypeExpr) -> bool {
 
 /// Compare a compiled SKILL.md string against an on-disk (or reference) SKILL.md.
 ///
-/// Diffs are reported as line-level changes, grouped under the nearest `## `
-/// section header.
+/// Uses LCS (longest common subsequence) to produce a semantic diff that
+/// correctly handles insertions and deletions without cascading false positives.
+/// Changes are grouped under the nearest `## ` section header.
 pub fn skillmd_diff(compiled: &str, actual: &str) -> DiffReport {
     let mut report = DiffReport::default();
 
     let compiled_lines: Vec<&str> = compiled.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
+    let m = compiled_lines.len();
+    let n = actual_lines.len();
 
-    // Determine which `## ` section each line belongs to (or "<preamble>").
+    // Guard: LCS table is O(m*n) space. For very large files, fall back to
+    // reporting a single "files differ" change rather than blowing up memory.
+    const MAX_CELLS: usize = 500_000;
+    if m.saturating_mul(n) > MAX_CELLS {
+        if compiled != actual {
+            report.add(
+                ChangeKind::Modified,
+                "<file>".to_string(),
+                format!(
+                    "files differ ({} vs {} lines; too large for line-level diff)",
+                    m, n
+                ),
+            );
+        }
+        return report;
+    }
+
+    // Build LCS table
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            if compiled_lines[i - 1] == actual_lines[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to produce edit script
+    enum Edit {
+        Keep,
+        Remove(usize),
+        Add(usize),
+    }
+
+    let mut edits = Vec::new();
+    let mut i = m;
+    let mut j = n;
+
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && compiled_lines[i - 1] == actual_lines[j - 1] {
+            edits.push(Edit::Keep);
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+            edits.push(Edit::Add(j - 1));
+            j -= 1;
+        } else {
+            edits.push(Edit::Remove(i - 1));
+            i -= 1;
+        }
+    }
+
+    edits.reverse();
+
     fn section_for(lines: &[&str], idx: usize) -> String {
         for i in (0..=idx).rev() {
             if lines[i].starts_with("## ") {
@@ -507,52 +565,50 @@ pub fn skillmd_diff(compiled: &str, actual: &str) -> DiffReport {
         "<preamble>".to_string()
     }
 
-    let max_len = compiled_lines.len().max(actual_lines.len());
-
-    // Walk line-by-line. Where the two strings diverge, record the change
-    // under the section header that was most recently seen in either side.
-    //
-    // Simple O(n) scan — good enough for the sizes of SKILL.md files in
-    // practice. A proper Myers diff would be overkill here.
-    let mut i = 0;
-    while i < max_len {
-        let c_line = compiled_lines.get(i).copied();
-        let a_line = actual_lines.get(i).copied();
-
-        match (c_line, a_line) {
-            (Some(cl), Some(al)) if cl == al => {
-                // Identical — no change
-            }
-            (Some(cl), Some(al)) => {
-                // Both exist but differ → Modified
-                let section = section_for(&compiled_lines, i);
-                report.add(
-                    ChangeKind::Modified,
-                    format!("{} line {}", section, i + 1),
-                    format!("line changed:\n  - {}\n  + {}", cl, al),
-                );
-            }
-            (Some(cl), None) => {
-                // Compiled has an extra line → compiled adds content not in actual
-                let section = section_for(&compiled_lines, i);
+    // Collapse adjacent Remove+Add into Modified
+    let mut idx = 0;
+    while idx < edits.len() {
+        match &edits[idx] {
+            Edit::Keep => {}
+            Edit::Remove(ci) => {
+                if idx + 1 < edits.len() {
+                    if let Edit::Add(ai) = &edits[idx + 1] {
+                        let section = section_for(&compiled_lines, *ci);
+                        report.add(
+                            ChangeKind::Modified,
+                            format!("{} line {}", section, ci + 1),
+                            format!(
+                                "line changed:\n  - {}\n  + {}",
+                                compiled_lines[*ci], actual_lines[*ai]
+                            ),
+                        );
+                        idx += 2;
+                        continue;
+                    }
+                }
+                let section = section_for(&compiled_lines, *ci);
                 report.add(
                     ChangeKind::Removed,
-                    format!("{} line {}", section, i + 1),
-                    format!("line present in compiled but missing from actual: {:?}", cl),
+                    format!("{} line {}", section, ci + 1),
+                    format!(
+                        "line present in compiled but missing from actual: {:?}",
+                        compiled_lines[*ci]
+                    ),
                 );
             }
-            (None, Some(al)) => {
-                // Actual has an extra line → actual adds content not in compiled
-                let section = section_for(&actual_lines, i);
+            Edit::Add(ai) => {
+                let section = section_for(&actual_lines, *ai);
                 report.add(
                     ChangeKind::Added,
-                    format!("{} line {}", section, i + 1),
-                    format!("line present in actual but missing from compiled: {:?}", al),
+                    format!("{} line {}", section, ai + 1),
+                    format!(
+                        "line present in actual but missing from compiled: {:?}",
+                        actual_lines[*ai]
+                    ),
                 );
             }
-            (None, None) => break,
         }
-        i += 1;
+        idx += 1;
     }
 
     report
@@ -623,5 +679,67 @@ mod tests {
         let actual = "## Step: analyze\n\nModified text.\n";
         let report = skillmd_diff(compiled, actual);
         assert!(!report.is_empty());
+    }
+
+    #[test]
+    fn skillmd_diff_insertion_does_not_cascade() {
+        let compiled = "line 1\nline 2\nline 3\n";
+        let actual = "line 1\ninserted\nline 2\nline 3\n";
+        let report = skillmd_diff(compiled, actual);
+        assert_eq!(
+            report.changes.len(),
+            1,
+            "single insertion should produce exactly 1 change, got: {}",
+            report.display()
+        );
+        assert!(
+            matches!(report.changes[0].kind, ChangeKind::Added),
+            "should be an addition, not modification"
+        );
+    }
+
+    #[test]
+    fn skillmd_diff_deletion_does_not_cascade() {
+        let compiled = "line 1\nremove me\nline 2\nline 3\n";
+        let actual = "line 1\nline 2\nline 3\n";
+        let report = skillmd_diff(compiled, actual);
+        assert_eq!(
+            report.changes.len(),
+            1,
+            "single deletion should produce exactly 1 change, got: {}",
+            report.display()
+        );
+        assert!(
+            matches!(report.changes[0].kind, ChangeKind::Removed),
+            "should be a removal"
+        );
+    }
+
+    #[test]
+    fn skillmd_diff_large_input_guard() {
+        let big_a: String = (0..1000).map(|i| format!("line {}\n", i)).collect();
+        let big_b: String = (0..1000).map(|i| format!("line {}\n", i + 1)).collect();
+        let report = skillmd_diff(&big_a, &big_b);
+        assert!(
+            !report.is_empty(),
+            "should still report a difference for large inputs"
+        );
+    }
+
+    #[test]
+    fn skillmd_diff_modification_collapsed() {
+        let compiled = "line 1\nold text\nline 3\n";
+        let actual = "line 1\nnew text\nline 3\n";
+        let report = skillmd_diff(compiled, actual);
+        assert_eq!(
+            report.changes.len(),
+            1,
+            "single line change should produce 1 modified change, got: {}",
+            report.display()
+        );
+        assert!(
+            matches!(report.changes[0].kind, ChangeKind::Modified),
+            "should be a modification"
+        );
     }
 }

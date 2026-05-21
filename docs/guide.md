@@ -11,7 +11,7 @@ them to `SKILL.md` instruction documents that your agent runtime reads.
 Build from source with Cargo:
 
 ```sh
-git clone https://github.com/your-org/skillspec
+git clone git@github.com:e01n0/skillspec.git
 cd skillspec
 cargo install --path .
 ```

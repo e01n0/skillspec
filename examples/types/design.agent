@@ -1,0 +1,7 @@
+type Design {
+  title: string
+  summary: string
+  approach: string
+  tradeoffs: string
+  open_questions: string[]
+}
