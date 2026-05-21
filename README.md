@@ -100,6 +100,117 @@ skillspec diff skill.agent deployed/SKILL.md --against-skillmd
 
 The `.agent` file is the source of truth. The SKILL.md is a build artifact.
 
+## What else the language does
+
+The four features above are the headline. The language also covers:
+
+### Prompt directives
+
+Persona, reasoning mode, sampling, output format, few-shot examples, and reinforcement messages that repeat at intervals.
+
+```skillspec
+body {
+  persona { "You are a senior code reviewer." }
+  reasoning extended
+  sampling { temperature: 0.3 }
+  reinforce every 3 steps {
+    "Stay focused on correctness, not style."
+  }
+}
+```
+
+### Tools and permissions
+
+Declare what tools a skill needs and what access it gets. The compiler checks that compositions don't silently escalate permissions.
+
+```skillspec
+tools {
+  require Read
+  require Bash
+  optional mcp("github") {
+    search_issues(query: string) -> string
+  }
+}
+permissions {
+  filesystem: read_write("src/**", "tests/**")
+  network: outbound("api.github.com")
+}
+```
+
+### Pre/post contracts
+
+```skillspec
+pre {
+  assert input.files != [] message "No files provided"
+}
+post {
+  assert output.review.score >= 0 message "Score must be non-negative"
+}
+```
+
+### Composition
+
+Call other skills with `use`, share step patterns with `mixin`, inherit with `extends`. When compiling to SKILL.md these become prose annotations the LLM interprets (real dispatch needs the native target, which doesn't exist yet).
+
+```skillspec
+mixin logging {
+  step log_outcome {
+    requires all_steps
+    context { "Record the final decision." }
+  }
+}
+
+skill "design-session" {
+  include logging
+  // ...
+}
+```
+
+### Pipelines and orchestrations
+
+Multi-skill workflows with typed data flow between stages, and multi-agent coordination with role assignments. Same caveat as composition: compiles to prose today, real dispatch is on the roadmap.
+
+```skillspec
+pipeline "review" {
+  stage technical { use technical_review(doc: input.doc) }
+  stage security  { use security_scan(doc: input.doc) }
+  stage approval  {
+    requires technical & security
+    use final_approval(
+      technical: technical.result,
+      security: security.result
+    )
+  }
+}
+```
+
+### Tests
+
+Test blocks are parsed and type-checked. `skillspec test` lists them but doesn't run them (execution is a roadmap item that'll run as a skill in your runtime, not a CLI command).
+
+```skillspec
+tests {
+  test "catches missing types" {
+    given { source_file: "fixtures/no_types.agent" }
+    expect {
+      output.issues: contains(where: .category == "types")
+    }
+  }
+  test "scores bad priorities low" {
+    given { source_file: "fixtures/bad_priorities.agent" }
+    expect { output.score: <= 60 }
+    confidence 0.8
+    runs 5
+  }
+}
+```
+
+### Packages
+
+`skillspec pack` bundles a skill into a `.skillpkg` archive. `skillspec install` puts it in `.skillspec/packages/`. Import types across skills with `import { Finding } from "@types/review"`.
+
+Full details for all of these in the [language reference](docs/language-reference.md) and [user guide](docs/guide.md).
+
 ## Quick start
 
 ```bash
