@@ -66,7 +66,7 @@ impl Lexer {
         }
 
         // Numbers: digit or '-' followed by digit
-        if ch.is_ascii_digit() || (ch == '-' && self.peek_at(1).map_or(false, |c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit() || (ch == '-' && self.peek_at(1).is_some_and(|c| c.is_ascii_digit())) {
             return self.lex_number(start_pos, start_line, start_col);
         }
 
@@ -275,7 +275,7 @@ impl Lexer {
         }
 
         // Optional fractional part
-        let is_float = self.peek() == Some('.') && self.peek_at(1).map_or(false, |c| c.is_ascii_digit());
+        let is_float = self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit());
         if is_float {
             s.push('.');
             self.advance(); // consume '.'

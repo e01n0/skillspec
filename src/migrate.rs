@@ -1,11 +1,10 @@
-/// Mechanical SKILL.md → .agent.partial migration.
+/// Mechanical SKILL.md to .agent.partial migration.
 ///
 /// This does NOT invoke any LLM. It performs mechanical extraction:
-/// - Parse YAML frontmatter for name, description, parameters
-/// - Split markdown by ## headers into candidate steps
-/// - Detect conditional patterns (if/when language)
-/// - Output a `.agent.partial` file with TODO markers
-
+/// parse YAML frontmatter for name, description, parameters;
+/// split markdown by ## headers into candidate steps;
+/// detect conditional patterns (if/when language);
+/// output a `.agent.partial` file with TODO markers.
 pub struct MigrateResult {
     pub output: String,
     pub source_path: String,
@@ -31,7 +30,7 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
     if !parameters.is_empty() {
         output.push_str("  input {\n");
         for param in &parameters {
-            output.push_str(&format!("    // TODO: Infer types from parameter descriptions\n"));
+            output.push_str("    // TODO: Infer types from parameter descriptions\n");
             let opt = if param.optional { "?" } else { "" };
             let ty = &param.param_type;
             if let Some(default) = &param.default {
@@ -182,13 +181,12 @@ fn parse_parameters_from_yaml(raw_frontmatter: &str) -> Vec<Parameter> {
                 let value = rest[colon + 1..].trim().trim_matches('"').to_string();
                 current_fields.insert(key, value);
             }
-        } else if !current_fields.is_empty() {
-            if let Some(colon) = trimmed.find(':') {
+        } else if !current_fields.is_empty()
+            && let Some(colon) = trimmed.find(':') {
                 let key = trimmed[..colon].trim().to_string();
                 let value = trimmed[colon + 1..].trim().trim_matches('"').to_string();
                 current_fields.insert(key, value);
             }
-        }
     }
 
     if let Some(p) = build_parameter(&current_fields) {
@@ -235,7 +233,7 @@ fn split_by_headings(body: &str) -> Vec<MarkdownSection> {
                     content: current_content.clone(),
                 });
             }
-            current_heading = Some(line[3..].trim().to_string());
+            current_heading = Some(line.strip_prefix("## ").unwrap().trim().to_string());
             current_content.clear();
         } else if current_heading.is_some() {
             current_content.push_str(line);
