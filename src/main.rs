@@ -12,7 +12,6 @@ use skillspec_core::diff::{structural_diff, skillmd_diff};
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
-use serde_json;
 
 #[derive(Parser)]
 #[command(name = "skillspec", about = "A typed, composable language for AI agent skills and workflows", version)]

@@ -13,6 +13,12 @@ pub struct Checker {
     resolved_files: HashSet<PathBuf>,
 }
 
+impl Default for Checker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Checker {
     pub fn new() -> Self {
         Checker {
@@ -177,14 +183,13 @@ impl Checker {
 
     fn check_skill(&mut self, skill: &Skill, mixin_names: &HashSet<String>, skill_names: &HashSet<String>, all_skills: &[Skill], all_mixins: &[Mixin]) {
         // Validate extends references an existing skill
-        if let Some(base_name) = &skill.extends {
-            if !skill_names.contains(base_name) {
+        if let Some(base_name) = &skill.extends
+            && !skill_names.contains(base_name) {
                 self.errors.push(SkillSpecError::UnresolvedExtends {
                     name: base_name.clone(),
                     span: skill.span,
                 });
             }
-        }
 
         // Check input field types
         if let Some(input_fields) = &skill.input {
@@ -263,6 +268,23 @@ impl Checker {
                     span: skill.span,
                 });
             }
+        }
+
+        // Check for multiple unconditional emit across extends chain
+        let ancestor_unconditional_emits: Vec<&Step> = ancestors.iter()
+            .flat_map(|a| a.body.steps.iter())
+            .filter(|s| s.emit && s.when.is_none())
+            .filter(|s| !child_step_names.contains(s.name.as_str()))
+            .collect();
+        let child_unconditional_emits: Vec<&Step> = skill.body.steps.iter()
+            .filter(|s| s.emit && s.when.is_none())
+            .collect();
+        let total_unconditional = ancestor_unconditional_emits.len() + child_unconditional_emits.len();
+        if total_unconditional >= 2 {
+            let span = child_unconditional_emits.last()
+                .map(|s| s.span)
+                .unwrap_or(skill.span);
+            self.errors.push(SkillSpecError::MultipleEmit { span });
         }
 
         self.check_body(&skill.body, &inherited_steps, &inherited_lazy);
@@ -471,24 +493,7 @@ impl Checker {
     }
 
     fn resolve_skill_ancestry<'a>(skill: &'a Skill, all_skills: &'a [Skill]) -> Vec<&'a Skill> {
-        let mut chain = Vec::new();
-        let mut seen = HashSet::new();
-        seen.insert(&skill.name);
-        let mut current = skill.extends.as_ref();
-        while let Some(name) = current {
-            if !seen.insert(name) {
-                break;
-            }
-            match all_skills.iter().find(|s| &s.name == name) {
-                Some(base) => {
-                    chain.push(base);
-                    current = base.extends.as_ref();
-                }
-                None => break,
-            }
-        }
-        chain.reverse();
-        chain
+        crate::ast::resolve_ancestry(skill, all_skills)
     }
 
     fn check_extends_cycles(&mut self, skills: &[Skill]) {
@@ -506,8 +511,8 @@ impl Checker {
         let mut stack: Vec<String> = Vec::new();
 
         for skill in skills {
-            if !visited.contains(&skill.name) {
-                if let Some(cycle) =
+            if !visited.contains(&skill.name)
+                && let Some(cycle) =
                     Self::dfs_cycle(&skill.name, &adj, &mut visited, &mut in_stack, &mut stack)
                 {
                     self.errors.push(SkillSpecError::DependencyCycle {
@@ -515,7 +520,6 @@ impl Checker {
                     });
                     return;
                 }
-            }
         }
     }
 
@@ -526,7 +530,7 @@ impl Checker {
         for (name, dep, _) in nodes {
             let deps = dep
                 .as_ref()
-                .map(|d| dep_names(d))
+                .map(dep_names)
                 .unwrap_or_default();
             adj.insert(name.clone(), deps);
         }
@@ -536,8 +540,8 @@ impl Checker {
         let mut stack: Vec<String> = Vec::new();
 
         for (name, _, _) in nodes {
-            if !visited.contains(name) {
-                if let Some(cycle) =
+            if !visited.contains(name)
+                && let Some(cycle) =
                     Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack)
                 {
                     self.errors.push(SkillSpecError::DependencyCycle {
@@ -545,7 +549,6 @@ impl Checker {
                     });
                     return;
                 }
-            }
         }
     }
 
@@ -556,7 +559,7 @@ impl Checker {
             let deps = step
                 .requires
                 .as_ref()
-                .map(|d| dep_names(d))
+                .map(dep_names)
                 .unwrap_or_default();
             adj.insert(step.name.clone(), deps);
         }
@@ -568,15 +571,14 @@ impl Checker {
         let names: Vec<String> = steps.iter().map(|s| s.name.clone()).collect();
 
         for name in &names {
-            if !visited.contains(name) {
-                if let Some(cycle) = Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack) {
+            if !visited.contains(name)
+                && let Some(cycle) = Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack) {
                     self.errors.push(SkillSpecError::DependencyCycle {
                         cycle: cycle.join(" -> "),
                     });
                     // Only report the first cycle found
                     return;
                 }
-            }
         }
     }
 
@@ -602,13 +604,12 @@ impl Checker {
                     in_stack.remove(node);
                     return Some(cycle);
                 }
-                if !visited.contains(neighbor) {
-                    if let Some(cycle) = Self::dfs_cycle(neighbor, adj, visited, in_stack, stack) {
+                if !visited.contains(neighbor)
+                    && let Some(cycle) = Self::dfs_cycle(neighbor, adj, visited, in_stack, stack) {
                         stack.pop();
                         in_stack.remove(node);
                         return Some(cycle);
                     }
-                }
             }
         }
 
@@ -1129,6 +1130,59 @@ mod tests {
             skill "x" {
                 input { f: Finding }
                 body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn multiple_emit_across_extends_errors() {
+        let result = check(r#"
+            skill "base" {
+                body {
+                    step produce { emit output context { "base output" } }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    step also_produce { emit output context { "child output" } }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MultipleEmit { .. })));
+    }
+
+    #[test]
+    fn single_emit_across_extends_ok() {
+        let result = check(r#"
+            skill "base" {
+                body {
+                    step analyse { context { "analyse" } }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    step produce { emit output context { "child output" } }
+                }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn child_overrides_base_emit_ok() {
+        let result = check(r#"
+            skill "base" {
+                body {
+                    step produce { emit output context { "base" } }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    step produce { emit output context { "overridden" } }
+                }
             }
         "#);
         assert!(result.is_ok());
