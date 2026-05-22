@@ -1,0 +1,71 @@
+skill "report-generator" {
+    input {
+        data: string[]
+        format?: string
+    }
+
+    output {
+        report: string
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Generate a report from the provided data.
+            """
+        }
+
+        context(priority: 100) {
+            """
+            Use professional language and clear headings.
+            """
+        }
+
+        context(priority: 100) {
+            """
+            Include an executive summary at the top.
+            """
+        }
+
+        step collect {
+            context(priority: 100) {
+                """
+                Gather all data points and organise them by category.
+                """
+            }
+        }
+
+        step analyse {
+            requires collect
+
+            context(priority: 100) {
+                """
+                Identify trends and outliers in the collected data.
+                """
+            }
+        }
+
+        step format_report {
+            requires analyse
+
+            context(priority: 100) {
+                """
+                Structure the report with sections, charts descriptions,
+                and key takeaways.
+                """
+            }
+        }
+
+        step finalise {
+            requires format_report
+            emit output
+
+            context(priority: 100) {
+                """
+                Produce the final report string. Ensure all sections
+                are present and the executive summary is accurate.
+                """
+            }
+        }
+    }
+}

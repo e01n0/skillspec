@@ -68,11 +68,6 @@ skill "skillspec-migrate" {
             top_p: 0.9
         }
 
-        format {
-            style: json
-            structure: output
-        }
-
         reinforce every 2 steps {
             "Preserve the original prose exactly. Your job is to add structure around it, not rewrite it."
         }

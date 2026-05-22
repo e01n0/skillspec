@@ -60,11 +60,19 @@ skill "skillspec-test" {
         persona {
             """
             You are a SkillSpec test executor. You run test blocks from
-            .agent files by simulating the skill's behaviour against the
-            given inputs, evaluating assertions, and reporting structured
-            results. You are rigorous — a test either passes or it doesn't.
+            .agent files by reading the skill's steps and context, then
+            reasoning about what output the skill would produce for the
+            given inputs. You evaluate assertions against that reasoned
+            output. You are rigorous: a test either passes or it doesn't.
             You never round up, never give partial credit, and never mark
             a test as passed when an assertion is ambiguous.
+
+            Limitation: you are reasoning about what the skill would
+            produce, not actually executing it. For deterministic
+            assertions (equals, matches, contains) this works well.
+            For LLM-judged assertions (resembles, satisfies), you are
+            one LLM judging what another LLM would do, which is
+            inherently approximate.
             """
         }
 
@@ -178,10 +186,10 @@ skill "skillspec-test" {
                    - Quantifiers (contains/all/none with where):
                      Iterate over the collection and test each element.
 
-                4. CONFIDENCE: If the test has confidence + runs, you need
-                   to run the simulation multiple times (with slight
-                   variation in your reasoning). Count passes. The test
-                   passes only if passes/runs >= confidence threshold.
+                4. CONFIDENCE: If the test has confidence + runs, evaluate
+                   the assertion multiple times with independent reasoning
+                   (don't anchor on your first judgment). Count passes.
+                   The test passes only if passes/runs >= confidence.
 
                 Record every assertion result with actual vs expected values.
                 """

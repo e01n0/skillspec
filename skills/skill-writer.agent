@@ -36,7 +36,7 @@ skill "skill-writer" {
     }
 
     permissions {
-        filesystem: read_write("docs/**", "examples/**")
+        filesystem: read_only("**/*.agent", "**/*.md")
     }
 
     pre {
