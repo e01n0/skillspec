@@ -316,6 +316,11 @@ impl Formatter {
                             self.emit_step(step);
                         }
                     }
+                    BodyItemRef::Observe => {
+                        if let Some(observe) = &body.observe {
+                            self.emit_observe_block(observe);
+                        }
+                    }
                 }
             }
         } else {
@@ -468,6 +473,21 @@ impl Formatter {
             }
         }
 
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    // ── Observe ──────────────────────────────────────────────────────
+
+    fn emit_observe_block(&mut self, observe: &ObserveBlock) {
+        self.line("observe {");
+        self.indent += 1;
+        for event in &observe.events {
+            self.line(&format!("on {} {{ emit_event \"{}\" }}", event.trigger, event.event_name));
+        }
+        for metric in &observe.metrics {
+            self.line(&format!("metric \"{}\" from {}", metric.name, expr_to_string(&metric.source)));
+        }
         self.indent -= 1;
         self.line("}");
     }

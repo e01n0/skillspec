@@ -676,6 +676,74 @@ fn budget_does_not_trim_step_contexts() {
     assert!(!ast.skills[0].body.steps[0].contexts.is_empty(), "step contexts should be preserved");
 }
 
+// ── Observability ────────────────────────────────────────────────────
+
+#[test]
+fn checker_duplicate_metric_name_errors() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    metric "findings" from output.a
+                    metric "findings" from output.b
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let mut checker = Checker::new();
+    let result = checker.check(&ast);
+    assert!(result.is_err(), "duplicate metric names should error");
+    let errs = result.unwrap_err();
+    assert!(errs.iter().any(|e| format!("{e}").contains("Duplicate")));
+}
+
+#[test]
+fn compile_observability_section() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    on step_complete { emit_event "step.done" }
+                    metric "review.score" from output.score
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let compiler = SkillMdCompiler::new();
+    let md = compiler.compile(&ast.skills[0], &ast);
+    assert!(md.contains("## Observability"), "should have Observability section");
+    assert!(md.contains("step.done"), "should contain event name");
+    assert!(md.contains("review.score"), "should contain metric name");
+}
+
+#[test]
+fn observe_block_round_trips_through_ir() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    on step_complete { emit_event "step.done" }
+                    metric "count" from output.n
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let ir = serde_json::to_string(&ast).unwrap();
+    let round: skillspec_core::ast::SourceFile = serde_json::from_str(&ir).unwrap();
+    let observe = round.skills[0].body.observe.as_ref().expect("observe should survive serialization");
+    assert_eq!(observe.events.len(), 1);
+    assert_eq!(observe.metrics.len(), 1);
+}
+
 fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Failed to read {}", path));

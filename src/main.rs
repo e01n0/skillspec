@@ -39,6 +39,9 @@ enum Commands {
         /// Token budget: drop lowest-priority contexts to fit within this limit
         #[arg(long)]
         budget: Option<usize>,
+        /// Emit a JSON schema of all declared telemetry events and metrics
+        #[arg(long)]
+        emit_telemetry_schema: bool,
     },
     /// Scaffold a new .agent skill file
     Init { name: String },
@@ -87,9 +90,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output, watch, budget } => {
+        Commands::Build { file, target, output, watch, budget, emit_telemetry_schema } => {
             if watch {
                 cmd_build_watch(&file, &target, output.as_deref())
+            } else if emit_telemetry_schema {
+                cmd_emit_telemetry(&file)
             } else {
                 cmd_build(&file, &target, output.as_deref(), budget)
             }
@@ -260,6 +265,27 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
         }
         other => Err(miette::miette!("unknown target '{}'; supported: skillmd, native", other)),
     }
+}
+
+fn cmd_emit_telemetry(path: &str) -> Result<()> {
+    let ast = read_and_parse(path)?;
+    let mut schema = serde_json::json!({ "skills": {} });
+    for skill in &ast.skills {
+        if let Some(observe) = &skill.body.observe {
+            let events: Vec<serde_json::Value> = observe.events.iter()
+                .map(|e| serde_json::json!({ "trigger": e.trigger, "event_name": e.event_name }))
+                .collect();
+            let metrics: Vec<serde_json::Value> = observe.metrics.iter()
+                .map(|m| serde_json::json!({ "name": m.name }))
+                .collect();
+            schema["skills"][&skill.name] = serde_json::json!({
+                "events": events,
+                "metrics": metrics,
+            });
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    Ok(())
 }
 
 fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()> {
