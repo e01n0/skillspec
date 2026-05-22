@@ -10,6 +10,7 @@ use skillspec_core::formatter::Formatter;
 use skillspec_core::budget;
 use skillspec_core::diff::{structural_diff, skillmd_diff, classify_semver};
 use skillspec_core::lint::LintEngine;
+use skillspec_core::deps::emit_mermaid;
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
@@ -40,7 +41,12 @@ enum Commands {
     /// Estimate token budget for skills in an .agent file
     Budget { file: String },
     /// Print dependency graph of steps/stages/phases
-    Deps { file: String },
+    Deps {
+        file: String,
+        /// Output format: "text" (default) or "mermaid"
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Mechanically extract a SKILL.md into a .agent.partial file
     Migrate { file: String },
     /// Package an .agent file containing a package declaration into a .skillpkg directory
@@ -79,7 +85,7 @@ fn main() -> Result<()> {
         Commands::Init { name } => cmd_init(&name),
         Commands::Fmt { file } => cmd_fmt(&file),
         Commands::Budget { file } => cmd_budget(&file),
-        Commands::Deps { file } => cmd_deps(&file),
+        Commands::Deps { file, format } => cmd_deps(&file, &format),
         Commands::Migrate { file } => cmd_migrate(&file),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
@@ -287,49 +293,58 @@ fn cmd_budget(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_deps(path: &str) -> Result<()> {
+fn cmd_deps(path: &str, format: &str) -> Result<()> {
     let ast = read_and_parse(path)?;
 
-    for skill in &ast.skills {
-        println!("Skill: {}", skill.name);
-        for step in &skill.body.steps {
-            let deps = format_dep(&step.requires);
-            if deps.is_empty() {
-                println!("  {}", step.name);
-            } else {
-                println!("  {} → {}", step.name, deps);
-            }
+    match format {
+        "mermaid" => {
+            print!("{}", emit_mermaid(&ast));
+            Ok(())
         }
-        println!();
-    }
-
-    for pipeline in &ast.pipelines {
-        println!("Pipeline: {}", pipeline.name);
-        for stage in &pipeline.stages {
-            let deps = format_dep(&stage.requires);
-            if deps.is_empty() {
-                println!("  {}", stage.name);
-            } else {
-                println!("  {} → {}", stage.name, deps);
+        "text" => {
+            for skill in &ast.skills {
+                println!("Skill: {}", skill.name);
+                for step in &skill.body.steps {
+                    let deps = format_dep(&step.requires);
+                    if deps.is_empty() {
+                        println!("  {}", step.name);
+                    } else {
+                        println!("  {} → {}", step.name, deps);
+                    }
+                }
+                println!();
             }
-        }
-        println!();
-    }
 
-    for orch in &ast.orchestrations {
-        println!("Orchestration: {}", orch.name);
-        for phase in &orch.phases {
-            let deps = format_dep(&phase.requires);
-            if deps.is_empty() {
-                println!("  {}", phase.name);
-            } else {
-                println!("  {} → {}", phase.name, deps);
+            for pipeline in &ast.pipelines {
+                println!("Pipeline: {}", pipeline.name);
+                for stage in &pipeline.stages {
+                    let deps = format_dep(&stage.requires);
+                    if deps.is_empty() {
+                        println!("  {}", stage.name);
+                    } else {
+                        println!("  {} → {}", stage.name, deps);
+                    }
+                }
+                println!();
             }
-        }
-        println!();
-    }
 
-    Ok(())
+            for orch in &ast.orchestrations {
+                println!("Orchestration: {}", orch.name);
+                for phase in &orch.phases {
+                    let deps = format_dep(&phase.requires);
+                    if deps.is_empty() {
+                        println!("  {}", phase.name);
+                    } else {
+                        println!("  {} → {}", phase.name, deps);
+                    }
+                }
+                println!();
+            }
+
+            Ok(())
+        }
+        other => Err(miette::miette!("unknown format '{}'; supported: text, mermaid", other)),
+    }
 }
 
 fn format_dep(dep: &Option<Dependency>) -> String {
