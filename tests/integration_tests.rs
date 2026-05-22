@@ -2,6 +2,7 @@ use skillspec_core::ast::Package;
 use skillspec_core::checker::Checker;
 use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::lexer::Lexer;
+use skillspec_core::lint::LintEngine;
 use skillspec_core::parser::Parser;
 
 fn full_pipeline(input: &str) -> String {
@@ -578,4 +579,34 @@ fn brainstorming_example_imports_resolve() {
     let md = full_pipeline_from_file(example_path);
     assert!(md.contains("name: brainstorming"));
     assert!(md.contains("design"), "output should reference Design type");
+}
+
+// ── Lint: fixture integration tests ──────────────────────────────────
+
+fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", path));
+    let tokens = Lexer::new(&source).tokenize().expect("lexer failed");
+    let ast = Parser::new(tokens).parse().expect("parser failed");
+    LintEngine::new().run(&ast)
+}
+
+#[test]
+fn lint_clean_skill_no_warnings() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/code_review.agent");
+    let diags = lint_file(path);
+    assert!(diags.is_empty(), "code_review.agent should have zero lint warnings, got: {:?}",
+        diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+}
+
+#[test]
+fn lint_full_featured_fixture() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/full_featured.agent");
+    let diags = lint_file(path);
+    let warnings: Vec<_> = diags.iter()
+        .filter(|d| d.severity == skillspec_core::lint::Severity::Warning)
+        .collect();
+    assert!(warnings.is_empty(),
+        "full_featured.agent should have no warnings, got: {:?}",
+        warnings.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
 }
