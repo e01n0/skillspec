@@ -66,10 +66,18 @@ impl Checker {
             }
         }
 
-        // Build skill input signatures for use-call validation
-        let skill_sigs: HashMap<String, Vec<Field>> = file.skills.iter()
-            .map(|s| (s.name.clone(), s.input.clone().unwrap_or_default()))
-            .collect();
+        // Build skill input signatures for use-call validation.
+        // Register under both the declared name and the underscore-normalised
+        // form so `use target_skill(...)` matches `skill "target-skill"`.
+        let mut skill_sigs: HashMap<String, Vec<Field>> = HashMap::new();
+        for s in &file.skills {
+            let fields = s.input.clone().unwrap_or_default();
+            let normalised = s.name.replace('-', "_");
+            skill_sigs.insert(s.name.clone(), fields.clone());
+            if normalised != s.name {
+                skill_sigs.insert(normalised, fields);
+            }
+        }
 
         // Second pass: check each skill (with access to all skills/mixins for inheritance resolution)
         for skill in &file.skills {
@@ -398,9 +406,9 @@ impl Checker {
             .map(|(name, _)| name.as_str())
             .collect();
 
-        // Check for missing required arguments
+        // Check for missing required arguments (fields with defaults are effectively optional)
         for field in target_fields {
-            if !field.optional && !provided.contains(field.name.as_str()) {
+            if !field.optional && field.default.is_none() && !provided.contains(field.name.as_str()) {
                 self.errors.push(SkillSpecError::MismatchedArg {
                     skill_name: use_call.skill_name.clone(),
                     message: format!("missing required argument '{}'", field.name),

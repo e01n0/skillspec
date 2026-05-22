@@ -1,6 +1,6 @@
 // Fixture for cross-skill type checking — should produce errors.
 
-skill "target_skill" {
+skill "target-skill" {
     input {
         files: string[]
         mode: string
