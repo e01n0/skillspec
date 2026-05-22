@@ -9,6 +9,7 @@ use skillspec_core::compiler_ir::IrCompiler;
 use skillspec_core::formatter::Formatter;
 use skillspec_core::budget;
 use skillspec_core::diff::{structural_diff, skillmd_diff};
+use skillspec_core::lint::LintEngine;
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
@@ -55,6 +56,8 @@ enum Commands {
     },
     /// List all tests defined in an .agent file
     Test { file: String },
+    /// Run lint rules to catch quality issues beyond structural validity
+    Lint { file: String },
     /// Show structural diff between two .agent files (or compiled vs SKILL.md)
     Diff {
         file_a: String,
@@ -78,6 +81,7 @@ fn main() -> Result<()> {
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
         Commands::Test { file } => cmd_test(&file),
+        Commands::Lint { file } => cmd_lint(&file),
         Commands::Diff { file_a, file_b, against_skillmd } => cmd_diff(&file_a, &file_b, against_skillmd),
     }
 }
@@ -121,6 +125,39 @@ fn cmd_check(path: &str) -> Result<()> {
             ))
         }
     }
+}
+
+fn cmd_lint(path: &str) -> Result<()> {
+    let ast = read_and_parse(path)?;
+    let base_dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    if let Err(errors) = checker.check(&ast) {
+        for err in &errors {
+            eprintln!("error: {}", err);
+        }
+        return Err(miette::miette!(
+            "{} error(s) found in '{}'; fix them before linting",
+            errors.len(),
+            path
+        ));
+    }
+
+    let engine = LintEngine::new();
+    let diagnostics = engine.run(&ast);
+
+    if diagnostics.is_empty() {
+        println!("✓ {}: no lint warnings", path);
+    } else {
+        for diag in &diagnostics {
+            eprintln!("{}", diag);
+        }
+        eprintln!("\n{} warning(s) in '{}'", diagnostics.len(), path);
+    }
+
+    Ok(())
 }
 
 fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
