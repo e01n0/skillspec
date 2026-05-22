@@ -21,11 +21,10 @@ pub fn resolve_import_path(import_path: &str, base_dir: &Path) -> Option<PathBuf
     }
 
     // For @-prefixed paths, also search .skillspec/packages/
-    if import_path.starts_with('@') {
-        if let Some(found) = resolve_in_packages(import_path, base_dir) {
+    if import_path.starts_with('@')
+        && let Some(found) = resolve_in_packages(import_path, base_dir) {
             return Some(found);
         }
-    }
 
     None
 }

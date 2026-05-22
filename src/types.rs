@@ -38,6 +38,12 @@ pub struct TypeRegistry {
     pub types: HashMap<String, ResolvedType>,
 }
 
+impl Default for TypeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeRegistry {
     pub fn new() -> Self {
         Self {

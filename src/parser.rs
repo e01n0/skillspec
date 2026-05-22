@@ -2152,12 +2152,11 @@ impl Parser {
     }
 
     fn expect_specific_ident(&mut self, expected: &str) -> Result<()> {
-        if let TokenKind::Ident(ref name) = self.peek_kind() {
-            if name == expected {
+        if let TokenKind::Ident(ref name) = self.peek_kind()
+            && name == expected {
                 self.advance();
                 return Ok(());
             }
-        }
         // Handle keyword tokens that match the expected string
         if expected == "output" && matches!(self.peek_kind(), TokenKind::Output) {
             self.advance();
@@ -2235,7 +2234,7 @@ fn expr_to_source(expr: &Expr) -> String {
         Expr::FloatLit(f) => f.to_string(),
         Expr::BoolLit(b) => b.to_string(),
         Expr::ArrayLit(items) => {
-            let parts: Vec<String> = items.iter().map(|e| expr_to_source(e)).collect();
+            let parts: Vec<String> = items.iter().map(expr_to_source).collect();
             format!("[{}]", parts.join(", "))
         }
         Expr::BinOp(lhs, op, rhs) => {

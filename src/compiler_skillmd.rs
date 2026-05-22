@@ -3,6 +3,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 pub struct SkillMdCompiler;
 
+impl Default for SkillMdCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillMdCompiler {
     pub fn new() -> Self {
         Self
@@ -35,12 +41,12 @@ impl SkillMdCompiler {
             out.push_str(&format!("extends: {}\n", base));
         }
 
-        if let Some(desc) = self.extract_description(skill) {
+        if let Some(desc) = self.extract_description(skill, &ancestors) {
             out.push_str(&format!("description: \"{}\"\n", desc.replace('"', "\\\"")));
         }
 
-        if let Some(input_fields) = &merged_input {
-            if !input_fields.is_empty() {
+        if let Some(input_fields) = &merged_input
+            && !input_fields.is_empty() {
                 out.push_str("parameters:\n");
                 for field in input_fields {
                     out.push_str(&format!("  - name: {}\n", field.name));
@@ -56,7 +62,6 @@ impl SkillMdCompiler {
                     }
                 }
             }
-        }
 
         out.push_str("---\n\n");
 
@@ -64,8 +69,8 @@ impl SkillMdCompiler {
         out.push_str(&format!("# {}\n\n", skill.name));
 
         // ── Output section ────────────────────────────────────────────────
-        if let Some(output_fields) = &merged_output {
-            if !output_fields.is_empty() {
+        if let Some(output_fields) = &merged_output
+            && !output_fields.is_empty() {
                 out.push_str("## Output\n\n");
                 for field in output_fields {
                     let mut annotation = String::new();
@@ -87,7 +92,6 @@ impl SkillMdCompiler {
                 }
                 out.push('\n');
             }
-        }
 
         // ── Preconditions (ancestors + child, with when_guard) ────────────
         let mut all_pre: Vec<&Assertion> = Vec::new();
@@ -262,8 +266,8 @@ impl SkillMdCompiler {
         out.push_str(&format!("# Pipeline: {}\n\n", pipeline.name));
 
         // Input/Output
-        if let Some(input_fields) = &pipeline.input {
-            if !input_fields.is_empty() {
+        if let Some(input_fields) = &pipeline.input
+            && !input_fields.is_empty() {
                 out.push_str("## Input\n\n");
                 for field in input_fields {
                     out.push_str(&format!(
@@ -274,10 +278,9 @@ impl SkillMdCompiler {
                 }
                 out.push('\n');
             }
-        }
 
-        if let Some(output_fields) = &pipeline.output {
-            if !output_fields.is_empty() {
+        if let Some(output_fields) = &pipeline.output
+            && !output_fields.is_empty() {
                 out.push_str("## Output\n\n");
                 for field in output_fields {
                     out.push_str(&format!(
@@ -288,7 +291,6 @@ impl SkillMdCompiler {
                 }
                 out.push('\n');
             }
-        }
 
         // Stages
         for stage in &pipeline.stages {
@@ -351,8 +353,8 @@ impl SkillMdCompiler {
         }
 
         // Input/Output
-        if let Some(input_fields) = &orch.input {
-            if !input_fields.is_empty() {
+        if let Some(input_fields) = &orch.input
+            && !input_fields.is_empty() {
                 out.push_str("## Input\n\n");
                 for field in input_fields {
                     out.push_str(&format!(
@@ -363,10 +365,9 @@ impl SkillMdCompiler {
                 }
                 out.push('\n');
             }
-        }
 
-        if let Some(output_fields) = &orch.output {
-            if !output_fields.is_empty() {
+        if let Some(output_fields) = &orch.output
+            && !output_fields.is_empty() {
                 out.push_str("## Output\n\n");
                 for field in output_fields {
                     out.push_str(&format!(
@@ -377,7 +378,6 @@ impl SkillMdCompiler {
                 }
                 out.push('\n');
             }
-        }
 
         // Phases
         for phase in &orch.phases {
@@ -463,24 +463,7 @@ impl SkillMdCompiler {
     // ── Ancestry resolution ─────────────────────────────────────────────────
 
     fn resolve_ancestry<'a>(&self, skill: &'a Skill, source: &'a SourceFile) -> Vec<&'a Skill> {
-        let mut chain = Vec::new();
-        let mut seen = HashSet::new();
-        seen.insert(&skill.name);
-        let mut current = skill.extends.as_ref();
-        while let Some(name) = current {
-            if !seen.insert(name) {
-                break;
-            }
-            match source.skills.iter().find(|s| &s.name == name) {
-                Some(base) => {
-                    chain.push(base);
-                    current = base.extends.as_ref();
-                }
-                None => break,
-            }
-        }
-        chain.reverse();
-        chain
+        crate::ast::resolve_ancestry(skill, &source.skills)
     }
 
     // ── Merge helpers for extends resolution ─────────────────────────────────
@@ -984,9 +967,9 @@ impl SkillMdCompiler {
 
         // AllSteps nodes depend on every other step
         for &i in &allsteps_indices {
-            for j in 0..n {
+            for (j, adj_j) in adj.iter_mut().enumerate() {
                 if j != i {
-                    adj[j].push(i);
+                    adj_j.push(i);
                     in_degree[i] += 1;
                 }
             }
@@ -994,8 +977,8 @@ impl SkillMdCompiler {
 
         // BFS (Kahn)
         let mut queue: VecDeque<usize> = VecDeque::new();
-        for i in 0..n {
-            if in_degree[i] == 0 {
+        for (i, &deg) in in_degree.iter().enumerate() {
+            if deg == 0 {
                 queue.push_back(i);
             }
         }
@@ -1021,9 +1004,9 @@ impl SkillMdCompiler {
         }
 
         // If there was a cycle (shouldn't happen after checker), append remaining
-        for i in 0..n {
+        for (i, step) in steps.iter().enumerate() {
             if !visited.contains(&i) {
-                result.push(&steps[i]);
+                result.push(step);
             }
         }
 
@@ -1056,17 +1039,23 @@ impl SkillMdCompiler {
             .join("\n")
     }
 
-    fn extract_description(&self, skill: &Skill) -> Option<String> {
-        let ctx = skill
-            .body
-            .contexts
+    fn extract_description(&self, skill: &Skill, ancestors: &[&Skill]) -> Option<String> {
+        // Look through merged contexts (ancestors + child) for the highest-priority one
+        let all_contexts: Vec<&ContextBlock> = ancestors
+            .iter()
+            .flat_map(|a| a.body.contexts.iter())
+            .chain(skill.body.contexts.iter())
+            .collect();
+
+        let ctx = all_contexts
             .iter()
             .max_by_key(|c| c.priority.unwrap_or(0))
+            .copied()
             .or_else(|| {
-                skill
-                    .body
-                    .steps
+                ancestors
                     .iter()
+                    .flat_map(|a| a.body.steps.iter())
+                    .chain(skill.body.steps.iter())
                     .flat_map(|s| s.contexts.iter())
                     .max_by_key(|c| c.priority.unwrap_or(0))
             })?;
@@ -1158,6 +1147,15 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         let compiler = SkillMdCompiler::new();
         compiler.compile(&ast.skills[0], &ast)
+    }
+
+    fn compile_named(input: &str, name: &str) -> String {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = SkillMdCompiler::new();
+        let skill = ast.skills.iter().find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("skill '{}' not found", name));
+        compiler.compile(skill, &ast)
     }
 
     #[test]
@@ -1886,6 +1884,32 @@ mod tests {
         assert!(
             md.contains("Focus cannot be empty"),
             "should contain assertion message: {}",
+            md
+        );
+    }
+
+    #[test]
+    fn extends_description_uses_base_context() {
+        let md = compile_named(r#"
+            skill "base" {
+                body {
+                    context(priority: 100) {
+                        "Review code for bugs and security issues."
+                    }
+                }
+            }
+            skill "child" extends "base" {
+                body {
+                    context(priority: 60, when: input.focus) {
+                        "Focus on the specified severity."
+                    }
+                }
+            }
+        "#, "child");
+
+        assert!(
+            md.contains("Review code for bugs and security issues"),
+            "description should come from base's high-priority context, not child's conditional: {}",
             md
         );
     }

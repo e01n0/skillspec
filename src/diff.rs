@@ -1,10 +1,9 @@
 /// Structural diff for SkillSpec ASTs and compiled SKILL.md files.
 ///
 /// Two public entry points:
-///   - `structural_diff(a, b)` — compare two parsed `SourceFile` ASTs.
-///   - `skillmd_diff(compiled, actual)` — compare a compiled SKILL.md string
+///   - `structural_diff(a, b)` compares two parsed `SourceFile` ASTs.
+///   - `skillmd_diff(compiled, actual)` compares a compiled SKILL.md string
 ///     against an on-disk SKILL.md, grouped by `## ` section headers.
-
 use crate::ast::{ContextBlock, Field, SourceFile, TypeExpr};
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -157,8 +156,8 @@ fn diff_fields(a_fields: &[Field], b_fields: &[Field], path_prefix: &str, report
 
     // Modified fields (type or optional changed)
     for fa in a_fields {
-        if let Some(fb) = b_fields.iter().find(|bf| bf.name == fa.name) {
-            if !type_expr_eq(&fa.ty, &fb.ty) || fa.optional != fb.optional {
+        if let Some(fb) = b_fields.iter().find(|bf| bf.name == fa.name)
+            && (!type_expr_eq(&fa.ty, &fb.ty) || fa.optional != fb.optional) {
                 report.add(
                     ChangeKind::Modified,
                     format!("{}.{}", path_prefix, fa.name),
@@ -168,7 +167,6 @@ fn diff_fields(a_fields: &[Field], b_fields: &[Field], path_prefix: &str, report
                     ),
                 );
             }
-        }
     }
 }
 
@@ -571,8 +569,8 @@ pub fn skillmd_diff(compiled: &str, actual: &str) -> DiffReport {
         match &edits[idx] {
             Edit::Keep => {}
             Edit::Remove(ci) => {
-                if idx + 1 < edits.len() {
-                    if let Edit::Add(ai) = &edits[idx + 1] {
+                if idx + 1 < edits.len()
+                    && let Edit::Add(ai) = &edits[idx + 1] {
                         let section = section_for(&compiled_lines, *ci);
                         report.add(
                             ChangeKind::Modified,
@@ -585,7 +583,6 @@ pub fn skillmd_diff(compiled: &str, actual: &str) -> DiffReport {
                         idx += 2;
                         continue;
                     }
-                }
                 let section = section_for(&compiled_lines, *ci);
                 report.add(
                     ChangeKind::Removed,
