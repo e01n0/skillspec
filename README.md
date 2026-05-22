@@ -209,7 +209,7 @@ tests {
 
 `skillspec pack` bundles a skill into a `.skillpkg` archive. `skillspec install` puts it in `.skillspec/packages/`. Import types across skills with `import { Finding } from "@types/review"`.
 
-Full details for all of these in the [language reference](docs/language-reference.md) and [user guide](docs/guide.md).
+Full details for all of these in the [language reference](docs/language-reference.md), [formal grammar](docs/grammar.ebnf), and [user guide](docs/guide.md).
 
 ## Quick start
 
@@ -268,6 +268,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 |-----------|------|
 | `check`   | Type-check and validate |
 | `build`   | Compile to `SKILL.md` or `.agentpkg`. `--to` deploys to a runtime |
+| `grammar` | Print formal EBNF grammar for `.agent` |
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
@@ -287,7 +288,6 @@ Designed but not shipped.
 - **Test execution.** Test blocks parse and type-check; `skillspec test` lists them. Running them needs LLM integration, which will be a skill, not a CLI command.
 - **Remote registry.** `publish` / `install` from a central registry.
 - **Language server.** LSP for highlighting, completion, diagnostics.
-- **Formal grammar.** Complete EBNF for `.agent`.
 
 ## Contributing
 

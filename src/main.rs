@@ -89,6 +89,8 @@ enum Commands {
     },
     /// Run lint rules to catch quality issues beyond structural validity
     Lint { file: String },
+    /// Print the formal EBNF grammar for the .agent language
+    Grammar,
     /// Show structural diff between two .agent files (or compiled vs SKILL.md)
     Diff {
         file_a: String,
@@ -135,6 +137,7 @@ fn main() -> Result<()> {
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
         Commands::Test { file, prepare, evaluate } => cmd_test(&file, prepare, evaluate.as_deref()),
+        Commands::Grammar => cmd_grammar(),
         Commands::Lint { file } => cmd_lint(&file),
         Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
     }
@@ -154,6 +157,11 @@ fn read_and_parse(path: &str) -> Result<SourceFile> {
         .map_err(|e| miette::miette!("Parse error in '{}': {}", path, e))?;
 
     Ok(ast)
+}
+
+fn cmd_grammar() -> Result<()> {
+    print!("{}", include_str!("../docs/grammar.ebnf"));
+    Ok(())
 }
 
 fn cmd_check(path: &str) -> Result<()> {
