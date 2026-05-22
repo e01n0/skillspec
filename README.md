@@ -222,6 +222,18 @@ skillspec check my-skill.agent  # type-check
 skillspec build my-skill.agent  # compile to SKILL.md
 ```
 
+Deploy straight to your runtime:
+
+```bash
+skillspec build my-skill.agent --to claude           # → ~/.claude/skills/my-skill/SKILL.md
+skillspec build my-skill.agent --to claude-project    # → .claude/skills/my-skill/SKILL.md
+skillspec build my-skill.agent --to cursor            # → .cursor/rules/my-skill.cursorrules
+skillspec build my-skill.agent --to /custom/path      # → any directory
+skillspec build my-skill.agent --to                   # interactive menu
+```
+
+`--to` auto-selects the right build target for each runtime. Combine with `--watch` to redeploy on every save.
+
 [Quickstart guide](docs/quickstart.md) has more. [Language reference](docs/language-reference.md) has everything.
 
 ## Migrating an existing skill
@@ -255,7 +267,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | Command   | Does |
 |-----------|------|
 | `check`   | Type-check and validate |
-| `build`   | Compile to `SKILL.md` or `.agentpkg` |
+| `build`   | Compile to `SKILL.md` or `.agentpkg`. `--to` deploys to a runtime |
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |

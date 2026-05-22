@@ -842,7 +842,7 @@ registry URL is provided). After installation, imports use the standard
 | Command | Description |
 |---|---|
 | `skillspec check <file>` | Type-check and validate |
-| `skillspec build <file> [--target skillmd\|native] [-o dir]` | Compile |
+| `skillspec build <file> [--target skillmd\|native] [-o dir] [--to target]` | Compile and optionally deploy |
 | `skillspec init <name>` | Scaffold a new `.agent` file |
 | `skillspec fmt <file>` | Format with canonical style |
 | `skillspec budget <file>` | Estimate token budget |
@@ -855,3 +855,18 @@ registry URL is provided). After installation, imports use the standard
 
 Default build target is `skillmd`. The `native` target produces a binary
 `.agentpkg` (JSON IR wrapped in a zip archive).
+
+### `--to` (deploy to runtime)
+
+`--to` resolves a named runtime to its expected path and build target, then compiles and writes output there in one step. Use without a value for an interactive picker.
+
+| Target | Output path | Implied build target |
+|---|---|---|
+| `claude` | `~/.claude/skills/` | skillmd |
+| `claude-project` | `.claude/skills/` | skillmd |
+| `cursor` | `.cursor/rules/` | cursor |
+| `cline` | `./` | clinerules |
+| `codex` | `.codex/` | system-prompt |
+| any path | that path | unchanged |
+
+`--to` and `-o`/`--output` are mutually exclusive. `--to` works with `--watch`.
