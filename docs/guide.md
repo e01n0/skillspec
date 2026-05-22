@@ -442,6 +442,46 @@ pipeline "full-greeting-flow" {
 
 Same `&` / `|` dependency syntax as steps. Reference a stage's output as `stage_name.result`. Stages without `requires` run concurrently.
 
+> **Note:** Pipelines compile to structured prose instructions for the LLM. They are not runtime dispatch — real dispatch requires `.agentpkg` and a supporting runtime.
+
+---
+
+## Orchestrations
+
+Orchestrations coordinate multiple agents across named phases. Where a pipeline chains skills sequentially, an orchestration lets several agents work in parallel with shared state and dependency-based ordering.
+
+```agent
+orchestration "pr-review" {
+    agents {
+        reviewer: agent(skill: "code-review", model: "opus")
+        security: agent(skill: "security-audit", model: "sonnet")
+        lead:     agent(skill: "review-lead",   model: "opus")
+    }
+
+    input { pr_url: string }
+    output { verdict: string }
+
+    phase review {
+        reviewer.run(files: input.pr_url)
+        security.run(files: input.pr_url)
+    }
+
+    phase decide {
+        requires review
+        lead.run(review_findings: input.pr_url)
+        emit output from lead.result
+    }
+
+    timeout 30m
+}
+```
+
+Phases use the same `requires` / `&` / `|` dependency syntax as steps and stages. Agents within a phase run concurrently. Add `shared { ... }` for cross-agent state and event handlers.
+
+See the [Language Reference](language-reference.md) section 12 for the full orchestration grammar including shared state and rules.
+
+> **Note:** Like pipelines, orchestrations compile to structured prose. Multi-agent dispatch requires `.agentpkg` and a runtime that supports it.
+
 ---
 
 ## Packaging

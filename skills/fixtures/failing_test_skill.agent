@@ -34,8 +34,8 @@ skill "task-completer" {
                 task: "deploy v2"
             }
             expect {
-                output.status: equals "success"
-                output.message: contains "deployed"
+                output.status: equals("success")
+                output.message: contains("deployed")
             }
         }
     }
