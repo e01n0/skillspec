@@ -1,0 +1,34 @@
+// Semver v2 — breaking change: removed 'limit' input, added required 'filters',
+// added optional 'page', new step 'rank', context text changed.
+
+skill "api-skill" {
+    input {
+        query: string
+        filters: string
+        page?: int
+    }
+
+    output {
+        results: string[]
+        count: int
+    }
+
+    body {
+        context(priority: 90) { "You are an advanced search engine with ranking." }
+
+        step search {
+            context { "Search for the query with filters." }
+        }
+
+        step rank {
+            requires search
+            context { "Rank results by relevance." }
+        }
+
+        step format {
+            requires rank
+            emit output
+            context { "Format results." }
+        }
+    }
+}

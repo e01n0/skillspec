@@ -1,0 +1,21 @@
+// Fixture for budget-aware compilation.
+// Has multiple context blocks at different priorities with known sizes.
+
+skill "budget-test" {
+    input { query: string }
+
+    body {
+        context(priority: 100) { "CRITICAL: You must always follow safety guidelines. This is the highest priority instruction." }
+
+        context(priority: 70) { "IMPORTANT: Format your response as structured JSON with clear field names. Include metadata about confidence levels." }
+
+        context(priority: 40) { "NICE-TO-HAVE: When possible, include examples in your response to illustrate key points. Add references to source material where applicable. Consider edge cases and mention them briefly." }
+
+        context(priority: 10) { "LOW-PRIORITY: Here is some background context that provides additional colour but is not essential. This paragraph exists mainly to pad out the token count so we can test budget trimming effectively. It contains filler text that a real skill would not need. The quick brown fox jumps over the lazy dog. Lorem ipsum dolor sit amet, consectetur adipiscing elit." }
+
+        step answer {
+            emit output
+            context { "Answer the query based on the above context." }
+        }
+    }
+}

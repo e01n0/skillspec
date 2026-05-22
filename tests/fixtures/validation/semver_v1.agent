@@ -1,0 +1,27 @@
+// Semver baseline — v1 of the skill interface.
+
+skill "api-skill" {
+    input {
+        query: string
+        limit: int
+    }
+
+    output {
+        results: string[]
+        count: int
+    }
+
+    body {
+        context(priority: 90) { "You are a search engine." }
+
+        step search {
+            context { "Search for the query." }
+        }
+
+        step format {
+            requires search
+            emit output
+            context { "Format results." }
+        }
+    }
+}
