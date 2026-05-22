@@ -34,8 +34,8 @@ skill "string-reverser" {
                 text: "hello"
             }
             expect {
-                output.reversed: equals "olleh"
-                output.length: equals 5
+                output.reversed: equals("olleh")
+                output.length: equals(5)
             }
         }
 
@@ -44,8 +44,8 @@ skill "string-reverser" {
                 text: ""
             }
             expect {
-                output.reversed: equals ""
-                output.length: equals 0
+                output.reversed: equals("")
+                output.length: equals(0)
             }
         }
     }

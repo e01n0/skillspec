@@ -279,7 +279,7 @@ Designed but not shipped.
 
 ## Contributing
 
-Rust. `cargo test` (152 tests), `cargo build --release`. See `tests/` and `examples/`.
+Rust. `cargo test` (252 tests), `cargo build --release`. See `tests/` and `examples/`.
 
 ## License
 

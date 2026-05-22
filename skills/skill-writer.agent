@@ -1,279 +1,250 @@
 type Issue {
-    severity: enum("critical", "warning", "info")
-    section: string
-    message: string
-    line_hint: int
+  severity: enum("critical", "warning", "info")
+  section: string
+  message: string
+  line_hint: int
 }
 
 type Suggestion {
-    category: enum("structure", "context", "types", "testing", "composition")
-    description: string
-    example?: string
+  category: enum("structure", "context", "types", "testing", "composition")
+  description: string
+  example?: string
 }
 
 type SkillReview {
-    skill_name: string
-    overall_score: int
-    issues: Issue[]
-    suggestions: Suggestion[]
-    summary: string
+  skill_name: string
+  overall_score: int
+  issues: Issue[]
+  suggestions: Suggestion[]
+  summary: string
 }
 
 skill "skill-writer" {
-    input {
-        source_file: string
-        compiled_output?: string
-        review_focus?: enum("structure", "context-management", "types", "testing", "all") = "all"
+  input {
+    source_file: string
+    compiled_output?: string
+    review_focus?: enum("structure", "context-management", "types", "testing", "all") = "all"
+  }
+  output {
+    review: SkillReview
+  }
+  tools {
+    require Read
+    require Bash
+  }
+  permissions {
+    filesystem: read_only("**/*.agent", "**/*.md")
+  }
+  pre {
+    assert input.source_file != "" message "Source file path is required"
+  }
+  post {
+    assert output.review.overall_score >= 0 message "Score must be non-negative"
+    assert output.review.overall_score <= 100 message "Score must not exceed 100"
+  }
+  body {
+    persona {
+      """
+      You are an expert SkillSpec language reviewer. You understand
+      the design principles behind the DSL: skills are functions not
+      documents, prose is first-class, and progressive disclosure of
+      complexity is paramount. You evaluate .agent files against
+      these principles rigorously but constructively.
+      """
     }
-
-    output {
-        review: SkillReview
+    reasoning extended
+    sampling {
+      temperature: 0.3
+      top_p: 0.9
     }
-
-    tools {
-        require Read
-        require Bash
+    format {
+      style: json
+      structure: output
     }
-
-    permissions {
-        filesystem: read_only("**/*.agent", "**/*.md")
+    reinforce every 2 steps {
+      """
+      Judge against SkillSpec principles, not general coding standards.
+      """
     }
-
-    pre {
-        assert input.source_file != "" message "Source file path is required"
+    examples {
+      example "good minimal skill" {
+        input: "skill \"hello\" { context { \"Greet warmly.\" } }"
+        output: "Score 85 — clean minimal skill, could add input/output types"
+        note: "Minimal skills should be praised for simplicity, not penalised for missing features"
+      }
+      example "over-engineered skill" {
+        input: "A skill with 20 context blocks all at priority 100"
+        output: "Score 30 — priority system is meaningless when everything is 100"
+        note: "Flag violations of progressive disclosure"
+      }
     }
-
-    post {
-        assert output.review.overall_score >= 0 message "Score must be non-negative"
-        assert output.review.overall_score <= 100 message "Score must not exceed 100"
+    context(priority: 100) {
+      """
+      Review a SkillSpec .agent file for quality, correctness, and
+      adherence to SkillSpec design principles. Produce a structured
+      SkillReview with actionable feedback.
+      """
     }
-
-    body {
-        persona {
-            """
-            You are an expert SkillSpec language reviewer. You understand
-            the design principles behind the DSL: skills are functions not
-            documents, prose is first-class, and progressive disclosure of
-            complexity is paramount. You evaluate .agent files against
-            these principles rigorously but constructively.
-            """
+    lazy context "skillspec-principles" (priority: 90) {
+      summary "The three core SkillSpec design principles and how to evaluate against them."
+      index {
+        section "functions-not-documents" {
+          summary "Skills should have typed signatures, composable steps, and testable contracts."
+          ref "./references/principle-functions.md"
         }
-
-        reasoning extended
-
-        sampling {
-            temperature: 0.3
-            top_p: 0.9
+        section "prose-first-class" {
+          summary "Natural language instructions are embraced, not escaped. Structure surrounds prose."
+          ref "./references/principle-prose.md"
         }
-
-        format {
-            style: json
-            structure: output
+        section "progressive-disclosure" {
+          summary "Minimal skills are 5 lines. Complexity is opt-in. No syntax tax for unused features."
+          ref "./references/principle-progressive.md"
         }
-
-        reinforce every 2 steps {
-            "Judge against SkillSpec principles, not general coding standards."
-        }
-
-        examples {
-            example "good minimal skill" {
-                input: "skill \"hello\" { context { \"Greet warmly.\" } }"
-                output: "Score 85 — clean minimal skill, could add input/output types"
-                note: "Minimal skills should be praised for simplicity, not penalised for missing features"
-            }
-            example "over-engineered skill" {
-                input: "A skill with 20 context blocks all at priority 100"
-                output: "Score 30 — priority system is meaningless when everything is 100"
-                note: "Flag violations of progressive disclosure"
-            }
-        }
-
-        context(priority: 100) {
-            """
-            Review a SkillSpec .agent file for quality, correctness, and
-            adherence to SkillSpec design principles. Produce a structured
-            SkillReview with actionable feedback.
-            """
-        }
-
-        lazy context "skillspec-principles" (priority: 90) {
-            summary "The three core SkillSpec design principles and how to evaluate against them."
-            index {
-                section "functions-not-documents" {
-                    summary "Skills should have typed signatures, composable steps, and testable contracts."
-                    ref "./references/principle-functions.md"
-                }
-                section "prose-first-class" {
-                    summary "Natural language instructions are embraced, not escaped. Structure surrounds prose."
-                    ref "./references/principle-prose.md"
-                }
-                section "progressive-disclosure" {
-                    summary "Minimal skills are 5 lines. Complexity is opt-in. No syntax tax for unused features."
-                    ref "./references/principle-progressive.md"
-                }
-            }
-        }
-
-        lazy context "common-antipatterns" (priority: 60) {
-            summary "Known antipatterns in SkillSpec files and how to fix them."
-            ref "./references/antipatterns.md"
-        }
-
-        step parse_and_understand {
-            load "skillspec-principles"
-
-            context(priority: 95) {
-                """
-                Read the source .agent file. Understand its purpose, structure,
-                and intent. Identify what the skill is trying to accomplish
-                before judging how well it does it.
-
-                Check:
-                - Does the skill have a clear, single purpose?
-                - Are input/output types well-defined?
-                - Is the step DAG sensible (dependencies flow logically)?
-                """
-            }
-        }
-
-        step review_context_management {
-            requires parse_and_understand
-            when input.review_focus == "all" || input.review_focus == "context-management"
-
-            context(priority: 85) {
-                """
-                Evaluate how the skill manages its context budget:
-                - Are priorities meaningful (not all 100)?
-                - Are conditional contexts used where appropriate?
-                - Is lazy loading used for large reference material?
-                - Is the decay parameter used for instructions that lose relevance?
-                - Would any eager contexts benefit from being lazy?
-
-                Flag skills where total eager context exceeds ~500 tokens
-                without lazy loading.
-                """
-            }
-        }
-
-        step review_types_and_contracts {
-            requires parse_and_understand
-            when input.review_focus == "all" || input.review_focus == "types"
-
-            context(priority: 80) {
-                """
-                Evaluate the type system usage:
-                - Are custom types used where a primitive would suffice (over-engineering)?
-                - Are there fields that should be typed but aren't?
-                - Do pre/post contracts catch meaningful invariants?
-                - Are optional fields truly optional, or are they always required in practice?
-                """
-            }
-        }
-
-        step review_composition {
-            requires parse_and_understand
-            when input.review_focus == "all" || input.review_focus == "structure"
-            load "common-antipatterns"
-
-            context(priority: 75) {
-                """
-                Evaluate structural quality:
-                - Could any steps be extracted into reusable skills?
-                - Are there repeated patterns that should be mixins?
-                - Is the skill doing too much (should it be a pipeline instead)?
-                - Are tool declarations accurate and permissions minimal?
-                """
-            }
-        }
-
-        step review_testing {
-            requires parse_and_understand
-            when input.review_focus == "all" || input.review_focus == "testing"
-
-            context(priority: 70) {
-                """
-                Evaluate test coverage:
-                - Does the skill have tests at all?
-                - Do tests cover the happy path AND edge cases?
-                - Are LLM-judged assertions (resembles, satisfies) used
-                  appropriately with confidence thresholds?
-                - Are tool mocks realistic?
-                """
-            }
-        }
-
-        step review_compiled_output {
-            requires parse_and_understand
-            when input.compiled_output
-
-            context(priority: 65) {
-                """
-                If compiled SKILL.md output is provided, compare it against
-                the source .agent file:
-                - Is information lost in compilation that shouldn't be?
-                - Is the SKILL.md readable and well-structured?
-                - Are context blocks in the right order?
-                - Are steps in topological order?
-                """
-            }
-        }
-
-        step synthesise_review {
-            requires review_context_management | review_types_and_contracts | review_composition | review_testing | review_compiled_output
-            emit output
-
-            context(priority: 90) {
-                """
-                Synthesise all review findings into a SkillReview.
-
-                Scoring guide:
-                - 90-100: Exemplary — follows all principles, well-tested, clean
-                - 70-89: Good — minor issues, mostly well-structured
-                - 50-69: Needs work — structural problems or missing features
-                - 30-49: Significant issues — violates core principles
-                - 0-29: Rewrite recommended
-
-                Be constructive. Every issue should have a concrete suggestion.
-                Lead with what the skill does well before listing problems.
-                """
-            }
-        }
+      }
     }
-
-    tests {
-        test "reviews minimal skill positively" {
-            given {
-                source_file: "fixtures/minimal.agent"
-            }
-            expect {
-                output.review.overall_score: >= 70
-                output.review.issues: none(where: .severity == "critical")
-            }
-            confidence 0.8
-            runs 5
-        }
-
-        test "catches missing types" {
-            given {
-                source_file: "fixtures/no_types.agent"
-                review_focus: "types"
-            }
-            expect {
-                output.review.suggestions: contains(where: .category == "types")
-            }
-        }
-
-        test "flags all-same-priority antipattern" {
-            given {
-                source_file: "fixtures/bad_priorities.agent"
-                review_focus: "context-management"
-            }
-            expect {
-                output.review.issues: contains(where: .severity == "warning")
-                output.review.overall_score: <= 60
-            }
-            confidence 0.8
-            runs 5
-        }
+    lazy context "common-antipatterns" (priority: 60) {
+      summary "Known antipatterns in SkillSpec files and how to fix them."
+      ref "./references/antipatterns.md"
     }
+    step parse_and_understand {
+      load "skillspec-principles"
+      context(priority: 95) {
+        """
+        Read the source .agent file. Understand its purpose, structure,
+        and intent. Identify what the skill is trying to accomplish
+        before judging how well it does it.
+        
+        Check:
+        - Does the skill have a clear, single purpose?
+        - Are input/output types well-defined?
+        - Is the step DAG sensible (dependencies flow logically)?
+        """
+      }
+    }
+    step review_context_management {
+      requires parse_and_understand
+      when input.review_focus == "all" || input.review_focus == "context-management"
+      context(priority: 85) {
+        """
+        Evaluate how the skill manages its context budget:
+        - Are priorities meaningful (not all 100)?
+        - Are conditional contexts used where appropriate?
+        - Is lazy loading used for large reference material?
+        - Is the decay parameter used for instructions that lose relevance?
+        - Would any eager contexts benefit from being lazy?
+        
+        Flag skills where total eager context exceeds ~500 tokens
+        without lazy loading.
+        """
+      }
+    }
+    step review_types_and_contracts {
+      requires parse_and_understand
+      when input.review_focus == "all" || input.review_focus == "types"
+      context(priority: 80) {
+        """
+        Evaluate the type system usage:
+        - Are custom types used where a primitive would suffice (over-engineering)?
+        - Are there fields that should be typed but aren't?
+        - Do pre/post contracts catch meaningful invariants?
+        - Are optional fields truly optional, or are they always required in practice?
+        """
+      }
+    }
+    step review_composition {
+      requires parse_and_understand
+      when input.review_focus == "all" || input.review_focus == "structure"
+      load "common-antipatterns"
+      context(priority: 75) {
+        """
+        Evaluate structural quality:
+        - Could any steps be extracted into reusable skills?
+        - Are there repeated patterns that should be mixins?
+        - Is the skill doing too much (should it be a pipeline instead)?
+        - Are tool declarations accurate and permissions minimal?
+        """
+      }
+    }
+    step review_testing {
+      requires parse_and_understand
+      when input.review_focus == "all" || input.review_focus == "testing"
+      context(priority: 70) {
+        """
+        Evaluate test coverage:
+        - Does the skill have tests at all?
+        - Do tests cover the happy path AND edge cases?
+        - Are LLM-judged assertions (resembles, satisfies) used
+        appropriately with confidence thresholds?
+        - Are tool mocks realistic?
+        """
+      }
+    }
+    step review_compiled_output {
+      requires parse_and_understand
+      when input.compiled_output
+      context(priority: 65) {
+        """
+        If compiled SKILL.md output is provided, compare it against
+        the source .agent file:
+        - Is information lost in compilation that shouldn't be?
+        - Is the SKILL.md readable and well-structured?
+        - Are context blocks in the right order?
+        - Are steps in topological order?
+        """
+      }
+    }
+    step synthesise_review {
+      requires review_context_management | review_types_and_contracts | review_composition | review_testing | review_compiled_output
+      emit output
+      context(priority: 90) {
+        """
+        Synthesise all review findings into a SkillReview.
+        
+        Scoring guide:
+        - 90-100: Exemplary — follows all principles, well-tested, clean
+        - 70-89: Good — minor issues, mostly well-structured
+        - 50-69: Needs work — structural problems or missing features
+        - 30-49: Significant issues — violates core principles
+        - 0-29: Rewrite recommended
+        
+        Be constructive. Every issue should have a concrete suggestion.
+        Lead with what the skill does well before listing problems.
+        """
+      }
+    }
+  }
+  tests {
+    test "reviews minimal skill positively" {
+      given {
+        source_file: "fixtures/minimal.agent"
+      }
+      expect {
+        output.review.overall_score: >= 70
+        output.review.issues: none(where: _item.severity == "critical")
+      }
+      confidence 0.8
+      runs 5
+    }
+    test "catches missing types" {
+      given {
+        source_file: "fixtures/no_types.agent"
+        review_focus: "types"
+      }
+      expect {
+        output.review.suggestions: contains(where: _item.category == "types")
+      }
+    }
+    test "flags all-same-priority antipattern" {
+      given {
+        source_file: "fixtures/bad_priorities.agent"
+        review_focus: "context-management"
+      }
+      expect {
+        output.review.issues: contains(where: _item.severity == "warning")
+        output.review.overall_score: <= 60
+      }
+      confidence 0.8
+      runs 5
+    }
+  }
 }

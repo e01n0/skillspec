@@ -216,6 +216,8 @@ lazy context "catalog" (priority: 35) {
 }
 ```
 
+**Path validation:** `skillspec check` validates that `ref` paths point to existing files when the source file's directory is known. Missing files produce an `UnresolvedRef` error. This applies to both top-level `ref` and `ref` inside `index` sections. The check is skipped when running without a base directory (e.g. checking source from stdin).
+
 **inline** embeds prose directly:
 ```agent
 lazy context "note" (priority: 20) {
