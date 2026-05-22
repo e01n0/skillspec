@@ -1,0 +1,42 @@
+skill "task-completer" {
+    input {
+        task: string
+    }
+
+    output {
+        status: string
+        message: string
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Mark the given task as complete. Set status to "complete"
+            and provide a confirmation message.
+            """
+        }
+
+        step complete {
+            emit output
+
+            context {
+                """
+                Set output.status to the string "complete" and
+                output.message to a confirmation that the task is done.
+                """
+            }
+        }
+    }
+
+    tests {
+        test "status is success" {
+            given {
+                task: "deploy v2"
+            }
+            expect {
+                output.status: equals "success"
+                output.message: contains "deployed"
+            }
+        }
+    }
+}

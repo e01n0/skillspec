@@ -1,0 +1,52 @@
+skill "string-reverser" {
+    input {
+        text: string
+    }
+
+    output {
+        reversed: string
+        length: int
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Reverse the input text character by character and report
+            its length.
+            """
+        }
+
+        step reverse {
+            emit output
+
+            context {
+                """
+                Take the input text, reverse it, and set the length
+                to the number of characters.
+                """
+            }
+        }
+    }
+
+    tests {
+        test "reverses simple string" {
+            given {
+                text: "hello"
+            }
+            expect {
+                output.reversed: equals "olleh"
+                output.length: equals 5
+            }
+        }
+
+        test "handles empty string" {
+            given {
+                text: ""
+            }
+            expect {
+                output.reversed: equals ""
+                output.length: equals 0
+            }
+        }
+    }
+}

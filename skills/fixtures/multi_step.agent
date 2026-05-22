@@ -1,0 +1,57 @@
+type Report {
+    title: string
+    sections: string[]
+    conclusion: string
+}
+
+skill "research-report" {
+    input {
+        topic: string
+        depth?: enum("shallow", "moderate", "deep") = "moderate"
+    }
+
+    output {
+        report: Report
+    }
+
+    body {
+        context(priority: 100) {
+            """
+            Research the given topic and produce a structured report
+            with multiple sections and a conclusion.
+            """
+        }
+
+        step gather {
+            context(priority: 90) {
+                """
+                Collect information and key facts about the topic.
+                Breadth of research should match the requested depth.
+                """
+            }
+        }
+
+        step organise {
+            requires gather
+
+            context(priority: 80) {
+                """
+                Structure the gathered information into logical sections.
+                Each section should cover one aspect of the topic.
+                """
+            }
+        }
+
+        step conclude {
+            requires organise
+            emit output
+
+            context(priority: 70) {
+                """
+                Write the conclusion by synthesising the organised sections.
+                The conclusion should answer the original research question.
+                """
+            }
+        }
+    }
+}
