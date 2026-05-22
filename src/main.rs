@@ -241,22 +241,21 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
             Ok(())
         }
         "native" => {
+            let source_text = fs::read_to_string(path)
+                .map_err(|e| miette::miette!("Failed to read '{}': {}", path, e))?;
             let ast = read_and_parse(path)?;
             let compiler = IrCompiler::new();
-            let bytes = compiler
-                .compile(&ast)
-                .map_err(|e| miette::miette!("IR compilation failed: {e}"))?;
+            let pkg = compiler.compile_pkg(&ast, &source_text);
             let out_dir = output.unwrap_or(".");
-            // Extract just the file stem so absolute input paths don't corrupt the output path.
             let stem = Path::new(path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(path)
                 .replace(".agent", "");
-            let out_path = format!("{out_dir}/{stem}.agentpkg");
-            std::fs::write(&out_path, &bytes)
-                .map_err(|e| miette::miette!("Failed to write {out_path}: {e}"))?;
-            eprintln!("✓ {path} → {out_path}");
+            let pkg_dir = Path::new(out_dir).join(format!("{stem}.agentpkg"));
+            compiler.write_to_dir(&pkg, &pkg_dir)
+                .map_err(|e| miette::miette!("Failed to write native package: {e}"))?;
+            eprintln!("✓ {path} → {}", pkg_dir.display());
             Ok(())
         }
         other => Err(miette::miette!("unknown target '{}'; supported: skillmd, native", other)),
