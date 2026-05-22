@@ -1,0 +1,405 @@
+(* ================================================================== *)
+(* SkillSpec EBNF Grammar                                              *)
+(* File extension: .agent | Encoding: UTF-8                            *)
+(*                                                                     *)
+(* Derived from src/lexer.rs and src/parser.rs.                        *)
+(* This is the authoritative grammar for the .agent file format.       *)
+(* ================================================================== *)
+
+
+(* ── 1. Lexical grammar ──────────────────────────────────────────── *)
+
+letter          = "a" | "b" | ... | "z" | "A" | "B" | ... | "Z" ;
+digit           = "0" | "1" | ... | "9" ;
+alpha_under     = letter | "_" ;
+alnum_under     = letter | digit | "_" ;
+
+line_comment    = "//" , { ? any character except newline ? } ;
+whitespace      = ? spaces, tabs, newlines ? ;
+
+(* Identifiers and @-prefixed identifiers *)
+ident           = ( alpha_under | "@" ) , { alnum_under } ;
+
+(* String literals *)
+escape_seq      = "\\" , ( "n" | "t" | "r" | '"' | "\\" ) ;
+string_char     = ? any character except '"', '\\', and newline ? ;
+string_lit      = '"' , { string_char | escape_seq } , '"' ;
+triple_string   = '"""' , { ? any character except '"""' ? } , '"""' ;
+prose           = string_lit | triple_string ;
+
+(* Numeric literals *)
+int_lit         = [ "-" ] , digit , { digit } ;
+float_lit       = [ "-" ] , digit , { digit } , "." , digit , { digit } ;
+number          = float_lit | int_lit ;
+
+(* Boolean literals *)
+bool_lit        = "true" | "false" ;
+
+(* Keywords — all are soft (valid in identifier position) *)
+(* keyword = "skill" | "input" | "output" | "body" | "context" | "step"
+           | "requires" | "when" | "use" | "let" | "emit" | "import"
+           | "from" | "type" | "pre" | "post" | "assert" | "message"
+           | "on_error" | "all_steps" | "extends" | "lazy" | "ref"
+           | "summary" | "index" | "section" | "load" | "pipeline"
+           | "stage" | "orchestration" | "agents" | "phase" | "shared"
+           | "rules" | "cancel" | "timeout" | "mixin" | "include"
+           | "package" | "version" | "description" | "exports"
+           | "reasoning" | "examples" | "example" | "note" | "format"
+           | "reinforce" | "every" | "on" | "sampling" | "persona"
+           | "tools" | "require" | "optional" | "mcp" | "tool"
+           | "allow" | "deny" | "permissions" | "tests" | "test"
+           | "given" | "mock" | "expect" | "confidence" | "runs"
+           | "snapshot" | "compare" | "equals" | "contains" | "matches"
+           | "resembles" | "satisfies" | "between" | "unavailable"
+           | "failing" | "slow" | "observe" | "emit_event" | "metric"
+           | "if" | "retry" | "backoff" | "string" | "int" | "float"
+           | "bool" | "enum" | "map" ;                                  *)
+
+
+(* ── 2. Source file ──────────────────────────────────────────────── *)
+
+source_file     = { top_level_decl } ;
+
+top_level_decl  = import_decl
+                | type_def
+                | skill_decl
+                | pipeline_decl
+                | orchestration_decl
+                | mixin_decl
+                | package_decl ;
+
+
+(* ── 3. Imports ──────────────────────────────────────────────────── *)
+
+import_decl     = "import" , "{" , symbol_list , "}" , "from" , string_lit ;
+symbol_list     = ident , { "," , ident } ;
+
+
+(* ── 4. Type definitions ─────────────────────────────────────────── *)
+
+type_def        = "type" , ident , "{" , field_list , "}" ;
+
+field_list      = { field } ;
+field           = ident , [ "?" ] , ":" , type_expr , [ "=" , primary_expr ] ;
+
+type_expr       = base_type , [ "[]" ] ;
+base_type       = "string"
+                | "int"
+                | "float"
+                | "bool"
+                | enum_type
+                | map_type
+                | ident ;                         (* named / imported type *)
+
+enum_type       = "enum" , "(" , string_lit , { "," , string_lit } , ")" ;
+map_type        = "map" , "<" , type_expr , "," , type_expr , ">" ;
+
+
+(* ── 5. Skills ───────────────────────────────────────────────────── *)
+
+skill_decl      = "skill" , string_lit , [ "extends" , string_lit ] ,
+                  "{" , { skill_section } , "}" ;
+
+skill_section   = input_block
+                | output_block
+                | pre_block
+                | post_block
+                | body_block
+                | context_block               (* shorthand — no body wrapper *)
+                | tools_block
+                | permissions_block
+                | include_stmt
+                | tests_block ;
+
+input_block     = "input" , "{" , field_list , "}" ;
+output_block    = "output" , "{" , field_list , "}" ;
+
+pre_block       = "pre" , "{" , { assertion } , "}" ;
+post_block      = "post" , "{" , { assertion } , "}" ;
+
+assertion       = "assert" , [ "when" , expr ] , expr , "message" , string_lit ;
+
+include_stmt    = "include" , ident ;
+
+
+(* ── 6. Body ─────────────────────────────────────────────────────── *)
+
+body_block      = "body" , "{" , { body_item } , "}" ;
+
+body_item       = context_block
+                | lazy_context
+                | step_decl
+                | on_error_block
+                | observe_block
+                | persona_directive
+                | reasoning_directive
+                | sampling_directive
+                | format_directive
+                | reinforce_directive
+                | examples_directive ;
+
+
+(* ── 7. Context blocks ───────────────────────────────────────────── *)
+
+context_block   = "context" , [ context_params ] , "{" , prose , "}" ;
+context_params  = "(" , context_param , { "," , context_param } , ")" ;
+context_param   = "priority" , ":" , int_lit
+                | "when" , ":" , expr
+                | "decay" , ":" , float_lit ;
+
+
+(* ── 8. Lazy context ─────────────────────────────────────────────── *)
+
+lazy_context    = "lazy" , "context" , string_lit ,
+                  [ "(" , lazy_params , ")" ] ,
+                  "{" , "summary" , string_lit , lazy_content , "}" ;
+
+lazy_params     = "priority" , ":" , int_lit , { "," , "priority" , ":" , int_lit } ;
+
+lazy_content    = ref_content
+                | index_content
+                | prose ;                         (* inline *)
+
+ref_content     = "ref" , string_lit ;
+
+index_content   = "index" , "{" , { index_section } , "}" ;
+index_section   = "section" , string_lit , "{" ,
+                    "summary" , string_lit ,
+                    "ref" , string_lit ,
+                  "}" ;
+
+
+(* ── 9. Steps ────────────────────────────────────────────────────── *)
+
+step_decl       = "step" , ident , "{" , { step_item } , "}" ;
+
+step_item       = requires_clause
+                | when_clause
+                | use_call
+                | let_binding
+                | load_stmt
+                | emit_stmt
+                | context_block ;
+
+requires_clause = "requires" , dependency ;
+dependency      = "all_steps"
+                | ident , { "&" , ident }         (* all-of *)
+                | ident , { "|" , ident } ;       (* any-of / single *)
+
+when_clause     = "when" , expr ;
+
+use_call        = "use" , ident , "(" , [ named_args ] , ")" ;
+named_args      = named_arg , { "," , named_arg } ;
+named_arg       = ident , ":" , expr ;
+
+let_binding     = "let" , ident , "=" , expr ;
+
+load_stmt       = "load" , string_lit ;
+
+emit_stmt       = "emit" , "output" ;
+
+on_error_block  = "on_error" , "{" , { use_call } , "}" ;
+
+
+(* ── 10. Expressions ─────────────────────────────────────────────── *)
+(* Precedence (low to high): ||  →  &&  →  comparison  →  primary    *)
+
+expr            = or_expr ;
+or_expr         = and_expr , { "||" , and_expr } ;
+and_expr        = cmp_expr , { "&&" , cmp_expr } ;
+cmp_expr        = primary_expr , [ cmp_op , primary_expr ] ;
+cmp_op          = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
+
+primary_expr    = string_lit
+                | triple_string
+                | int_lit
+                | float_lit
+                | bool_lit
+                | array_lit
+                | "!" , primary_expr              (* negation *)
+                | dot_shorthand                   (* .field in where-clauses *)
+                | ident_or_access ;               (* ident with optional .chain *)
+
+array_lit       = "[" , [ expr , { "," , expr } ] , "]" ;
+
+dot_shorthand   = "." , ident , { "." , ident } ;
+
+ident_or_access = ( ident | "input" | "output" ) , { "." , ident } ;
+
+
+(* ── 11. Prompt directives ───────────────────────────────────────── *)
+
+persona_directive   = "persona" , "{" , prose , "}" ;
+
+reasoning_directive = "reasoning" , ident ;        (* "extended" | "standard" | "none" *)
+
+sampling_directive  = "sampling" , "{" , { sampling_field } , "}" ;
+sampling_field      = ( "temperature" | "top_p" ) , ":" , number ;
+
+format_directive    = "format" , "{" , { format_field } , "}" ;
+format_field        = ( "style" | "structure" ) , ":" , ident ;
+
+reinforce_directive = "reinforce" , reinforce_trigger , "{" , prose , "}" ;
+reinforce_trigger   = "every" , int_lit , "steps"
+                    | "on" , ident                 (* e.g. "context_shift" *)
+                    | "when" , expr ;
+
+examples_directive  = "examples" , "{" , { example_decl } , "}" ;
+example_decl        = "example" , string_lit , "{" , { example_field } , "}" ;
+example_field       = "input"  , ":" , prose
+                    | "output" , ":" , ( prose | object_lit )
+                    | "note"   , ":" , prose ;
+
+object_lit          = "{" , { ident , ":" , primary_expr , [ "," ] } , "}" ;
+
+
+(* ── 12. Tools ───────────────────────────────────────────────────── *)
+
+tools_block     = "tools" , "{" , { tool_entry } , "}" ;
+tool_entry      = ( "require" | "optional" ) , tool_decl ;
+
+tool_decl       = builtin_tool | mcp_tool ;
+builtin_tool    = ident ;                          (* e.g. Read, Bash, Edit *)
+mcp_tool        = "mcp" , "(" , string_lit , ")" , [ "{" , { tool_method } , "}" ] ;
+
+tool_method     = ident , "(" , [ method_params ] , ")" , "->" , type_expr ;
+method_params   = method_param , { "," , method_param } ;
+method_param    = ident , ":" , type_expr ;
+
+
+(* ── 13. Permissions ─────────────────────────────────────────────── *)
+
+permissions_block  = "permissions" , "{" , { permission_entry } , "}" ;
+
+permission_entry   = filesystem_perm | network_perm | secrets_perm ;
+
+filesystem_perm    = "filesystem" , ":" , ident ,
+                     "(" , string_lit , { "," , string_lit } , ")" ;
+                     (* ident = "read_only" | "read_write" | "write_only" *)
+
+network_perm       = "network" , ":" , ident ,
+                     "(" , string_lit , { "," , string_lit } , ")" ;
+                     (* ident = "outbound" | "inbound" | "none" *)
+
+secrets_perm       = "secrets" , ":" ,
+                     "[" , [ string_lit , { "," , string_lit } ] , "]" ;
+
+
+(* ── 14. Tests ───────────────────────────────────────────────────── *)
+
+tests_block     = "tests" , "{" , { test_decl } , "}" ;
+
+test_decl       = "test" , string_lit , "{" , { test_item } , "}" ;
+
+test_item       = given_block
+                | mock_decl
+                | expect_block
+                | confidence_stmt
+                | runs_stmt
+                | snapshot_stmt ;
+
+given_block     = "given" , "{" , { ident , ":" , expr } , "}" ;
+
+(* ── Mock ── *)
+
+mock_decl       = "mock" , dotted_path , ( mock_shorthand | mock_braced ) ;
+
+dotted_path     = ident , { "." , ident } ;
+
+mock_shorthand  = ":" , ( "unavailable"
+                        | "failing" , [ string_lit ]
+                        | "slow" , [ string_lit ] ) ;
+
+mock_braced     = "{" , { mock_response } , "}" ;
+mock_response   = ident , "(" , [ named_args ] , ")" , "->" , expr ;
+
+(* ── Expect ── *)
+
+expect_block    = "expect" , "{" , { expectation } , "}" ;
+
+expectation     = dotted_path , ":" , assertion_expr ;
+
+assertion_expr  = "equals"    , "(" , expr , ")"
+                | "contains"  , "(" , ( where_clause | expr ) , ")"
+                | "matches"   , "(" , string_lit , ")"
+                | "resembles" , "(" , string_lit , ")"
+                | "satisfies" , "(" , string_lit , ")"
+                | "between"   , "(" , expr , "," , expr , ")"
+                | "all"       , "(" , where_clause , ")"
+                | "none"      , "(" , where_clause , ")"
+                | cmp_op      , expr ;
+
+where_clause    = "where" , ":" , expr ;
+
+confidence_stmt = "confidence" , number ;
+runs_stmt       = "runs" , int_lit ;
+snapshot_stmt   = "snapshot" , string_lit ;
+
+
+(* ── 15. Pipelines ───────────────────────────────────────────────── *)
+
+pipeline_decl   = "pipeline" , string_lit , "{" , { pipeline_section } , "}" ;
+
+pipeline_section = input_block
+                 | output_block
+                 | stage_decl
+                 | on_error_block
+                 | timeout_clause ;
+
+stage_decl      = "stage" , ident , "{" ,
+                    [ requires_clause ] ,
+                    use_call ,
+                  "}" ;
+
+timeout_clause  = "timeout" , int_lit , ident ;   (* e.g. 30 m, 1 h, 300 s *)
+
+
+(* ── 16. Orchestrations ──────────────────────────────────────────── *)
+
+orchestration_decl = "orchestration" , string_lit ,
+                     "{" , { orchestration_section } , "}" ;
+
+orchestration_section = agents_block
+                      | input_block
+                      | output_block
+                      | phase_decl
+                      | timeout_clause ;
+
+agents_block    = "agents" , "{" , { agent_decl } , "}" ;
+agent_decl      = ident , ":" , "agent" , "(" ,
+                    agent_field , { "," , agent_field } ,
+                  ")" ;
+agent_field     = ( "skill" | "model" ) , ":" , string_lit ;
+
+phase_decl      = "phase" , ident , "{" , { phase_item } , "}" ;
+phase_item      = requires_clause
+                | emit_from_stmt
+                | agent_action ;
+
+emit_from_stmt  = "emit" , "output" , "from" , ident_or_access ;
+
+agent_action    = ident , "." , ident , "(" , [ named_args ] , ")" ;
+
+
+(* ── 17. Mixins ──────────────────────────────────────────────────── *)
+
+mixin_decl      = "mixin" , ident , "{" , { mixin_item } , "}" ;
+mixin_item      = step_decl | context_block ;
+
+
+(* ── 18. Packages ────────────────────────────────────────────────── *)
+
+package_decl    = "package" , string_lit , "{" , { package_field } , "}" ;
+
+package_field   = "version"     , "=" , string_lit
+                | "description" , "=" , string_lit
+                | "exports"     , "{" , { ident } , "}" ;
+
+
+(* ── 19. Observability ───────────────────────────────────────────── *)
+
+observe_block   = "observe" , "{" , { observe_item } , "}" ;
+observe_item    = observe_event | observe_metric ;
+
+observe_event   = "on" , ident , "{" , "emit_event" , string_lit , "}" ;
+observe_metric  = "metric" , string_lit , ident (* "from" *) , expr ;

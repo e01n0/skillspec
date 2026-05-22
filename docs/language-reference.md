@@ -1,6 +1,6 @@
 # Language Reference
 
-File extension: `.agent`. Encoding: UTF-8.
+File extension: `.agent`. Encoding: UTF-8. Formal grammar: [grammar.ebnf](grammar.ebnf).
 
 ---
 
@@ -848,6 +848,7 @@ registry URL is provided). After installation, imports use the standard
 | `skillspec budget <file>` | Estimate token budget |
 | `skillspec deps <file>` | Print dependency graph |
 | `skillspec test <file>` | List tests (LLM execution requires runtime) |
+| `skillspec grammar` | Print formal EBNF grammar |
 | `skillspec diff <a> <b> [--against-skillmd]` | Structural diff |
 | `skillspec migrate <file>` | Extract a SKILL.md to `.agent.partial` |
 | `skillspec pack <file> [-o dir]` | Pack to `.skillpkg` |
