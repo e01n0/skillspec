@@ -49,6 +49,12 @@ pub enum SkillSpecError {
     #[error("Lazy context '{name}' references missing file '{path}' at {span}")]
     UnresolvedRef { name: String, path: String, span: Span },
 
+    #[error("Unknown skill '{name}' referenced in use call at {span}")]
+    UnknownSkill { name: String, span: Span },
+
+    #[error("Argument mismatch in use call to '{skill_name}': {message} (at {span})")]
+    MismatchedArg { skill_name: String, message: String, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 
