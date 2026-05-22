@@ -36,6 +36,9 @@ enum Commands {
         /// Watch for file changes and rebuild automatically
         #[arg(long)]
         watch: bool,
+        /// Token budget: drop lowest-priority contexts to fit within this limit
+        #[arg(long)]
+        budget: Option<usize>,
     },
     /// Scaffold a new .agent skill file
     Init { name: String },
@@ -84,11 +87,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output, watch } => {
+        Commands::Build { file, target, output, watch, budget } => {
             if watch {
                 cmd_build_watch(&file, &target, output.as_deref())
             } else {
-                cmd_build(&file, &target, output.as_deref())
+                cmd_build(&file, &target, output.as_deref(), budget)
             }
         }
         Commands::Init { name } => cmd_init(&name),
@@ -178,10 +181,10 @@ fn cmd_lint(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Option<usize>) -> Result<()> {
     match target {
         "skillmd" => {
-            let ast = read_and_parse(path)?;
+            let mut ast = read_and_parse(path)?;
             let base_dir = std::path::Path::new(path)
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
@@ -196,6 +199,18 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
                     errors.len(),
                     path
                 ));
+            }
+
+            if let Some(budget) = token_budget {
+                for skill in &mut ast.skills {
+                    let trimmed = budget::trim_to_budget(&mut skill.body.contexts, budget);
+                    for t in &trimmed {
+                        eprintln!(
+                            "⚠ trimmed context (priority {:?}, ~{} tokens): {}",
+                            t.priority, t.estimated_tokens, t.snippet
+                        );
+                    }
+                }
             }
 
             let compiler = SkillMdCompiler::new();
@@ -254,7 +269,7 @@ fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()>
     use std::time::Duration;
 
     eprintln!("Watching {} for changes (Ctrl-C to stop)...", path);
-    if let Err(e) = cmd_build(path, target, output) {
+    if let Err(e) = cmd_build(path, target, output, None) {
         eprintln!("{}", e);
     }
 
@@ -279,7 +294,7 @@ fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()>
                 if dominated {
                     eprintln!("\n[{}] Change detected, rebuilding...",
                         chrono_now());
-                    if let Err(e) = cmd_build(path, target, output) {
+                    if let Err(e) = cmd_build(path, target, output, None) {
                         eprintln!("{}", e);
                     }
                 }

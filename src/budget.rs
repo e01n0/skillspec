@@ -132,6 +132,49 @@ pub fn estimate_budget(file: &SourceFile) -> String {
     out
 }
 
+// ── Budget-aware trimming ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct TrimmedContext {
+    pub priority: Option<u8>,
+    pub snippet: String,
+    pub estimated_tokens: usize,
+}
+
+pub fn trim_to_budget(contexts: &mut Vec<ContextBlock>, budget: usize) -> Vec<TrimmedContext> {
+    let mut trimmed = Vec::new();
+
+    fn total_tokens(ctxs: &[ContextBlock]) -> usize {
+        ctxs.iter().map(|c| chars_to_tokens(c.text.len())).sum()
+    }
+
+    while total_tokens(contexts) > budget && !contexts.is_empty() {
+        let lowest_idx = contexts.iter()
+            .enumerate()
+            .min_by_key(|(_, c)| c.priority.unwrap_or(0))
+            .map(|(i, _)| i)
+            .unwrap();
+
+        let removed = contexts.remove(lowest_idx);
+        let snippet = if removed.text.len() > 60 {
+            format!("{}...", &removed.text[..60])
+        } else {
+            removed.text.clone()
+        };
+        trimmed.push(TrimmedContext {
+            priority: removed.priority,
+            snippet,
+            estimated_tokens: chars_to_tokens(removed.text.len()),
+        });
+    }
+
+    trimmed
+}
+
+pub fn estimate_context_tokens(contexts: &[ContextBlock]) -> usize {
+    contexts.iter().map(|c| chars_to_tokens(c.text.len())).sum()
+}
+
 /// Convenience: parse source text and return budget report.
 pub fn budget_from_source(source: &str) -> Result<String, String> {
     let tokens = crate::lexer::Lexer::new(source)
@@ -176,6 +219,65 @@ mod tests {
         assert!(report.contains("Lazy summaries"));
         assert!(report.contains("Lazy bodies"));
         assert!(report.contains("on demand"));
+    }
+
+    fn make_context(text: &str, priority: Option<u8>) -> ContextBlock {
+        ContextBlock {
+            priority,
+            when: None,
+            decay: None,
+            text: text.to_string(),
+            span: crate::token::Span { start: 0, end: 0, line: 0, col: 0 },
+        }
+    }
+
+    #[test]
+    fn trim_drops_lowest_priority_first() {
+        let mut contexts = vec![
+            make_context(&"h".repeat(80), Some(100)),  // 20 tokens
+            make_context(&"m".repeat(800), Some(50)),   // 200 tokens
+            make_context(&"l".repeat(800), Some(30)),   // 200 tokens
+        ];
+        let trimmed = trim_to_budget(&mut contexts, 250);
+        assert_eq!(contexts.len(), 2, "should keep 2 contexts");
+        assert!(contexts.iter().all(|c| c.priority != Some(30)), "priority 30 should be dropped");
+        assert_eq!(trimmed.len(), 1);
+        assert_eq!(trimmed[0].priority, Some(30));
+    }
+
+    #[test]
+    fn trim_drops_multiple_until_budget_met() {
+        let mut contexts = vec![
+            make_context(&"a".repeat(400), Some(100)),  // 100 tokens
+            make_context(&"b".repeat(400), Some(80)),   // 100 tokens
+            make_context(&"c".repeat(400), Some(60)),   // 100 tokens
+            make_context(&"d".repeat(400), Some(40)),   // 100 tokens
+        ];
+        let trimmed = trim_to_budget(&mut contexts, 100);
+        assert!(estimate_context_tokens(&contexts) <= 100);
+        assert!(trimmed.len() >= 3, "should drop at least 3 to reach 100 tokens");
+    }
+
+    #[test]
+    fn trim_reports_what_was_dropped() {
+        let mut contexts = vec![
+            make_context(&"keep".repeat(20), Some(90)),
+            make_context(&"drop-me", Some(10)),
+        ];
+        let trimmed = trim_to_budget(&mut contexts, 10);
+        assert!(!trimmed.is_empty());
+        assert!(trimmed[0].snippet.contains("drop-me"));
+        assert!(trimmed[0].estimated_tokens > 0);
+    }
+
+    #[test]
+    fn trim_under_budget_no_changes() {
+        let mut contexts = vec![
+            make_context("short", Some(90)),
+        ];
+        let trimmed = trim_to_budget(&mut contexts, 1000);
+        assert!(trimmed.is_empty());
+        assert_eq!(contexts.len(), 1);
     }
 
     #[test]

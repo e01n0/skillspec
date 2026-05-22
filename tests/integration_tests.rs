@@ -631,6 +631,51 @@ fn rebuild_on_change() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+// ── Budget-aware build ──────────────────────────────────────────────
+
+#[test]
+fn budget_flag_trims_output() {
+    let source = r#"
+        skill "big" {
+            body {
+                context(priority: 100) { "High priority context that must survive the trim." }
+                context(priority: 50) { "Medium priority text that might get cut depending on budget." }
+                context(priority: 10) { "Low priority filler that should be the first to go when budget is tight." }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let mut ast = Parser::new(tokens).parse().unwrap();
+
+    let before = skillspec_core::budget::estimate_context_tokens(&ast.skills[0].body.contexts);
+    let trimmed = skillspec_core::budget::trim_to_budget(&mut ast.skills[0].body.contexts, before / 2);
+    let after = skillspec_core::budget::estimate_context_tokens(&ast.skills[0].body.contexts);
+
+    assert!(!trimmed.is_empty(), "should have trimmed at least one context");
+    assert!(after <= before / 2, "after trimming should be within budget: {} <= {}", after, before / 2);
+    assert!(trimmed[0].priority == Some(10), "lowest priority should be trimmed first");
+}
+
+#[test]
+fn budget_does_not_trim_step_contexts() {
+    let source = r#"
+        skill "x" {
+            body {
+                context(priority: 50) { "Body context that can be trimmed." }
+                step main {
+                    context { "Step context that should not be trimmed by budget." }
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let mut ast = Parser::new(tokens).parse().unwrap();
+
+    let _trimmed = skillspec_core::budget::trim_to_budget(&mut ast.skills[0].body.contexts, 1);
+    assert!(ast.skills[0].body.contexts.is_empty(), "body contexts should be trimmed");
+    assert!(!ast.skills[0].body.steps[0].contexts.is_empty(), "step contexts should be preserved");
+}
+
 fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Failed to read {}", path));
