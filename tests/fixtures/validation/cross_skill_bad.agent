@@ -1,0 +1,23 @@
+// Fixture for cross-skill type checking — should produce errors.
+
+skill "target-skill" {
+    input {
+        files: string[]
+        mode: string
+    }
+
+    body {
+        context { "Process files." }
+        step run { emit output context { "Go." } }
+    }
+}
+
+skill "bad-caller" {
+    body {
+        // Wrong arg name: 'repos' instead of 'files', missing required 'mode'
+        step call_it {
+            use target_skill(repos: input.x)
+            context { "Call target." }
+        }
+    }
+}

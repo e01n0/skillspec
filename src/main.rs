@@ -8,7 +8,13 @@ use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::compiler_ir::IrCompiler;
 use skillspec_core::formatter::Formatter;
 use skillspec_core::budget;
-use skillspec_core::diff::{structural_diff, skillmd_diff};
+use skillspec_core::diff::{structural_diff, skillmd_diff, classify_semver};
+use skillspec_core::lint::LintEngine;
+use skillspec_core::deps::emit_mermaid;
+use skillspec_core::compiler::TargetCompiler;
+use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
+use skillspec_core::compiler_cursor::CursorCompiler;
+use skillspec_core::compiler_clinerules::ClineRulesCompiler;
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
@@ -31,6 +37,15 @@ enum Commands {
         target: String,
         #[arg(short, long)]
         output: Option<String>,
+        /// Watch for file changes and rebuild automatically
+        #[arg(long)]
+        watch: bool,
+        /// Token budget: drop lowest-priority contexts to fit within this limit
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Emit a JSON schema of all declared telemetry events and metrics
+        #[arg(long)]
+        emit_telemetry_schema: bool,
     },
     /// Scaffold a new .agent skill file
     Init { name: String },
@@ -39,7 +54,12 @@ enum Commands {
     /// Estimate token budget for skills in an .agent file
     Budget { file: String },
     /// Print dependency graph of steps/stages/phases
-    Deps { file: String },
+    Deps {
+        file: String,
+        /// Output format: "text" (default) or "mermaid"
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Mechanically extract a SKILL.md into a .agent.partial file
     Migrate { file: String },
     /// Package an .agent file containing a package declaration into a .skillpkg directory
@@ -53,8 +73,18 @@ enum Commands {
         /// Path to a .skillpkg directory or an .agent file with a package declaration
         path: String,
     },
-    /// List all tests defined in an .agent file
-    Test { file: String },
+    /// List, prepare, or evaluate tests in an .agent file
+    Test {
+        file: String,
+        /// Generate a test execution SKILL.md
+        #[arg(long)]
+        prepare: bool,
+        /// Evaluate test results from a JSON file
+        #[arg(long)]
+        evaluate: Option<String>,
+    },
+    /// Run lint rules to catch quality issues beyond structural validity
+    Lint { file: String },
     /// Show structural diff between two .agent files (or compiled vs SKILL.md)
     Diff {
         file_a: String,
@@ -62,6 +92,9 @@ enum Commands {
         /// Compare compiled output of file_a against file_b as a SKILL.md
         #[arg(long)]
         against_skillmd: bool,
+        /// Classify changes as MAJOR/MINOR/PATCH semver bumps
+        #[arg(long)]
+        semver: bool,
     },
 }
 
@@ -69,16 +102,25 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output } => cmd_build(&file, &target, output.as_deref()),
+        Commands::Build { file, target, output, watch, budget, emit_telemetry_schema } => {
+            if watch {
+                cmd_build_watch(&file, &target, output.as_deref())
+            } else if emit_telemetry_schema {
+                cmd_emit_telemetry(&file)
+            } else {
+                cmd_build(&file, &target, output.as_deref(), budget)
+            }
+        }
         Commands::Init { name } => cmd_init(&name),
         Commands::Fmt { file } => cmd_fmt(&file),
         Commands::Budget { file } => cmd_budget(&file),
-        Commands::Deps { file } => cmd_deps(&file),
+        Commands::Deps { file, format } => cmd_deps(&file, &format),
         Commands::Migrate { file } => cmd_migrate(&file),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
-        Commands::Test { file } => cmd_test(&file),
-        Commands::Diff { file_a, file_b, against_skillmd } => cmd_diff(&file_a, &file_b, against_skillmd),
+        Commands::Test { file, prepare, evaluate } => cmd_test(&file, prepare, evaluate.as_deref()),
+        Commands::Lint { file } => cmd_lint(&file),
+        Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
     }
 }
 
@@ -123,10 +165,43 @@ fn cmd_check(path: &str) -> Result<()> {
     }
 }
 
-fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+fn cmd_lint(path: &str) -> Result<()> {
+    let ast = read_and_parse(path)?;
+    let base_dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    if let Err(errors) = checker.check(&ast) {
+        for err in &errors {
+            eprintln!("error: {}", err);
+        }
+        return Err(miette::miette!(
+            "{} error(s) found in '{}'; fix them before linting",
+            errors.len(),
+            path
+        ));
+    }
+
+    let engine = LintEngine::new();
+    let diagnostics = engine.run(&ast);
+
+    if diagnostics.is_empty() {
+        println!("✓ {}: no lint warnings", path);
+    } else {
+        for diag in &diagnostics {
+            eprintln!("{}", diag);
+        }
+        eprintln!("\n{} warning(s) in '{}'", diagnostics.len(), path);
+    }
+
+    Ok(())
+}
+
+fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Option<usize>) -> Result<()> {
     match target {
         "skillmd" => {
-            let ast = read_and_parse(path)?;
+            let mut ast = read_and_parse(path)?;
             let base_dir = std::path::Path::new(path)
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
@@ -141,6 +216,18 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
                     errors.len(),
                     path
                 ));
+            }
+
+            if let Some(budget) = token_budget {
+                for skill in &mut ast.skills {
+                    let trimmed = budget::trim_to_budget(&mut skill.body.contexts, budget);
+                    for t in &trimmed {
+                        eprintln!(
+                            "⚠ trimmed context (priority {:?}, ~{} tokens): {}",
+                            t.priority, t.estimated_tokens, t.snippet
+                        );
+                    }
+                }
             }
 
             let compiler = SkillMdCompiler::new();
@@ -171,26 +258,124 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
             Ok(())
         }
         "native" => {
+            let source_text = fs::read_to_string(path)
+                .map_err(|e| miette::miette!("Failed to read '{}': {}", path, e))?;
             let ast = read_and_parse(path)?;
             let compiler = IrCompiler::new();
-            let bytes = compiler
-                .compile(&ast)
-                .map_err(|e| miette::miette!("IR compilation failed: {e}"))?;
+            let pkg = compiler.compile_pkg(&ast, &source_text);
             let out_dir = output.unwrap_or(".");
-            // Extract just the file stem so absolute input paths don't corrupt the output path.
             let stem = Path::new(path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(path)
                 .replace(".agent", "");
-            let out_path = format!("{out_dir}/{stem}.agentpkg");
-            std::fs::write(&out_path, &bytes)
-                .map_err(|e| miette::miette!("Failed to write {out_path}: {e}"))?;
-            eprintln!("✓ {path} → {out_path}");
+            let pkg_dir = Path::new(out_dir).join(format!("{stem}.agentpkg"));
+            compiler.write_to_dir(&pkg, &pkg_dir)
+                .map_err(|e| miette::miette!("Failed to write native package: {e}"))?;
+            eprintln!("✓ {path} → {}", pkg_dir.display());
             Ok(())
         }
-        other => Err(miette::miette!("unknown target '{}'; supported: skillmd, native", other)),
+        "system-prompt" | "cursor" | "clinerules" => {
+            let ast = read_and_parse(path)?;
+            let compiler: Box<dyn TargetCompiler> = match target {
+                "system-prompt" => Box::new(SystemPromptCompiler),
+                "cursor" => Box::new(CursorCompiler),
+                "clinerules" => Box::new(ClineRulesCompiler),
+                _ => unreachable!(),
+            };
+            let out_base = output.unwrap_or(".");
+            for skill in &ast.skills {
+                let content = compiler.compile_skill(skill, &ast);
+                let ext = compiler.file_extension();
+                let out_path = Path::new(out_base).join(format!("{}.{}", skill.name, ext));
+                fs::write(&out_path, &content).map_err(|e| {
+                    miette::miette!("Failed to write '{}': {}", out_path.display(), e)
+                })?;
+                println!("✓ {} → {}", path, out_path.display());
+            }
+            Ok(())
+        }
+        other => Err(miette::miette!(
+            "unknown target '{}'; supported: skillmd, native, system-prompt, cursor, clinerules",
+            other
+        )),
     }
+}
+
+fn cmd_emit_telemetry(path: &str) -> Result<()> {
+    let ast = read_and_parse(path)?;
+    let mut schema = serde_json::json!({ "skills": {} });
+    for skill in &ast.skills {
+        if let Some(observe) = &skill.body.observe {
+            let events: Vec<serde_json::Value> = observe.events.iter()
+                .map(|e| serde_json::json!({ "trigger": e.trigger, "event_name": e.event_name }))
+                .collect();
+            let metrics: Vec<serde_json::Value> = observe.metrics.iter()
+                .map(|m| serde_json::json!({ "name": m.name }))
+                .collect();
+            schema["skills"][&skill.name] = serde_json::json!({
+                "events": events,
+                "metrics": metrics,
+            });
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    Ok(())
+}
+
+fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+    use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    eprintln!("Watching {} for changes (Ctrl-C to stop)...", path);
+    if let Err(e) = cmd_build(path, target, output, None) {
+        eprintln!("{}", e);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)
+        .map_err(|e| miette::miette!("Failed to start file watcher: {e}"))?;
+
+    let watch_path = Path::new(path).canonicalize()
+        .map_err(|e| miette::miette!("Failed to resolve path '{}': {e}", path))?;
+    let watch_dir = watch_path.parent().unwrap_or(Path::new("."));
+
+    debouncer.watcher().watch(watch_dir, notify::RecursiveMode::Recursive)
+        .map_err(|e| miette::miette!("Failed to watch '{}': {e}", watch_dir.display()))?;
+
+    loop {
+        match rx.recv() {
+            Ok(Ok(events)) => {
+                let dominated = events.iter().any(|e| {
+                    e.kind == DebouncedEventKind::Any
+                        && e.path.extension().is_some_and(|ext| ext == "agent")
+                });
+                if dominated {
+                    eprintln!("\n[{}] Change detected, rebuilding...",
+                        chrono_now());
+                    if let Err(e) = cmd_build(path, target, output, None) {
+                        eprintln!("{}", e);
+                    }
+                }
+            }
+            Ok(Err(errs)) => {
+                eprintln!("watch error: {errs}");
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn chrono_now() -> String {
+    use std::time::SystemTime;
+    let d = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs() % 86400;
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
 fn cmd_init(name: &str) -> Result<()> {
@@ -247,49 +432,58 @@ fn cmd_budget(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_deps(path: &str) -> Result<()> {
+fn cmd_deps(path: &str, format: &str) -> Result<()> {
     let ast = read_and_parse(path)?;
 
-    for skill in &ast.skills {
-        println!("Skill: {}", skill.name);
-        for step in &skill.body.steps {
-            let deps = format_dep(&step.requires);
-            if deps.is_empty() {
-                println!("  {}", step.name);
-            } else {
-                println!("  {} → {}", step.name, deps);
-            }
+    match format {
+        "mermaid" => {
+            print!("{}", emit_mermaid(&ast));
+            Ok(())
         }
-        println!();
-    }
-
-    for pipeline in &ast.pipelines {
-        println!("Pipeline: {}", pipeline.name);
-        for stage in &pipeline.stages {
-            let deps = format_dep(&stage.requires);
-            if deps.is_empty() {
-                println!("  {}", stage.name);
-            } else {
-                println!("  {} → {}", stage.name, deps);
+        "text" => {
+            for skill in &ast.skills {
+                println!("Skill: {}", skill.name);
+                for step in &skill.body.steps {
+                    let deps = format_dep(&step.requires);
+                    if deps.is_empty() {
+                        println!("  {}", step.name);
+                    } else {
+                        println!("  {} → {}", step.name, deps);
+                    }
+                }
+                println!();
             }
-        }
-        println!();
-    }
 
-    for orch in &ast.orchestrations {
-        println!("Orchestration: {}", orch.name);
-        for phase in &orch.phases {
-            let deps = format_dep(&phase.requires);
-            if deps.is_empty() {
-                println!("  {}", phase.name);
-            } else {
-                println!("  {} → {}", phase.name, deps);
+            for pipeline in &ast.pipelines {
+                println!("Pipeline: {}", pipeline.name);
+                for stage in &pipeline.stages {
+                    let deps = format_dep(&stage.requires);
+                    if deps.is_empty() {
+                        println!("  {}", stage.name);
+                    } else {
+                        println!("  {} → {}", stage.name, deps);
+                    }
+                }
+                println!();
             }
-        }
-        println!();
-    }
 
-    Ok(())
+            for orch in &ast.orchestrations {
+                println!("Orchestration: {}", orch.name);
+                for phase in &orch.phases {
+                    let deps = format_dep(&phase.requires);
+                    if deps.is_empty() {
+                        println!("  {}", phase.name);
+                    } else {
+                        println!("  {} → {}", phase.name, deps);
+                    }
+                }
+                println!();
+            }
+
+            Ok(())
+        }
+        other => Err(miette::miette!("unknown format '{}'; supported: text, mermaid", other)),
+    }
 }
 
 fn format_dep(dep: &Option<Dependency>) -> String {
@@ -542,14 +736,110 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_test(path: &str) -> Result<()> {
+fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
     let ast = read_and_parse(path)?;
+
+    if prepare {
+        use skillspec_core::test_harness::prepare_test_skill;
+        for skill in &ast.skills {
+            if skill.tests.is_empty() { continue; }
+            let test_skill = prepare_test_skill(skill, &ast);
+            let out_dir = format!("{}.test", skill.name);
+            fs::create_dir_all(&out_dir).map_err(|e| miette::miette!("mkdir: {e}"))?;
+            let out_path = format!("{}/SKILL.md", out_dir);
+            fs::write(&out_path, &test_skill).map_err(|e| miette::miette!("write: {e}"))?;
+            println!("✓ test skill → {}", out_path);
+        }
+        return Ok(());
+    }
+
+    if let Some(results_path) = evaluate {
+        use skillspec_core::test_harness::{evaluate_assertion, evaluate_confidence};
+        let results_text = fs::read_to_string(results_path)
+            .map_err(|e| miette::miette!("Failed to read '{}': {}", results_path, e))?;
+        let results: serde_json::Value = serde_json::from_str(&results_text)
+            .map_err(|e| miette::miette!("Failed to parse results JSON: {}", e))?;
+
+        let test_cases = results["test_cases"].as_array()
+            .ok_or_else(|| miette::miette!("results JSON missing 'test_cases' array"))?;
+
+        let mut total_pass = 0;
+        let mut total_fail = 0;
+
+        for skill in &ast.skills {
+            for test in &skill.tests {
+                let case = test_cases.iter()
+                    .find(|tc| tc["name"].as_str() == Some(&test.name));
+                let case = match case {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("⚠ test '{}' not found in results", test.name);
+                        total_fail += 1;
+                        continue;
+                    }
+                };
+
+                let runs = case["runs"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                let mut run_results = Vec::new();
+
+                for run in runs {
+                    let mut all_pass = true;
+                    for exp in &test.expectations {
+                        let actual = match &exp.assertion {
+                            skillspec_core::ast::AssertionExpr::Resembles(_) => {
+                                run.get("resembles_verdicts")
+                                    .and_then(|v| v.get(&exp.path))
+                                    .cloned()
+                                    .map(|v| serde_json::json!({"resembles_verdict": v}))
+                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
+                            }
+                            skillspec_core::ast::AssertionExpr::Satisfies(_) => {
+                                run.get("satisfies_verdicts")
+                                    .and_then(|v| v.get(&exp.path))
+                                    .cloned()
+                                    .map(|v| serde_json::json!({"satisfies_verdict": v}))
+                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
+                            }
+                            _ => navigate_json(run, &exp.path),
+                        };
+                        let r = evaluate_assertion(&exp.assertion, &actual);
+                        if !r.passed {
+                            eprintln!("  ✗ {}.{}: {}", test.name, exp.path, r.message);
+                            all_pass = false;
+                        }
+                    }
+                    run_results.push(all_pass);
+                }
+
+                if let Some(conf) = test.confidence {
+                    let met = evaluate_confidence(&run_results, conf);
+                    if met {
+                        eprintln!("  ✓ {} (confidence {:.0}% met)", test.name, conf * 100.0);
+                        total_pass += 1;
+                    } else {
+                        let pass_rate = run_results.iter().filter(|&&r| r).count() as f64 / run_results.len().max(1) as f64;
+                        eprintln!("  ✗ {} (confidence {:.0}% needed, got {:.0}%)", test.name, conf * 100.0, pass_rate * 100.0);
+                        total_fail += 1;
+                    }
+                } else if run_results.iter().all(|&r| r) {
+                    eprintln!("  ✓ {}", test.name);
+                    total_pass += 1;
+                } else {
+                    total_fail += 1;
+                }
+            }
+        }
+
+        eprintln!("\n{} passed, {} failed", total_pass, total_fail);
+        if total_fail > 0 {
+            return Err(miette::miette!("{} test(s) failed", total_fail));
+        }
+        return Ok(());
+    }
 
     let mut total = 0;
     for skill in &ast.skills {
-        if skill.tests.is_empty() {
-            continue;
-        }
+        if skill.tests.is_empty() { continue; }
         eprintln!("Skill: {} ({} tests)", skill.name, skill.tests.len());
         for test in &skill.tests {
             eprintln!("  - {}", test.name);
@@ -561,13 +851,21 @@ fn cmd_test(path: &str) -> Result<()> {
     if total == 0 {
         eprintln!("No tests found in '{path}'.");
     } else {
-        eprintln!("To execute tests, run the skillspec-test skill in your agent runtime.");
+        eprintln!("To execute tests:\n  skillspec test {path} --prepare\n  <run the test skill in your agent runtime>\n  skillspec test {path} --evaluate results.json");
     }
 
     Ok(())
 }
 
-fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool) -> Result<()> {
+fn navigate_json<'a>(value: &'a serde_json::Value, path: &str) -> serde_json::Value {
+    let mut current = value.clone();
+    for part in path.split('.') {
+        current = current.get(part).cloned().unwrap_or(serde_json::Value::Null);
+    }
+    current
+}
+
+fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool, semver: bool) -> Result<()> {
     if against_skillmd {
         let ast = read_and_parse(path_a)?;
         let compiler = SkillMdCompiler::new();
@@ -583,6 +881,11 @@ fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool) -> Result<()> {
                 eprint!("{}", report.display());
             }
         }
+    } else if semver {
+        let ast_a = read_and_parse(path_a)?;
+        let ast_b = read_and_parse(path_b)?;
+        let report = classify_semver(&ast_a, &ast_b);
+        eprint!("{}", report.display());
     } else {
         let ast_a = read_and_parse(path_a)?;
         let ast_b = read_and_parse(path_b)?;

@@ -2,6 +2,7 @@ use skillspec_core::ast::Package;
 use skillspec_core::checker::Checker;
 use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::lexer::Lexer;
+use skillspec_core::lint::LintEngine;
 use skillspec_core::parser::Parser;
 
 fn full_pipeline(input: &str) -> String {
@@ -578,4 +579,227 @@ fn brainstorming_example_imports_resolve() {
     let md = full_pipeline_from_file(example_path);
     assert!(md.contains("name: brainstorming"));
     assert!(md.contains("design"), "output should reference Design type");
+}
+
+// ── Lint: fixture integration tests ──────────────────────────────────
+
+// ── Watch mode: flag acceptance ──────────────────────────────────────
+
+#[test]
+fn watch_flag_accepted() {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let output = Command::new(bin)
+        .args(["build", "--help"])
+        .output()
+        .expect("failed to run skillspec");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--watch"), "build --help should mention --watch flag");
+}
+
+#[test]
+#[ignore] // requires real filesystem watcher + timing; run with `cargo test -- --ignored`
+fn rebuild_on_change() {
+    use std::process::{Command, Stdio};
+    use std::io::BufRead;
+
+    let dir = std::env::temp_dir().join("skillspec_watch_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent_path = dir.join("test.agent");
+    std::fs::write(&agent_path, r#"skill "test" { body { context { "v1" } } }"#).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let mut child = Command::new(bin)
+        .args(["build", agent_path.to_str().unwrap(), "--watch"])
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn skillspec");
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    std::fs::write(&agent_path, r#"skill "test" { body { context { "v2" } } }"#).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    child.kill().ok();
+    let stderr = child.stderr.take().unwrap();
+    let output: Vec<String> = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(|l| l.ok())
+        .collect();
+    let rebuild_count = output.iter().filter(|l| l.contains("Change detected")).count();
+    assert!(rebuild_count >= 1, "expected at least 1 rebuild trigger, got output: {:?}", output);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ── Budget-aware build ──────────────────────────────────────────────
+
+#[test]
+fn budget_flag_trims_output() {
+    let source = r#"
+        skill "big" {
+            body {
+                context(priority: 100) { "High priority context that must survive the trim." }
+                context(priority: 50) { "Medium priority text that might get cut depending on budget." }
+                context(priority: 10) { "Low priority filler that should be the first to go when budget is tight." }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let mut ast = Parser::new(tokens).parse().unwrap();
+
+    let before = skillspec_core::budget::estimate_context_tokens(&ast.skills[0].body.contexts);
+    let trimmed = skillspec_core::budget::trim_to_budget(&mut ast.skills[0].body.contexts, before / 2);
+    let after = skillspec_core::budget::estimate_context_tokens(&ast.skills[0].body.contexts);
+
+    assert!(!trimmed.is_empty(), "should have trimmed at least one context");
+    assert!(after <= before / 2, "after trimming should be within budget: {} <= {}", after, before / 2);
+    assert!(trimmed[0].priority == Some(10), "lowest priority should be trimmed first");
+}
+
+#[test]
+fn budget_does_not_trim_step_contexts() {
+    let source = r#"
+        skill "x" {
+            body {
+                context(priority: 50) { "Body context that can be trimmed." }
+                step main {
+                    context { "Step context that should not be trimmed by budget." }
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let mut ast = Parser::new(tokens).parse().unwrap();
+
+    let _trimmed = skillspec_core::budget::trim_to_budget(&mut ast.skills[0].body.contexts, 1);
+    assert!(ast.skills[0].body.contexts.is_empty(), "body contexts should be trimmed");
+    assert!(!ast.skills[0].body.steps[0].contexts.is_empty(), "step contexts should be preserved");
+}
+
+// ── Observability ────────────────────────────────────────────────────
+
+#[test]
+fn checker_duplicate_metric_name_errors() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    metric "findings" from output.a
+                    metric "findings" from output.b
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let mut checker = Checker::new();
+    let result = checker.check(&ast);
+    assert!(result.is_err(), "duplicate metric names should error");
+    let errs = result.unwrap_err();
+    assert!(errs.iter().any(|e| format!("{e}").contains("Duplicate")));
+}
+
+#[test]
+fn compile_observability_section() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    on step_complete { emit_event "step.done" }
+                    metric "review.score" from output.score
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let compiler = SkillMdCompiler::new();
+    let md = compiler.compile(&ast.skills[0], &ast);
+    assert!(md.contains("## Observability"), "should have Observability section");
+    assert!(md.contains("step.done"), "should contain event name");
+    assert!(md.contains("review.score"), "should contain metric name");
+}
+
+#[test]
+fn observe_block_round_trips_through_ir() {
+    let source = r#"
+        skill "x" {
+            body {
+                context { "Base." }
+                observe {
+                    on step_complete { emit_event "step.done" }
+                    metric "count" from output.n
+                }
+            }
+        }
+    "#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let ir = serde_json::to_string(&ast).unwrap();
+    let round: skillspec_core::ast::SourceFile = serde_json::from_str(&ir).unwrap();
+    let observe = round.skills[0].body.observe.as_ref().expect("observe should survive serialization");
+    assert_eq!(observe.events.len(), 1);
+    assert_eq!(observe.metrics.len(), 1);
+}
+
+// ── Multi-target compilation ─────────────────────────────────────────
+
+#[test]
+fn target_trait_compile_matches_direct() {
+    use skillspec_core::compiler::TargetCompiler;
+    let source = r#"skill "x" { body { context { "Be helpful." } } }"#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let compiler = SkillMdCompiler::new();
+    let direct = compiler.compile(&ast.skills[0], &ast);
+    let via_trait: &dyn TargetCompiler = &compiler;
+    let trait_output = via_trait.compile_skill(&ast.skills[0], &ast);
+    assert_eq!(direct, trait_output);
+}
+
+#[test]
+fn unknown_target_errors() {
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let dir = std::env::temp_dir().join("skillspec_unknown_target");
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent = dir.join("test.agent");
+    std::fs::write(&agent, r#"skill "x" { body { context { "ok" } } }"#).unwrap();
+    let output = std::process::Command::new(bin)
+        .args(["build", agent.to_str().unwrap(), "--target", "nonexistent"])
+        .output()
+        .expect("failed to run");
+    assert!(!output.status.success(), "should fail for unknown target");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown target"), "should mention unknown target: {}", stderr);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", path));
+    let tokens = Lexer::new(&source).tokenize().expect("lexer failed");
+    let ast = Parser::new(tokens).parse().expect("parser failed");
+    LintEngine::new().run(&ast)
+}
+
+#[test]
+fn lint_clean_skill_no_warnings() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/code_review.agent");
+    let diags = lint_file(path);
+    assert!(diags.is_empty(), "code_review.agent should have zero lint warnings, got: {:?}",
+        diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+}
+
+#[test]
+fn lint_full_featured_fixture() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/full_featured.agent");
+    let diags = lint_file(path);
+    let warnings: Vec<_> = diags.iter()
+        .filter(|d| d.severity == skillspec_core::lint::Severity::Warning)
+        .collect();
+    assert!(warnings.is_empty(),
+        "full_featured.agent should have no warnings, got: {:?}",
+        warnings.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
 }

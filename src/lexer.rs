@@ -414,6 +414,10 @@ impl Lexer {
             "unavailable"   => TokenKind::Unavailable,
             "failing"       => TokenKind::Failing,
             "slow"          => TokenKind::Slow,
+            // Observability
+            "observe"       => TokenKind::Observe,
+            "emit_event"    => TokenKind::EmitEvent,
+            "metric"        => TokenKind::Metric,
             // Control flow
             "if"            => TokenKind::If,
             "retry"         => TokenKind::Retry,

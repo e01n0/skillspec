@@ -1,5 +1,14 @@
 use std::io::Write;
+use std::path::Path;
 use crate::ast::SourceFile;
+use crate::compiler_skillmd::SkillMdCompiler;
+
+pub struct AgentPkg {
+    pub manifest: serde_json::Value,
+    pub skills: Vec<(String, String)>,
+    pub types: serde_json::Value,
+    pub source: String,
+}
 
 pub struct IrCompiler;
 
@@ -14,6 +23,67 @@ impl IrCompiler {
         Self
     }
 
+    pub fn compile_pkg(&self, file: &SourceFile, source_text: &str) -> AgentPkg {
+        let manifest = serde_json::json!({
+            "ir_version": 1,
+            "skills": file.skills.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            "pipelines": file.pipelines.iter().map(|p| &p.name).collect::<Vec<_>>(),
+            "orchestrations": file.orchestrations.iter().map(|o| &o.name).collect::<Vec<_>>(),
+            "types": file.type_defs.iter().map(|t| &t.name).collect::<Vec<_>>(),
+            "mixins": file.mixins.iter().map(|m| &m.name).collect::<Vec<_>>(),
+        });
+
+        let compiler = SkillMdCompiler::new();
+        let skills: Vec<(String, String)> = file.skills.iter()
+            .map(|s| (s.name.clone(), compiler.compile(s, file)))
+            .collect();
+
+        let types: serde_json::Value = file.type_defs.iter()
+            .map(|t| {
+                let fields: Vec<serde_json::Value> = t.fields.iter()
+                    .map(|f| serde_json::json!({ "name": f.name, "optional": f.optional }))
+                    .collect();
+                serde_json::json!({ "name": t.name, "fields": fields })
+            })
+            .collect();
+
+        AgentPkg {
+            manifest,
+            skills,
+            types,
+            source: source_text.to_string(),
+        }
+    }
+
+    pub fn write_to_dir(&self, pkg: &AgentPkg, dir: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("create dir: {e}"))?;
+
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&pkg.manifest).map_err(|e| e.to_string())?,
+        ).map_err(|e| format!("write manifest: {e}"))?;
+
+        std::fs::write(dir.join("source.agent"), &pkg.source)
+            .map_err(|e| format!("write source: {e}"))?;
+
+        if pkg.types.as_array().is_some_and(|a| !a.is_empty()) {
+            std::fs::write(
+                dir.join(".types.json"),
+                serde_json::to_string_pretty(&pkg.types).map_err(|e| e.to_string())?,
+            ).map_err(|e| format!("write types: {e}"))?;
+        }
+
+        for (name, content) in &pkg.skills {
+            let skill_dir = dir.join(name);
+            std::fs::create_dir_all(&skill_dir).map_err(|e| format!("create skill dir: {e}"))?;
+            std::fs::write(skill_dir.join("SKILL.md"), content)
+                .map_err(|e| format!("write SKILL.md: {e}"))?;
+        }
+
+        Ok(())
+    }
+
+    /// Legacy zip format — kept for backward compatibility.
     pub fn compile(&self, file: &SourceFile) -> Result<Vec<u8>, String> {
         let mut buf = Vec::new();
         {
@@ -166,5 +236,106 @@ mod tests {
         assert_eq!(manifest["orchestrations"].as_array().unwrap().len(), ast.orchestrations.len());
         assert_eq!(manifest["types"].as_array().unwrap().len(), ast.type_defs.len());
         assert_eq!(manifest["mixins"].as_array().unwrap().len(), ast.mixins.len());
+    }
+
+    // ── Directory-based native format ────────────────────────────────
+
+    #[test]
+    fn native_creates_directory() {
+        let source = r#"skill "hello" { body { context { "Greet." } } }"#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        assert!(dir.is_dir(), "output should be a directory");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_contains_manifest() {
+        let source = r#"skill "hello" { body { context { "Greet." } } }"#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_manifest");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("manifest.json")).unwrap()
+        ).unwrap();
+        assert_eq!(manifest["ir_version"], 1);
+        assert_eq!(manifest["skills"][0], "hello");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_contains_skillmd() {
+        let source = r#"skill "hello" { body { context { "Greet." } } }"#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_skillmd");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        let skill_md = std::fs::read_to_string(dir.join("hello/SKILL.md")).unwrap();
+        assert!(skill_md.contains("name: hello"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_contains_source() {
+        let source = r#"skill "hello" { body { context { "Greet." } } }"#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_source");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        let saved = std::fs::read_to_string(dir.join("source.agent")).unwrap();
+        assert_eq!(saved, source);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_contains_types_json() {
+        let source = r#"
+            type Finding { file: string severity: string }
+            skill "review" {
+                input { findings: Finding[] }
+                body { context { "Review." } }
+            }
+        "#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_types");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        let types: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join(".types.json")).unwrap()
+        ).unwrap();
+        assert_eq!(types[0]["name"], "Finding");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_no_types_file_when_no_types() {
+        let source = r#"skill "hello" { body { context { "Greet." } } }"#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let compiler = IrCompiler::new();
+        let pkg = compiler.compile_pkg(&ast, source);
+        let dir = std::env::temp_dir().join("skillspec_native_test_notypes");
+        let _ = std::fs::remove_dir_all(&dir);
+        compiler.write_to_dir(&pkg, &dir).unwrap();
+        assert!(!dir.join(".types.json").exists(), ".types.json should not exist when no types");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

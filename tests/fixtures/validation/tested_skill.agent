@@ -1,0 +1,45 @@
+// Fixture for test harness: --prepare and --evaluate flow.
+
+skill "greeter" {
+    input {
+        name: string
+        formal?: bool
+    }
+
+    output {
+        greeting: string
+        length: int
+    }
+
+    body {
+        context(priority: 90) { "You generate greetings." }
+
+        step greet {
+            emit output
+            context { "Generate a greeting for the given name." }
+        }
+    }
+
+    tests {
+        test "basic greeting" {
+            given {
+                name: "Alice"
+            }
+            expect {
+                output.greeting: contains("Alice")
+                output.length: > 0
+            }
+        }
+
+        test "formal greeting" {
+            given {
+                name: "Bob"
+                formal: true
+            }
+            expect {
+                output.greeting: contains("Bob")
+                output.greeting: resembles("a formal greeting")
+            }
+        }
+    }
+}

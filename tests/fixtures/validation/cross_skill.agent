@@ -1,0 +1,41 @@
+// Fixture for cross-skill type checking.
+// Defines two skills: analyzer (target) and reviewer (caller).
+
+skill "analyzer" {
+    input {
+        files: string[]
+        depth?: int
+    }
+
+    output {
+        issues: string[]
+    }
+
+    body {
+        context { "Analyze code for issues." }
+        step scan {
+            emit output
+            context { "Scan all files." }
+        }
+    }
+}
+
+skill "reviewer" {
+    input {
+        files: string[]
+    }
+
+    body {
+        // Valid use call: files matches, depth is optional and omitted
+        step analyze {
+            use analyzer(files: input.files)
+            context { "Run analyzer." }
+        }
+
+        step summarise {
+            requires analyze
+            emit output
+            context { "Summarise findings." }
+        }
+    }
+}

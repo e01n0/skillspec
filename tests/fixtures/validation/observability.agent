@@ -1,0 +1,33 @@
+// Fixture for observe block: parsing, checking, compiling, formatting.
+
+skill "monitored-review" {
+    input {
+        files: string[]
+    }
+
+    output {
+        score: int
+        findings: string[]
+    }
+
+    body {
+        context(priority: 90) { "You are a code reviewer with telemetry." }
+
+        observe {
+            on step_complete { emit_event "step.done" }
+            on error { emit_event "review.error" }
+            metric "review.score" from output.score
+            metric "review.finding_count" from output.findings.length
+        }
+
+        step analyze {
+            context { "Analyze the code." }
+        }
+
+        step report {
+            requires analyze
+            emit output
+            context { "Write the report." }
+        }
+    }
+}

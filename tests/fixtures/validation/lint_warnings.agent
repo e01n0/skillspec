@@ -1,0 +1,33 @@
+// Fixture designed to trigger ALL 6 lint rules.
+// Each rule should fire at least once.
+
+skill "lint-target" {
+    input {
+        files: string[]
+        focus?: string
+    }
+
+    body {
+        // Rule 1: uniform-priority — all 3 contexts at same priority
+        context(priority: 50) { "First context block." }
+        context(priority: 50) { "Second context block." }
+        context(priority: 50) { "Third context block." }
+
+        // Rule 3: when-guard-always-true — guard on required field 'files'
+        context(when: input.files) { "This guard is always true." }
+
+        // Rule 6: unused-lazy-context — declared but never loaded
+        lazy context "unused-docs" (priority: 40) {
+            summary "These docs are never loaded."
+            "Inline content that goes to waste."
+        }
+
+        // Rule 4: empty-step — no context, no use call
+        step empty_placeholder { emit output }
+
+        // Rule 5: unreachable-step — not first, no deps, nothing depends on it
+        step first_step { context { "I am the first step." } }
+        step orphan_step { context { "Nobody references me and I reference nobody." } }
+        step final_step { requires first_step context { "I depend on first." } }
+    }
+}

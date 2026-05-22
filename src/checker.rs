@@ -66,13 +66,34 @@ impl Checker {
             }
         }
 
+        // Build skill input signatures for use-call validation.
+        // Register under both the declared name and the underscore-normalised
+        // form so `use target_skill(...)` matches `skill "target-skill"`.
+        let mut skill_sigs: HashMap<String, Vec<Field>> = HashMap::new();
+        for s in &file.skills {
+            let fields = s.input.clone().unwrap_or_default();
+            let normalised = s.name.replace('-', "_");
+            skill_sigs.insert(s.name.clone(), fields.clone());
+            if normalised != s.name {
+                skill_sigs.insert(normalised, fields);
+            }
+        }
+
         // Second pass: check each skill (with access to all skills/mixins for inheritance resolution)
         for skill in &file.skills {
             self.check_skill(skill, &mixin_names, &skill_names, &file.skills, &file.mixins);
+            self.check_use_calls(skill, &skill_sigs);
         }
 
         // Check for extends cycles across all skills
         self.check_extends_cycles(&file.skills);
+
+        // Check pipeline stage use calls
+        for pipeline in &file.pipelines {
+            for stage in &pipeline.stages {
+                self.check_single_use_call(&stage.use_call, &skill_sigs);
+            }
+        }
 
         // Check pipelines
         for pipeline in &file.pipelines {
@@ -346,7 +367,66 @@ impl Checker {
             }
         }
 
+        if let Some(observe) = &body.observe {
+            let mut seen_metrics: HashMap<String, Span> = HashMap::new();
+            for metric in &observe.metrics {
+                if let Some(_existing) = seen_metrics.get(&metric.name) {
+                    self.errors.push(SkillSpecError::DuplicateField {
+                        name: metric.name.clone(),
+                        span: metric.span,
+                    });
+                } else {
+                    seen_metrics.insert(metric.name.clone(), metric.span);
+                }
+            }
+        }
+
         self.check_steps(body, inherited_steps);
+    }
+
+    fn check_use_calls(&mut self, skill: &Skill, sigs: &HashMap<String, Vec<Field>>) {
+        for step in &skill.body.steps {
+            if let Some(use_call) = &step.use_call {
+                self.check_single_use_call(use_call, sigs);
+            }
+        }
+    }
+
+    fn check_single_use_call(&mut self, use_call: &UseCall, sigs: &HashMap<String, Vec<Field>>) {
+        let target_fields = match sigs.get(&use_call.skill_name) {
+            Some(fields) => fields,
+            None => return, // not defined locally — could be external
+        };
+
+        let expected: HashMap<&str, &Field> = target_fields.iter()
+            .map(|f| (f.name.as_str(), f))
+            .collect();
+
+        let provided: HashSet<&str> = use_call.args.iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        // Check for missing required arguments (fields with defaults are effectively optional)
+        for field in target_fields {
+            if !field.optional && field.default.is_none() && !provided.contains(field.name.as_str()) {
+                self.errors.push(SkillSpecError::MismatchedArg {
+                    skill_name: use_call.skill_name.clone(),
+                    message: format!("missing required argument '{}'", field.name),
+                    span: use_call.span,
+                });
+            }
+        }
+
+        // Check for unknown arguments
+        for (arg_name, _) in &use_call.args {
+            if !expected.contains_key(arg_name.as_str()) {
+                self.errors.push(SkillSpecError::MismatchedArg {
+                    skill_name: use_call.skill_name.clone(),
+                    message: format!("unknown argument '{}'", arg_name),
+                    span: use_call.span,
+                });
+            }
+        }
     }
 
     fn check_steps(&mut self, body: &Body, inherited_steps: &HashSet<String>) {
@@ -1265,6 +1345,127 @@ mod tests {
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. })));
+    }
+
+    // ── Cross-skill use-call validation ─────────────────────────────
+
+    #[test]
+    fn use_call_known_skill_passes() {
+        let result = check(r#"
+            skill "analyzer" {
+                input { files: string[] }
+                body { context { "Analyze." } }
+            }
+            skill "reviewer" {
+                body {
+                    step review {
+                        use analyzer(files: input.files)
+                        context { "Review." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "use call to known skill with matching args should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn use_call_wrong_arg_name_errors() {
+        let result = check(r#"
+            skill "analyzer" {
+                input { files: string[] }
+                body { context { "Analyze." } }
+            }
+            skill "caller" {
+                body {
+                    step s {
+                        use analyzer(repos: input.files)
+                        context { "Go." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report MismatchedArg: {:?}", errs);
+    }
+
+    #[test]
+    fn use_call_missing_required_arg_errors() {
+        let result = check(r#"
+            skill "analyzer" {
+                input { files: string[] }
+                body { context { "Analyze." } }
+            }
+            skill "caller" {
+                body {
+                    step s {
+                        use analyzer()
+                        context { "Go." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report missing required arg: {:?}", errs);
+    }
+
+    #[test]
+    fn use_call_extra_arg_errors() {
+        let result = check(r#"
+            skill "analyzer" {
+                input { files: string[] }
+                body { context { "Analyze." } }
+            }
+            skill "caller" {
+                body {
+                    step s {
+                        use analyzer(files: input.files, extra: input.x)
+                        context { "Go." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report unknown arg: {:?}", errs);
+    }
+
+    #[test]
+    fn use_call_optional_arg_omitted_passes() {
+        let result = check(r#"
+            skill "analyzer" {
+                input { files: string[] focus?: string }
+                body { context { "Analyze." } }
+            }
+            skill "caller" {
+                body {
+                    step s {
+                        use analyzer(files: input.files)
+                        context { "Go." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "omitting optional arg should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn use_call_external_skill_passes() {
+        let result = check(r#"
+            skill "caller" {
+                body {
+                    step s {
+                        use external_skill(x: input.y)
+                        context { "Go." }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "external (unknown) skill should not error: {:?}", result.unwrap_err());
     }
 
     #[test]
