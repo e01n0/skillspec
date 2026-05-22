@@ -212,6 +212,7 @@ impl Parser {
         let mut steps = Vec::new();
         let mut on_error = None;
         let mut directives = PromptDirectives::default();
+        let mut observe = None;
         let mut source_order = Vec::new();
 
         while self.peek_kind() != TokenKind::RBrace {
@@ -268,12 +269,16 @@ impl Parser {
                     self.expect(TokenKind::RBrace)?;
                     directives.persona = Some(text);
                 }
+                TokenKind::Observe => {
+                    source_order.push(BodyItemRef::Observe);
+                    observe = Some(self.parse_observe_block()?);
+                }
                 _ => {
                     let span = self.peek_span();
                     let text = self.peek_text();
                     return Err(SkillSpecError::UnexpectedToken {
                         found: text,
-                        expected: "context, lazy context, step, on_error, or prompt directive"
+                        expected: "context, lazy context, step, observe, on_error, or prompt directive"
                             .to_string(),
                         span,
                     });
@@ -287,6 +292,7 @@ impl Parser {
             steps,
             on_error,
             directives,
+            observe,
             source_order,
         })
     }
@@ -1252,6 +1258,57 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
 
         Ok(SamplingDirective { temperature, top_p })
+    }
+
+    // ── Observe block ─────────────────────────────────────────────────
+
+    fn parse_observe_block(&mut self) -> Result<ObserveBlock> {
+        let start_span = self.peek_span();
+        self.expect(TokenKind::Observe)?;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut events = Vec::new();
+        let mut metrics = Vec::new();
+
+        while self.peek_kind() != TokenKind::RBrace {
+            match self.peek_kind() {
+                TokenKind::On => {
+                    let span = self.peek_span();
+                    self.advance(); // consume 'on'
+                    let trigger = self.expect_ident()?;
+                    self.expect(TokenKind::LBrace)?;
+                    self.expect(TokenKind::EmitEvent)?;
+                    let event_name = self.expect_string_lit()?;
+                    self.expect(TokenKind::RBrace)?;
+                    events.push(ObserveEvent { trigger, event_name, span });
+                }
+                TokenKind::Metric => {
+                    let span = self.peek_span();
+                    self.advance(); // consume 'metric'
+                    let name = self.expect_string_lit()?;
+                    let _from = self.expect_ident()?; // 'from' keyword
+                    let source = self.parse_expr()?;
+                    metrics.push(ObserveMetric { name, source, span });
+                }
+                _ => {
+                    let span = self.peek_span();
+                    let text = self.peek_text();
+                    return Err(SkillSpecError::UnexpectedToken {
+                        found: text,
+                        expected: "on (event) or metric".to_string(),
+                        span,
+                    });
+                }
+            }
+        }
+
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(ObserveBlock {
+            events,
+            metrics,
+            span: start_span,
+        })
     }
 
     // ── Tests block ──────────────────────────────────────────────────
@@ -2839,5 +2896,68 @@ mod tests {
         let tokens = Lexer::new(input).tokenize().unwrap();
         let ast = Parser::new(tokens).parse();
         assert!(ast.is_ok()); // parser accepts it — checker catches it
+    }
+
+    // ── Observe block ────────────────────────────────────────────────
+
+    #[test]
+    fn lex_observe_keyword() {
+        let input = "observe";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Observe));
+    }
+
+    #[test]
+    fn parse_observe_block_with_event() {
+        let file = parse(r#"
+            skill "x" {
+                body {
+                    context { "Base." }
+                    observe {
+                        on step_complete { emit_event "step.done" }
+                    }
+                }
+            }
+        "#);
+        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        assert_eq!(observe.events.len(), 1);
+        assert_eq!(observe.events[0].trigger, "step_complete");
+        assert_eq!(observe.events[0].event_name, "step.done");
+    }
+
+    #[test]
+    fn parse_observe_block_with_metric() {
+        let file = parse(r#"
+            skill "x" {
+                body {
+                    context { "Base." }
+                    observe {
+                        metric "review.findings" from output.report.findings.length
+                    }
+                }
+            }
+        "#);
+        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        assert_eq!(observe.metrics.len(), 1);
+        assert_eq!(observe.metrics[0].name, "review.findings");
+    }
+
+    #[test]
+    fn parse_observe_block_mixed() {
+        let file = parse(r#"
+            skill "x" {
+                body {
+                    context { "Base." }
+                    observe {
+                        on step_complete { emit_event "step.done" }
+                        on error { emit_event "step.error" }
+                        metric "findings.count" from output.count
+                    }
+                }
+            }
+        "#);
+        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        assert_eq!(observe.events.len(), 2);
+        assert_eq!(observe.metrics.len(), 1);
     }
 }

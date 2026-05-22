@@ -50,6 +50,9 @@ pub enum TokenKind {
     Equals, Contains, Matches, Resembles, Satisfies, Between,
     Unavailable, Failing, Slow,
 
+    // Observability
+    Observe, EmitEvent, Metric,
+
     // Control flow
     If, Retry, Backoff,
 

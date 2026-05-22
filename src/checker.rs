@@ -359,6 +359,20 @@ impl Checker {
             }
         }
 
+        if let Some(observe) = &body.observe {
+            let mut seen_metrics: HashMap<String, Span> = HashMap::new();
+            for metric in &observe.metrics {
+                if let Some(_existing) = seen_metrics.get(&metric.name) {
+                    self.errors.push(SkillSpecError::DuplicateField {
+                        name: metric.name.clone(),
+                        span: metric.span,
+                    });
+                } else {
+                    seen_metrics.insert(metric.name.clone(), metric.span);
+                }
+            }
+        }
+
         self.check_steps(body, inherited_steps);
     }
 
