@@ -33,6 +33,9 @@ enum Commands {
         target: String,
         #[arg(short, long)]
         output: Option<String>,
+        /// Watch for file changes and rebuild automatically
+        #[arg(long)]
+        watch: bool,
     },
     /// Scaffold a new .agent skill file
     Init { name: String },
@@ -81,7 +84,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output } => cmd_build(&file, &target, output.as_deref()),
+        Commands::Build { file, target, output, watch } => {
+            if watch {
+                cmd_build_watch(&file, &target, output.as_deref())
+            } else {
+                cmd_build(&file, &target, output.as_deref())
+            }
+        }
         Commands::Init { name } => cmd_init(&name),
         Commands::Fmt { file } => cmd_fmt(&file),
         Commands::Budget { file } => cmd_budget(&file),
@@ -237,6 +246,61 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>) -> Result<()> {
         }
         other => Err(miette::miette!("unknown target '{}'; supported: skillmd, native", other)),
     }
+}
+
+fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+    use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    eprintln!("Watching {} for changes (Ctrl-C to stop)...", path);
+    if let Err(e) = cmd_build(path, target, output) {
+        eprintln!("{}", e);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)
+        .map_err(|e| miette::miette!("Failed to start file watcher: {e}"))?;
+
+    let watch_path = Path::new(path).canonicalize()
+        .map_err(|e| miette::miette!("Failed to resolve path '{}': {e}", path))?;
+    let watch_dir = watch_path.parent().unwrap_or(Path::new("."));
+
+    debouncer.watcher().watch(watch_dir, notify::RecursiveMode::Recursive)
+        .map_err(|e| miette::miette!("Failed to watch '{}': {e}", watch_dir.display()))?;
+
+    loop {
+        match rx.recv() {
+            Ok(Ok(events)) => {
+                let dominated = events.iter().any(|e| {
+                    e.kind == DebouncedEventKind::Any
+                        && e.path.extension().is_some_and(|ext| ext == "agent")
+                });
+                if dominated {
+                    eprintln!("\n[{}] Change detected, rebuilding...",
+                        chrono_now());
+                    if let Err(e) = cmd_build(path, target, output) {
+                        eprintln!("{}", e);
+                    }
+                }
+            }
+            Ok(Err(errs)) => {
+                eprintln!("watch error: {errs}");
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn chrono_now() -> String {
+    use std::time::SystemTime;
+    let d = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs() % 86400;
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
 fn cmd_init(name: &str) -> Result<()> {
