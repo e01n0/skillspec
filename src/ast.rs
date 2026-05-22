@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use crate::token::Span;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -421,4 +422,27 @@ pub struct Mixin {
     pub steps: Vec<Step>,
     pub contexts: Vec<ContextBlock>,
     pub span: Span,
+}
+
+/// Walk the extends chain for a skill, returning ancestors base-first.
+/// Stops on cycle or missing base (both handled elsewhere by the checker).
+pub fn resolve_ancestry<'a>(skill: &'a Skill, all_skills: &'a [Skill]) -> Vec<&'a Skill> {
+    let mut chain = Vec::new();
+    let mut seen = HashSet::new();
+    seen.insert(&skill.name);
+    let mut current = skill.extends.as_ref();
+    while let Some(name) = current {
+        if !seen.insert(name) {
+            break;
+        }
+        match all_skills.iter().find(|s| &s.name == name) {
+            Some(base) => {
+                chain.push(base);
+                current = base.extends.as_ref();
+            }
+            None => break,
+        }
+    }
+    chain.reverse();
+    chain
 }

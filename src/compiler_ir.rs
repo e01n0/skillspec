@@ -3,6 +3,12 @@ use crate::ast::SourceFile;
 
 pub struct IrCompiler;
 
+impl Default for IrCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IrCompiler {
     pub fn new() -> Self {
         Self

@@ -5,6 +5,12 @@ pub struct Formatter {
     output: String,
 }
 
+impl Default for Formatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Formatter {
     pub fn new() -> Self {
         Formatter {
@@ -755,7 +761,7 @@ fn expr_to_string(expr: &Expr) -> String {
         Expr::Ident(name) => name.clone(),
         Expr::FieldAccess(obj, field) => format!("{}.{}", expr_to_string(obj), field),
         Expr::ArrayLit(items) => {
-            let parts: Vec<String> = items.iter().map(|e| expr_to_string(e)).collect();
+            let parts: Vec<String> = items.iter().map(expr_to_string).collect();
             format!("[{}]", parts.join(", "))
         }
         Expr::BinOp(lhs, op, rhs) => {
