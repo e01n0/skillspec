@@ -189,6 +189,11 @@ impl SkillMdCompiler {
             out.push_str(&self.emit_context_with_metadata(ctx));
         }
 
+        // ── Observability ─────────────────────────────────────────────────
+        if let Some(observe) = &skill.body.observe {
+            out.push_str(&self.emit_observability_section(observe));
+        }
+
         // ── Tests ─────────────────────────────────────────────────────────
         if !skill.tests.is_empty() {
             out.push_str(&self.emit_tests_section(&skill.tests));
@@ -720,6 +725,33 @@ impl SkillMdCompiler {
         out
     }
 
+    fn emit_observability_section(&self, observe: &ObserveBlock) -> String {
+        let mut out = String::new();
+        out.push_str("## Observability\n\n");
+
+        if !observe.events.is_empty() {
+            out.push_str("### Events\n\n");
+            out.push_str("| Trigger | Event |\n");
+            out.push_str("|---------|-------|\n");
+            for event in &observe.events {
+                out.push_str(&format!("| {} | {} |\n", event.trigger, event.event_name));
+            }
+            out.push('\n');
+        }
+
+        if !observe.metrics.is_empty() {
+            out.push_str("### Metrics\n\n");
+            out.push_str("| Metric | Source |\n");
+            out.push_str("|--------|--------|\n");
+            for metric in &observe.metrics {
+                out.push_str(&format!("| {} | `{}` |\n", metric.name, self.expr_to_string(&metric.source)));
+            }
+            out.push('\n');
+        }
+
+        out
+    }
+
     fn emit_tests_section(&self, tests: &[TestBlock]) -> String {
         let mut out = String::new();
         out.push_str("## Tests\n\n");
@@ -1133,6 +1165,14 @@ impl SkillMdCompiler {
             }
             Expr::Interpolated(s) => format!("`{}`", s),
         }
+    }
+}
+
+impl crate::compiler::TargetCompiler for SkillMdCompiler {
+    fn name(&self) -> &str { "skillmd" }
+    fn file_extension(&self) -> &str { "md" }
+    fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
+        self.compile(skill, source)
     }
 }
 

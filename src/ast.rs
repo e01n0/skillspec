@@ -77,6 +77,7 @@ pub enum BodyItemRef {
     Context(usize),
     LazyContext(usize),
     Step(usize),
+    Observe,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -86,6 +87,7 @@ pub struct Body {
     pub steps: Vec<Step>,
     pub on_error: Option<Vec<UseCall>>,
     pub directives: PromptDirectives,
+    pub observe: Option<ObserveBlock>,
     // Indices valid only for this body's own vecs; not meaningful after extends/mixin merging.
     #[serde(skip)]
     pub source_order: Vec<BodyItemRef>,
@@ -412,6 +414,29 @@ pub enum AssertionExpr {
     ContainsWhere(Expr),
     AllWhere(Expr),
     NoneWhere(Expr),
+}
+
+// ── Observability ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObserveBlock {
+    pub events: Vec<ObserveEvent>,
+    pub metrics: Vec<ObserveMetric>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObserveEvent {
+    pub trigger: String,
+    pub event_name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObserveMetric {
+    pub name: String,
+    pub source: Expr,
+    pub span: Span,
 }
 
 // ── Mixin ─────────────────────────────────────────────────────────────────────

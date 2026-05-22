@@ -611,6 +611,150 @@ pub fn skillmd_diff(compiled: &str, actual: &str) -> DiffReport {
     report
 }
 
+// ── Semver classification ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SemverLevel {
+    Patch,
+    Minor,
+    Major,
+}
+
+impl std::fmt::Display for SemverLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SemverLevel::Patch => write!(f, "PATCH"),
+            SemverLevel::Minor => write!(f, "MINOR"),
+            SemverLevel::Major => write!(f, "MAJOR"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SemverReport {
+    pub level: SemverLevel,
+    pub breakdown: Vec<(SemverLevel, String)>,
+}
+
+impl SemverReport {
+    pub fn display(&self) -> String {
+        let mut out = format!("Semver bump: {}\n\n", self.level);
+        for (level, desc) in &self.breakdown {
+            out.push_str(&format!("  [{}] {}\n", level, desc));
+        }
+        out
+    }
+}
+
+pub fn classify_semver(a: &SourceFile, b: &SourceFile) -> SemverReport {
+    let report = structural_diff(a, b);
+    let mut breakdown = Vec::new();
+
+    for change in &report.changes {
+        let level = classify_change(change, b);
+        breakdown.push((level, format!("{} {} — {}", change_symbol(&change.kind), change.path, change.description)));
+    }
+
+    let level = breakdown.iter()
+        .map(|(l, _)| *l)
+        .max()
+        .unwrap_or(SemverLevel::Patch);
+
+    SemverReport { level, breakdown }
+}
+
+fn change_symbol(kind: &ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::Added => "+",
+        ChangeKind::Removed => "-",
+        ChangeKind::Modified => "~",
+    }
+}
+
+fn classify_change(change: &Change, new_file: &SourceFile) -> SemverLevel {
+    let path = &change.path;
+
+    match change.kind {
+        ChangeKind::Removed => {
+            if path.contains(".input.") || path.contains(".output.") {
+                SemverLevel::Major
+            } else if is_top_level_construct(path) {
+                SemverLevel::Major
+            } else if path.contains(".step.") || path.contains(".stage.") || path.contains(".phase.") {
+                SemverLevel::Minor
+            } else {
+                SemverLevel::Patch
+            }
+        }
+        ChangeKind::Added => {
+            if path.contains(".input.") {
+                if is_field_optional_in(path, new_file) {
+                    SemverLevel::Minor
+                } else {
+                    SemverLevel::Major
+                }
+            } else if path.contains(".output.") {
+                SemverLevel::Minor
+            } else if path.contains(".step.") || path.contains(".stage.") || path.contains(".phase.") {
+                SemverLevel::Minor
+            } else if is_top_level_construct(path) {
+                SemverLevel::Minor
+            } else {
+                SemverLevel::Patch
+            }
+        }
+        ChangeKind::Modified => {
+            if path.contains(".input.") || path.contains(".output.") {
+                SemverLevel::Major
+            } else if path.contains(".context") {
+                SemverLevel::Patch
+            } else {
+                SemverLevel::Patch
+            }
+        }
+    }
+}
+
+fn is_top_level_construct(path: &str) -> bool {
+    let parts: Vec<&str> = path.split('.').collect();
+    parts.len() == 2
+        && matches!(parts[0], "skill" | "pipeline" | "orchestration" | "type")
+}
+
+fn is_field_optional_in(path: &str, file: &SourceFile) -> bool {
+    lookup_field_optional(path, file).unwrap_or(false)
+}
+
+fn lookup_field_optional(path: &str, file: &SourceFile) -> Option<bool> {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.len() < 4 { return None; }
+    let (construct_type, construct_name, block, field_name) =
+        (parts[0], parts[1], parts[2], parts[3]);
+
+    let fields = match construct_type {
+        "skill" => {
+            let skill = file.skills.iter().find(|s| s.name == construct_name)?;
+            match block {
+                "input" => skill.input.as_deref(),
+                "output" => skill.output.as_deref(),
+                _ => None,
+            }
+        }
+        "pipeline" => {
+            let p = file.pipelines.iter().find(|p| p.name == construct_name)?;
+            match block {
+                "input" => p.input.as_deref(),
+                "output" => p.output.as_deref(),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    fields?.iter()
+        .find(|f| f.name == field_name)
+        .map(|f| f.optional)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -738,5 +882,72 @@ mod tests {
             matches!(report.changes[0].kind, ChangeKind::Modified),
             "should be a modification"
         );
+    }
+
+    // ── Semver tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn semver_identical_is_patch() {
+        let a = parse(r#"skill "x" { input { f: string[] } body { context { "ok" } } }"#);
+        let b = parse(r#"skill "x" { input { f: string[] } body { context { "ok" } } }"#);
+        let report = classify_semver(&a, &b);
+        assert!(report.breakdown.is_empty());
+        assert_eq!(report.level, SemverLevel::Patch);
+    }
+
+    #[test]
+    fn semver_removed_input_field_is_major() {
+        let a = parse(r#"skill "x" { input { files: string[] name: string } body { context { "ok" } } }"#);
+        let b = parse(r#"skill "x" { input { files: string[] } body { context { "ok" } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Major);
+    }
+
+    #[test]
+    fn semver_added_required_input_is_major() {
+        let a = parse(r#"skill "x" { input { files: string[] } body { context { "ok" } } }"#);
+        let b = parse(r#"skill "x" { input { files: string[] name: string } body { context { "ok" } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Major);
+    }
+
+    #[test]
+    fn semver_added_optional_input_is_minor() {
+        let a = parse(r#"skill "x" { input { files: string[] } body { context { "ok" } } }"#);
+        let b = parse(r#"skill "x" { input { files: string[] focus?: string } body { context { "ok" } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Minor);
+    }
+
+    #[test]
+    fn semver_type_change_is_major() {
+        let a = parse(r#"skill "x" { input { files: string[] } body { context { "ok" } } }"#);
+        let b = parse(r#"skill "x" { input { files: int[] } body { context { "ok" } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Major);
+    }
+
+    #[test]
+    fn semver_new_step_is_minor() {
+        let a = parse(r#"skill "x" { body { step a { context { "a" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } step b { context { "b" } } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Minor);
+    }
+
+    #[test]
+    fn semver_context_text_change_is_patch() {
+        let a = parse(r#"skill "x" { body { context { "old." } } }"#);
+        let b = parse(r#"skill "x" { body { context { "new." } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Patch);
+    }
+
+    #[test]
+    fn semver_mixed_changes_reports_highest() {
+        let a = parse(r#"skill "x" { input { files: string[] name: string } body { context { "old" } step a { context { "a" } } } }"#);
+        let b = parse(r#"skill "x" { input { files: string[] } body { context { "new" } step a { context { "a" } } step b { context { "b" } } } }"#);
+        let report = classify_semver(&a, &b);
+        assert_eq!(report.level, SemverLevel::Major, "removed input should dominate: {:?}", report.breakdown);
     }
 }
