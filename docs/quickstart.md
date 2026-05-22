@@ -117,6 +117,28 @@ skillspec deps code-helper.agent    # step graph
 skillspec fmt code-helper.agent     # canonical formatting
 ```
 
+## Deploy to a runtime
+
+`--to` builds and deploys in one step. Pass a named runtime or any path:
+
+```sh
+skillspec build code-helper.agent --to claude          # ~/.claude/skills/
+skillspec build code-helper.agent --to claude-project   # .claude/skills/ (repo-scoped)
+skillspec build code-helper.agent --to cursor           # .cursor/rules/ (auto-selects cursor target)
+skillspec build code-helper.agent --to cline            # ./ as .clinerules
+skillspec build code-helper.agent --to codex            # .codex/
+skillspec build code-helper.agent --to /my/custom/path  # anywhere
+skillspec build code-helper.agent --to                  # interactive menu
+```
+
+Combine with `--watch` to auto-redeploy on save:
+
+```sh
+skillspec build code-helper.agent --to claude --watch
+```
+
+`--to` and `-o` are mutually exclusive. `-o` sets a raw output directory; `--to` resolves named runtimes and auto-selects the build target (e.g. `--to cursor` implies `--target cursor`).
+
 ## Where to go from here
 
 | Want to... | Read |

@@ -40,6 +40,30 @@ skillspec build greeter.agent   # ✓ greeter.agent → greeter/SKILL.md
 skillspec fmt greeter.agent     # canonical formatting
 ```
 
+### Deploying to a runtime
+
+Use `--to` to build and deploy in one step:
+
+```sh
+skillspec build greeter.agent --to claude          # → ~/.claude/skills/greeter/SKILL.md
+skillspec build greeter.agent --to claude-project   # → .claude/skills/greeter/SKILL.md
+skillspec build greeter.agent --to cursor           # → .cursor/rules/greeter.cursorrules
+skillspec build greeter.agent --to cline            # → ./greeter.clinerules
+skillspec build greeter.agent --to codex            # → .codex/greeter.txt
+skillspec build greeter.agent --to /custom/path     # → /custom/path/greeter/SKILL.md
+skillspec build greeter.agent --to                  # interactive menu
+```
+
+Named runtimes auto-select the correct build target. `--to cursor` compiles to `.cursorrules` format, `--to cline` compiles to `.clinerules`, etc. Claude Code targets use the default `skillmd` format.
+
+Add `--watch` to redeploy on every save:
+
+```sh
+skillspec build greeter.agent --to claude --watch
+```
+
+`--to` and `-o`/`--output` are mutually exclusive.
+
 ---
 
 ## Types
