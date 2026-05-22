@@ -8,7 +8,7 @@ use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::compiler_ir::IrCompiler;
 use skillspec_core::formatter::Formatter;
 use skillspec_core::budget;
-use skillspec_core::diff::{structural_diff, skillmd_diff};
+use skillspec_core::diff::{structural_diff, skillmd_diff, classify_semver};
 use skillspec_core::lint::LintEngine;
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
@@ -65,6 +65,9 @@ enum Commands {
         /// Compare compiled output of file_a against file_b as a SKILL.md
         #[arg(long)]
         against_skillmd: bool,
+        /// Classify changes as MAJOR/MINOR/PATCH semver bumps
+        #[arg(long)]
+        semver: bool,
     },
 }
 
@@ -82,7 +85,7 @@ fn main() -> Result<()> {
         Commands::Install { path } => cmd_install(&path),
         Commands::Test { file } => cmd_test(&file),
         Commands::Lint { file } => cmd_lint(&file),
-        Commands::Diff { file_a, file_b, against_skillmd } => cmd_diff(&file_a, &file_b, against_skillmd),
+        Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
     }
 }
 
@@ -604,7 +607,7 @@ fn cmd_test(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool) -> Result<()> {
+fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool, semver: bool) -> Result<()> {
     if against_skillmd {
         let ast = read_and_parse(path_a)?;
         let compiler = SkillMdCompiler::new();
@@ -620,6 +623,11 @@ fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool) -> Result<()> {
                 eprint!("{}", report.display());
             }
         }
+    } else if semver {
+        let ast_a = read_and_parse(path_a)?;
+        let ast_b = read_and_parse(path_b)?;
+        let report = classify_semver(&ast_a, &ast_b);
+        eprint!("{}", report.display());
     } else {
         let ast_a = read_and_parse(path_a)?;
         let ast_b = read_and_parse(path_b)?;
