@@ -18,3 +18,4 @@ pub mod compiler;
 pub mod compiler_systemprompt;
 pub mod compiler_cursor;
 pub mod compiler_clinerules;
+pub mod test_harness;

@@ -73,8 +73,16 @@ enum Commands {
         /// Path to a .skillpkg directory or an .agent file with a package declaration
         path: String,
     },
-    /// List all tests defined in an .agent file
-    Test { file: String },
+    /// List, prepare, or evaluate tests in an .agent file
+    Test {
+        file: String,
+        /// Generate a test execution SKILL.md
+        #[arg(long)]
+        prepare: bool,
+        /// Evaluate test results from a JSON file
+        #[arg(long)]
+        evaluate: Option<String>,
+    },
     /// Run lint rules to catch quality issues beyond structural validity
     Lint { file: String },
     /// Show structural diff between two .agent files (or compiled vs SKILL.md)
@@ -110,7 +118,7 @@ fn main() -> Result<()> {
         Commands::Migrate { file } => cmd_migrate(&file),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
-        Commands::Test { file } => cmd_test(&file),
+        Commands::Test { file, prepare, evaluate } => cmd_test(&file, prepare, evaluate.as_deref()),
         Commands::Lint { file } => cmd_lint(&file),
         Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
     }
@@ -728,14 +736,95 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_test(path: &str) -> Result<()> {
+fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
     let ast = read_and_parse(path)?;
+
+    if prepare {
+        use skillspec_core::test_harness::prepare_test_skill;
+        for skill in &ast.skills {
+            if skill.tests.is_empty() { continue; }
+            let test_skill = prepare_test_skill(skill, &ast);
+            let out_dir = format!("{}.test", skill.name);
+            fs::create_dir_all(&out_dir).map_err(|e| miette::miette!("mkdir: {e}"))?;
+            let out_path = format!("{}/SKILL.md", out_dir);
+            fs::write(&out_path, &test_skill).map_err(|e| miette::miette!("write: {e}"))?;
+            println!("✓ test skill → {}", out_path);
+        }
+        return Ok(());
+    }
+
+    if let Some(results_path) = evaluate {
+        use skillspec_core::test_harness::{evaluate_assertion, evaluate_confidence};
+        let results_text = fs::read_to_string(results_path)
+            .map_err(|e| miette::miette!("Failed to read '{}': {}", results_path, e))?;
+        let results: serde_json::Value = serde_json::from_str(&results_text)
+            .map_err(|e| miette::miette!("Failed to parse results JSON: {}", e))?;
+
+        let test_cases = results["test_cases"].as_array()
+            .ok_or_else(|| miette::miette!("results JSON missing 'test_cases' array"))?;
+
+        let mut total_pass = 0;
+        let mut total_fail = 0;
+
+        for skill in &ast.skills {
+            for test in &skill.tests {
+                let case = test_cases.iter()
+                    .find(|tc| tc["name"].as_str() == Some(&test.name));
+                let case = match case {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("⚠ test '{}' not found in results", test.name);
+                        total_fail += 1;
+                        continue;
+                    }
+                };
+
+                let runs = case["runs"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+                let mut run_results = Vec::new();
+
+                for run in runs {
+                    let output = &run["output"];
+                    let mut all_pass = true;
+                    for exp in &test.expectations {
+                        let actual = navigate_json(output, &exp.path);
+                        let r = evaluate_assertion(&exp.assertion, &actual);
+                        if !r.passed {
+                            eprintln!("  ✗ {}.{}: {}", test.name, exp.path, r.message);
+                            all_pass = false;
+                        }
+                    }
+                    run_results.push(all_pass);
+                }
+
+                if let Some(conf) = test.confidence {
+                    let met = evaluate_confidence(&run_results, conf);
+                    if met {
+                        eprintln!("  ✓ {} (confidence {:.0}% met)", test.name, conf * 100.0);
+                        total_pass += 1;
+                    } else {
+                        let pass_rate = run_results.iter().filter(|&&r| r).count() as f64 / run_results.len().max(1) as f64;
+                        eprintln!("  ✗ {} (confidence {:.0}% needed, got {:.0}%)", test.name, conf * 100.0, pass_rate * 100.0);
+                        total_fail += 1;
+                    }
+                } else if run_results.iter().all(|&r| r) {
+                    eprintln!("  ✓ {}", test.name);
+                    total_pass += 1;
+                } else {
+                    total_fail += 1;
+                }
+            }
+        }
+
+        eprintln!("\n{} passed, {} failed", total_pass, total_fail);
+        if total_fail > 0 {
+            return Err(miette::miette!("{} test(s) failed", total_fail));
+        }
+        return Ok(());
+    }
 
     let mut total = 0;
     for skill in &ast.skills {
-        if skill.tests.is_empty() {
-            continue;
-        }
+        if skill.tests.is_empty() { continue; }
         eprintln!("Skill: {} ({} tests)", skill.name, skill.tests.len());
         for test in &skill.tests {
             eprintln!("  - {}", test.name);
@@ -747,10 +836,18 @@ fn cmd_test(path: &str) -> Result<()> {
     if total == 0 {
         eprintln!("No tests found in '{path}'.");
     } else {
-        eprintln!("To execute tests, run the skillspec-test skill in your agent runtime.");
+        eprintln!("To execute tests:\n  skillspec test {path} --prepare\n  <run the test skill in your agent runtime>\n  skillspec test {path} --evaluate results.json");
     }
 
     Ok(())
+}
+
+fn navigate_json<'a>(value: &'a serde_json::Value, path: &str) -> serde_json::Value {
+    let mut current = value.clone();
+    for part in path.split('.') {
+        current = current.get(part).cloned().unwrap_or(serde_json::Value::Null);
+    }
+    current
 }
 
 fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool, semver: bool) -> Result<()> {
