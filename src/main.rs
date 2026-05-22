@@ -11,6 +11,10 @@ use skillspec_core::budget;
 use skillspec_core::diff::{structural_diff, skillmd_diff, classify_semver};
 use skillspec_core::lint::LintEngine;
 use skillspec_core::deps::emit_mermaid;
+use skillspec_core::compiler::TargetCompiler;
+use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
+use skillspec_core::compiler_cursor::CursorCompiler;
+use skillspec_core::compiler_clinerules::ClineRulesCompiler;
 use skillspec_core::migrate;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
@@ -263,7 +267,30 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
             eprintln!("✓ {path} → {}", pkg_dir.display());
             Ok(())
         }
-        other => Err(miette::miette!("unknown target '{}'; supported: skillmd, native", other)),
+        "system-prompt" | "cursor" | "clinerules" => {
+            let ast = read_and_parse(path)?;
+            let compiler: Box<dyn TargetCompiler> = match target {
+                "system-prompt" => Box::new(SystemPromptCompiler),
+                "cursor" => Box::new(CursorCompiler),
+                "clinerules" => Box::new(ClineRulesCompiler),
+                _ => unreachable!(),
+            };
+            let out_base = output.unwrap_or(".");
+            for skill in &ast.skills {
+                let content = compiler.compile_skill(skill, &ast);
+                let ext = compiler.file_extension();
+                let out_path = Path::new(out_base).join(format!("{}.{}", skill.name, ext));
+                fs::write(&out_path, &content).map_err(|e| {
+                    miette::miette!("Failed to write '{}': {}", out_path.display(), e)
+                })?;
+                println!("✓ {} → {}", path, out_path.display());
+            }
+            Ok(())
+        }
+        other => Err(miette::miette!(
+            "unknown target '{}'; supported: skillmd, native, system-prompt, cursor, clinerules",
+            other
+        )),
     }
 }
 

@@ -1168,6 +1168,14 @@ impl SkillMdCompiler {
     }
 }
 
+impl crate::compiler::TargetCompiler for SkillMdCompiler {
+    fn name(&self) -> &str { "skillmd" }
+    fn file_extension(&self) -> &str { "md" }
+    fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
+        self.compile(skill, source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

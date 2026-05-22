@@ -744,6 +744,38 @@ fn observe_block_round_trips_through_ir() {
     assert_eq!(observe.metrics.len(), 1);
 }
 
+// ── Multi-target compilation ─────────────────────────────────────────
+
+#[test]
+fn target_trait_compile_matches_direct() {
+    use skillspec_core::compiler::TargetCompiler;
+    let source = r#"skill "x" { body { context { "Be helpful." } } }"#;
+    let tokens = Lexer::new(source).tokenize().unwrap();
+    let ast = Parser::new(tokens).parse().unwrap();
+    let compiler = SkillMdCompiler::new();
+    let direct = compiler.compile(&ast.skills[0], &ast);
+    let via_trait: &dyn TargetCompiler = &compiler;
+    let trait_output = via_trait.compile_skill(&ast.skills[0], &ast);
+    assert_eq!(direct, trait_output);
+}
+
+#[test]
+fn unknown_target_errors() {
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let dir = std::env::temp_dir().join("skillspec_unknown_target");
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent = dir.join("test.agent");
+    std::fs::write(&agent, r#"skill "x" { body { context { "ok" } } }"#).unwrap();
+    let output = std::process::Command::new(bin)
+        .args(["build", agent.to_str().unwrap(), "--target", "nonexistent"])
+        .output()
+        .expect("failed to run");
+    assert!(!output.status.success(), "should fail for unknown target");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown target"), "should mention unknown target: {}", stderr);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Failed to read {}", path));

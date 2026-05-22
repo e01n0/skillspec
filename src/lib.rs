@@ -14,3 +14,7 @@ pub mod diff;
 pub mod resolve;
 pub mod lint;
 pub mod deps;
+pub mod compiler;
+pub mod compiler_systemprompt;
+pub mod compiler_cursor;
+pub mod compiler_clinerules;
