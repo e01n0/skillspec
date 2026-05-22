@@ -1,197 +1,166 @@
 import { Finding, ReviewReport } from "@types/review"
 
 mixin observability {
-    step log_start {
-        context { "Log that the skill is starting." }
+  step log_start {
+    context {
+      "Log that the skill is starting."
     }
-    step log_end {
-        requires all_steps
-        context { "Log that the skill completed." }
+  }
+  step log_end {
+    requires all_steps
+    context {
+      "Log that the skill completed."
     }
+  }
 }
 
 skill "full-review" {
-    input {
-        files: string[]
-        focus?: string
-        severity: enum("high", "medium", "low") = "medium"
+  input {
+    files: string[]
+    focus?: string
+    severity: enum("high", "medium", "low") = "medium"
+  }
+  output {
+    report: ReviewReport
+  }
+  tools {
+    require Bash
+    require Read
+    require mcp("github") {
+      pr_diff(repo: string, pr: int) -> string
+      post_comment(repo: string, pr: int, body: string) -> void
     }
-
-    output {
-        report: ReviewReport
+    optional mcp("slack") {
+      send_message(channel: string, text: string) -> void
     }
-
-    tools {
-        require Bash
-        require Read
-        require mcp("github") {
-            pr_diff(repo: string, pr: int) -> string
-            post_comment(repo: string, pr: int, body: string) -> void
-        }
-        optional mcp("slack") {
-            send_message(channel: string, text: string) -> void
-        }
+  }
+  permissions {
+    filesystem: read_write("src/**", "tests/**")
+    network: outbound("api.github.com")
+    secrets: ["GITHUB_TOKEN"]
+  }
+  include observability
+  pre {
+    assert input.files != [] message "No files to review"
+  }
+  post {
+    assert output.report.score >= 0 message "Score must be non-negative"
+  }
+  body {
+    persona {
+      """
+      You are a senior code reviewer with expertise in security,
+      performance, and maintainability.
+      """
     }
-
-    permissions {
-        filesystem: read_write("src/**", "tests/**")
-        network: outbound("api.github.com")
-        secrets: ["GITHUB_TOKEN"]
+    reasoning extended
+    sampling {
+      temperature: 0.3
+      top_p: 0.9
     }
-
-    include observability
-
-    pre {
-        assert input.files != [] message "No files to review"
+    reinforce every 3 steps {
+      "Stay focused on the review. Do not get sidetracked."
     }
-
-    post {
-        assert output.report.score >= 0 message "Score must be non-negative"
+    context(priority: 100) {
+      """
+      Review the provided files for bugs, security issues,
+      and maintainability problems.
+      """
     }
-
-    body {
-        persona {
-            """
-            You are a senior code reviewer with expertise in security,
-            performance, and maintainability.
-            """
-        }
-
-        reasoning extended
-
-        sampling {
-            temperature: 0.3
-            top_p: 0.9
-        }
-
-        reinforce every 3 steps {
-            "Stay focused on the review. Do not get sidetracked."
-        }
-
-        context(priority: 100) {
-            """
-            Review the provided files for bugs, security issues,
-            and maintainability problems.
-            """
-        }
-
-        context(priority: 80, when: input.focus) {
-            """
-            Focus specifically on the area requested by the reviewer.
-            """
-        }
-
-        lazy context "style-guide" (priority: 40) {
-            summary "Team style guide and conventions."
-            ref "./references/style-guide.md"
-        }
-
-        lazy context "error-catalog" (priority: 30) {
-            summary "Known error patterns and fixes."
-            index {
-                section "security" {
-                    summary "Security vulnerability patterns."
-                    ref "./references/security-patterns.md"
-                }
-                section "performance" {
-                    summary "Performance anti-patterns."
-                    ref "./references/perf-patterns.md"
-                }
-            }
-        }
-
-        step analyze {
-            use static_analysis(files: input.files)
-            load "style-guide"
-
-            context(priority: 70) {
-                """
-                Run static analysis and compare against the style guide.
-                """
-            }
-        }
-
-        step deep_review {
-            requires analyze
-            load "error-catalog"
-
-            context(priority: 60) {
-                """
-                Perform deep review using the error catalog as reference.
-                Check for security and performance issues.
-                """
-            }
-        }
-
-        step synthesise {
-            requires deep_review
-            emit output
-
-            context {
-                """
-                Combine all findings into the ReviewReport format.
-                Lead with the most severe issues.
-                """
-            }
-        }
+    context(priority: 80, when: input.focus) {
+      "Focus specifically on the area requested by the reviewer."
     }
+    lazy context "style-guide" (priority: 40) {
+      summary "Team style guide and conventions."
+      ref "./references/style-guide.md"
+    }
+    lazy context "error-catalog" (priority: 30) {
+      summary "Known error patterns and fixes."
+      index {
+        section "security" {
+          summary "Security vulnerability patterns."
+          ref "./references/security-patterns.md"
+        }
+        section "performance" {
+          summary "Performance anti-patterns."
+          ref "./references/perf-patterns.md"
+        }
+      }
+    }
+    step analyze {
+      load "style-guide"
+      use static_analysis(files: input.files)
+      context(priority: 70) {
+        "Run static analysis and compare against the style guide."
+      }
+    }
+    step deep_review {
+      requires analyze
+      load "error-catalog"
+      context(priority: 60) {
+        """
+        Perform deep review using the error catalog as reference.
+        Check for security and performance issues.
+        """
+      }
+    }
+    step synthesise {
+      requires deep_review
+      emit output
+      context {
+        """
+        Combine all findings into the ReviewReport format.
+        Lead with the most severe issues.
+        """
+      }
+    }
+  }
 }
 
 pipeline "ci-review" {
-    input {
-        repo: string
-        branch: string
-    }
-
-    output {
-        passed: bool
-    }
-
-    stage lint {
-        use linter(repo: input.repo)
-    }
-
-    stage security {
-        use security_scan(repo: input.repo)
-    }
-
-    stage review {
-        requires lint & security
-        use full_review(files: input.files)
-    }
-
-    on_error {
-        use notify(channel: input.repo, message: input.branch)
-    }
-
-    timeout 30m
+  input {
+    repo: string
+    branch: string
+  }
+  output {
+    passed: bool
+  }
+  stage lint {
+    use linter(repo: input.repo)
+  }
+  stage security {
+    use security_scan(repo: input.repo)
+  }
+  stage review {
+    requires lint & security
+    use full_review(files: input.files)
+  }
+  on_error {
+    use notify(channel: input.repo, message: input.branch)
+  }
+  timeout 30m
 }
 
 orchestration "team-review" {
-    agents {
-        reviewer: agent(skill: "full-review", model: "opus")
-        security: agent(skill: "security-audit", model: "sonnet")
-        lead: agent(skill: "review-lead", model: "opus")
-    }
-
-    input {
-        pr_url: string
-    }
-
-    output {
-        decision: enum("approve", "request_changes", "reject")
-    }
-
-    phase review {
-        reviewer.run(files: input.pr_url)
-        security.run(files: input.pr_url)
-    }
-
-    phase decide {
-        requires review
-        lead.run(review_findings: input.pr_url)
-        emit output from lead.result
-    }
-
-    timeout 1h
+  agents {
+    reviewer: agent(skill: "full-review", model: "opus")
+    security: agent(skill: "security-audit", model: "sonnet")
+    lead: agent(skill: "review-lead", model: "opus")
+  }
+  input {
+    pr_url: string
+  }
+  output {
+    decision: enum("approve", "request_changes", "reject")
+  }
+  phase review {
+    reviewer.run(files: input.pr_url)
+    security.run(files: input.pr_url)
+  }
+  phase decide {
+    requires review
+    lead.run(review_findings: input.pr_url)
+    emit output from lead.result
+  }
+  timeout 1h
 }

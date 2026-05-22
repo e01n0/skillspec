@@ -309,6 +309,7 @@ impl Checker {
         }
 
         self.check_body(&skill.body, &inherited_steps, &inherited_lazy);
+        self.check_tests(skill);
     }
 
     fn check_body(&mut self, body: &Body, inherited_steps: &HashSet<String>, inherited_lazy: &HashSet<String>) {
@@ -746,6 +747,124 @@ impl Checker {
                         name: name.clone(),
                         span,
                     });
+                }
+            }
+        }
+    }
+
+    fn check_tests(&mut self, skill: &Skill) {
+        for test in &skill.tests {
+            self.check_test_mocks(test, skill);
+            self.check_test_fixture_paths(test);
+            self.check_test_given_keys(test, skill);
+            self.check_test_expectations(test, skill);
+        }
+    }
+
+    fn check_test_mocks(&mut self, test: &TestBlock, skill: &Skill) {
+        if test.mocks.is_empty() {
+            return;
+        }
+
+        let valid_tools: HashSet<String> = match &skill.tools {
+            Some(tools_block) => {
+                let mut set = HashSet::new();
+                for decl in tools_block.required.iter().chain(tools_block.optional.iter()) {
+                    match &decl.kind {
+                        ToolKind::Mcp(_) => {
+                            set.insert(decl.name.clone());
+                            set.insert(format!("tools.mcp.{}", decl.name));
+                        }
+                        ToolKind::Builtin | ToolKind::Generic => {
+                            set.insert(decl.name.clone());
+                            set.insert(format!("tools.{}", decl.name));
+                        }
+                    }
+                }
+                set
+            }
+            None => HashSet::new(),
+        };
+
+        for mock in &test.mocks {
+            if !valid_tools.contains(&mock.tool_path) {
+                self.errors.push(SkillSpecError::UnknownMockTool {
+                    tool_path: mock.tool_path.clone(),
+                    test_name: test.name.clone(),
+                    span: test.span,
+                });
+            }
+        }
+    }
+
+    fn check_test_fixture_paths(&mut self, test: &TestBlock) {
+        let base = match &self.base_dir {
+            Some(dir) => dir.clone(),
+            None => return,
+        };
+
+        for (_, value) in &test.given {
+            if let Expr::StringLit(s) = value
+                && (s.ends_with(".agent") || s.ends_with(".md"))
+            {
+                let resolved = base.join(s);
+                if !resolved.is_file() {
+                    self.errors.push(SkillSpecError::UnresolvedFixturePath {
+                        path: s.clone(),
+                        test_name: test.name.clone(),
+                        span: test.span,
+                    });
+                } else if s.ends_with(".agent")
+                    && let Err(e) = resolve::parse_file(&resolved)
+                {
+                    self.errors.push(SkillSpecError::FixtureParseError {
+                        path: s.clone(),
+                        message: format!("{e}"),
+                        test_name: test.name.clone(),
+                        span: test.span,
+                    });
+                }
+            }
+        }
+    }
+
+    fn check_test_given_keys(&mut self, test: &TestBlock, skill: &Skill) {
+        let input_names: Option<HashSet<&str>> = skill.input.as_ref().map(|fields| {
+            fields.iter().map(|f| f.name.as_str()).collect()
+        });
+
+        for (key, _) in &test.given {
+            match &input_names {
+                Some(names) if names.contains(key.as_str()) => {}
+                _ => {
+                    self.errors.push(SkillSpecError::UnknownGivenKey {
+                        key: key.clone(),
+                        test_name: test.name.clone(),
+                        span: test.span,
+                    });
+                }
+            }
+        }
+    }
+
+    fn check_test_expectations(&mut self, test: &TestBlock, skill: &Skill) {
+        let output_names: Option<HashSet<&str>> = skill.output.as_ref().map(|fields| {
+            fields.iter().map(|f| f.name.as_str()).collect()
+        });
+
+        for expectation in &test.expectations {
+            let segments: Vec<&str> = expectation.path.split('.').collect();
+            if segments.len() >= 2 && segments[0] == "output" {
+                let field = segments[1];
+                match &output_names {
+                    Some(names) if names.contains(field) => {}
+                    _ => {
+                        self.errors.push(SkillSpecError::UnknownExpectField {
+                            field: field.to_string(),
+                            test_name: test.name.clone(),
+                            span: test.span,
+                        });
+                    }
                 }
             }
         }
@@ -1482,6 +1601,438 @@ mod tests {
                         context { "ok" }
                     }
                 }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    // ── Test block validation: mock tool paths (Gap 5) ──────────────────────
+
+    #[test]
+    fn mock_tool_path_valid() {
+        let result = check(r#"
+            skill "x" {
+                tools {
+                    require mcp("github") {
+                        pr_diff(repo: string, pr: int) -> string
+                    }
+                }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock tools.mcp.github: unavailable
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "valid mock tool path should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn mock_tool_path_unknown_errors() {
+        let result = check(r#"
+            skill "x" {
+                tools { require Bash }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock tools.mcp.nonexistent: unavailable
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
+            "should report UnknownMockTool: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn mock_without_tools_block_errors() {
+        let result = check(r#"
+            skill "x" {
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock tools.mcp.github: unavailable
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
+            "should report UnknownMockTool when no tools block: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn mock_optional_tool_valid() {
+        let result = check(r#"
+            skill "x" {
+                tools {
+                    optional mcp("slack") {
+                        send(channel: string, text: string) -> void
+                    }
+                }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock tools.mcp.slack: unavailable
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "mock of optional tool should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn mock_builtin_tool_valid() {
+        let result = check(r#"
+            skill "x" {
+                tools { require Bash }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock tools.Bash: unavailable
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "mock of builtin tool should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn mock_short_name_valid() {
+        let result = check(r#"
+            skill "x" {
+                tools {
+                    require mcp("github") {
+                        pr_diff(repo: string, pr: int) -> string
+                    }
+                }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        mock github {
+                            pr_diff(repo: "org/app", pr: 1) -> "diff"
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "mock with short tool name should pass: {:?}", result.unwrap_err());
+    }
+
+    // ── Test block validation: fixture file paths (Gap 1) ───────────────────
+
+    #[test]
+    fn fixture_path_valid() {
+        let dir = std::env::temp_dir().join("skillspec_test_fixture_valid");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("good.agent"), r#"skill "s" { body { context { "ok" } } }"#).unwrap();
+
+        let result = check_with_base(r#"
+            skill "x" {
+                input { src: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { src: "good.agent" }
+                    }
+                }
+            }
+        "#, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "valid fixture path should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn fixture_path_missing_errors() {
+        let dir = std::env::temp_dir().join("skillspec_test_fixture_missing");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let result = check_with_base(r#"
+            skill "x" {
+                input { src: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { src: "ghost.agent" }
+                    }
+                }
+            }
+        "#, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedFixturePath { .. })),
+            "should report UnresolvedFixturePath: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn fixture_path_skipped_without_base_dir() {
+        let result = check(r#"
+            skill "x" {
+                input { src: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { src: "ghost.agent" }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "fixture path check should skip without base_dir");
+    }
+
+    #[test]
+    fn fixture_path_unparseable_agent_errors() {
+        let dir = std::env::temp_dir().join("skillspec_test_fixture_bad");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("bad.agent"), "this is not valid agent syntax {{{").unwrap();
+
+        let result = check_with_base(r#"
+            skill "x" {
+                input { src: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { src: "bad.agent" }
+                    }
+                }
+            }
+        "#, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::FixtureParseError { .. })),
+            "should report FixtureParseError: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn fixture_path_md_exists_passes() {
+        let dir = std::env::temp_dir().join("skillspec_test_fixture_md");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("readme.md"), "# Hello").unwrap();
+
+        let result = check_with_base(r#"
+            skill "x" {
+                input { doc: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { doc: "readme.md" }
+                    }
+                }
+            }
+        "#, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "existing .md fixture should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn non_path_string_in_given_skipped() {
+        let dir = std::env::temp_dir().join("skillspec_test_fixture_nonpath");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let result = check_with_base(r#"
+            skill "x" {
+                input { query: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { query: "SELECT * FROM users" }
+                    }
+                }
+            }
+        "#, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "non-path string should not trigger fixture check");
+    }
+
+    // ── Test block validation: given key vs input contract (Gap 3) ──────────
+
+    #[test]
+    fn given_keys_match_input_contract() {
+        let result = check(r#"
+            skill "x" {
+                input {
+                    files: string[]
+                    focus?: string
+                }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given {
+                            files: ["a.py"]
+                            focus: "security"
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "valid given keys should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn given_unknown_key_errors() {
+        let result = check(r#"
+            skill "x" {
+                input { files: string[] }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given {
+                            files: ["a.py"]
+                            nonexistent_field: "x"
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownGivenKey { key, .. } if key == "nonexistent_field")),
+            "should report UnknownGivenKey for nonexistent_field: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn given_on_skill_without_input_errors() {
+        let result = check(r#"
+            skill "x" {
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        given { files: ["a.py"] }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownGivenKey { .. })),
+            "should report UnknownGivenKey when no input block: {:?}", errs
+        );
+    }
+
+    // ── Test block validation: expect path vs output contract (Gap 4) ───────
+
+    #[test]
+    fn expect_output_field_valid() {
+        let result = check(r#"
+            type Finding { file: string }
+            skill "x" {
+                output {
+                    findings: Finding[]
+                    summary: string
+                }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        expect {
+                            output.findings: >= 1
+                            output.summary: matches(".*")
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "valid expect output fields should pass: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn expect_unknown_output_field_errors() {
+        let result = check(r#"
+            skill "x" {
+                output { summary: string }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        expect {
+                            output.nonexistent: equals("x")
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownExpectField { field, .. } if field == "nonexistent")),
+            "should report UnknownExpectField: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn expect_on_skill_without_output_errors() {
+        let result = check(r#"
+            skill "x" {
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        expect {
+                            output.result: equals("x")
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownExpectField { .. })),
+            "should report UnknownExpectField when no output block: {:?}", errs
+        );
+    }
+
+    #[test]
+    fn expect_nested_path_only_checks_first_segment() {
+        let result = check(r#"
+            type TestResult { total: int }
+            skill "x" {
+                output { result: TestResult }
+                body { context { "ok" } }
+                tests {
+                    test "basic" {
+                        expect {
+                            output.result.total: >= 1
+                        }
+                    }
+                }
+            }
+        "#);
+        assert!(result.is_ok(), "deep path should only validate first segment: {:?}", result.unwrap_err());
+    }
+
+    // ── Regression guards ───────────────────────────────────────────────────
+
+    #[test]
+    fn no_tests_block_passes() {
+        let result = check(r#"
+            skill "x" {
+                body { context { "ok" } }
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn empty_tests_block_passes() {
+        let result = check(r#"
+            skill "x" {
+                body { context { "ok" } }
+                tests { }
             }
         "#);
         assert!(result.is_ok());

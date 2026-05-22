@@ -55,6 +55,21 @@ pub enum SkillSpecError {
     #[error("Argument mismatch in use call to '{skill_name}': {message} (at {span})")]
     MismatchedArg { skill_name: String, message: String, span: Span },
 
+    #[error("Test '{test_name}' references missing fixture '{path}' at {span}")]
+    UnresolvedFixturePath { path: String, test_name: String, span: Span },
+
+    #[error("Test '{test_name}' fixture '{path}' failed to parse: {message} (at {span})")]
+    FixtureParseError { path: String, message: String, test_name: String, span: Span },
+
+    #[error("Test '{test_name}' given key '{key}' is not a declared input field at {span}")]
+    UnknownGivenKey { key: String, test_name: String, span: Span },
+
+    #[error("Test '{test_name}' expects 'output.{field}' but '{field}' is not a declared output field at {span}")]
+    UnknownExpectField { field: String, test_name: String, span: Span },
+
+    #[error("Test '{test_name}' mocks tool '{tool_path}' which is not declared in tools block at {span}")]
+    UnknownMockTool { tool_path: String, test_name: String, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 
