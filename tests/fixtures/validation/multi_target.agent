@@ -1,0 +1,48 @@
+// Fixture for multi-target compilation.
+// Has persona, tools, contexts, steps — exercises all compiler targets.
+
+skill "multi-target-test" {
+    input {
+        repo: string
+        branch?: string
+    }
+
+    output {
+        report: string
+    }
+
+    tools {
+        require Bash
+        require Read
+        optional mcp("github") {
+            get_pr(repo: string, pr: int) -> string
+        }
+    }
+
+    body {
+        persona { "You are a senior DevOps engineer specialising in CI/CD pipelines." }
+
+        context(priority: 95) {
+            "Review the repository for deployment readiness. Check configuration, dependencies, and security."
+        }
+
+        context(priority: 70) {
+            "Pay special attention to environment variable handling and secrets management."
+        }
+
+        step audit {
+            context { "Audit the repository structure and configuration files." }
+        }
+
+        step security {
+            requires audit
+            context { "Run security checks against known vulnerability patterns." }
+        }
+
+        step report {
+            requires security
+            emit output
+            context { "Compile findings into a structured deployment readiness report." }
+        }
+    }
+}

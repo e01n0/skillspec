@@ -1,0 +1,31 @@
+{
+  "skill": "greeter",
+  "test_cases": [
+    {
+      "name": "basic greeting",
+      "runs": [
+        {
+          "output": {
+            "greeting": "Hello, Alice! Welcome.",
+            "length": 22
+          }
+        }
+      ]
+    },
+    {
+      "name": "formal greeting",
+      "runs": [
+        {
+          "output": {
+            "greeting": "Dear Bob, it is a pleasure to meet you.",
+            "length": 39
+          },
+          "resembles_verdicts": {
+            "output.greeting": true
+          },
+          "satisfies_verdicts": {}
+        }
+      ]
+    }
+  ]
+}
