@@ -583,6 +583,54 @@ fn brainstorming_example_imports_resolve() {
 
 // ── Lint: fixture integration tests ──────────────────────────────────
 
+// ── Watch mode: flag acceptance ──────────────────────────────────────
+
+#[test]
+fn watch_flag_accepted() {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let output = Command::new(bin)
+        .args(["build", "--help"])
+        .output()
+        .expect("failed to run skillspec");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--watch"), "build --help should mention --watch flag");
+}
+
+#[test]
+#[ignore] // requires real filesystem watcher + timing; run with `cargo test -- --ignored`
+fn rebuild_on_change() {
+    use std::process::{Command, Stdio};
+    use std::io::BufRead;
+
+    let dir = std::env::temp_dir().join("skillspec_watch_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent_path = dir.join("test.agent");
+    std::fs::write(&agent_path, r#"skill "test" { body { context { "v1" } } }"#).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let mut child = Command::new(bin)
+        .args(["build", agent_path.to_str().unwrap(), "--watch"])
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn skillspec");
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    std::fs::write(&agent_path, r#"skill "test" { body { context { "v2" } } }"#).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    child.kill().ok();
+    let stderr = child.stderr.take().unwrap();
+    let output: Vec<String> = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(|l| l.ok())
+        .collect();
+    let rebuild_count = output.iter().filter(|l| l.contains("Change detected")).count();
+    assert!(rebuild_count >= 1, "expected at least 1 rebuild trigger, got output: {:?}", output);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 fn lint_file(path: &str) -> Vec<skillspec_core::lint::LintDiagnostic> {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|_| panic!("Failed to read {}", path));
