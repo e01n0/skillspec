@@ -783,10 +783,25 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
                 let mut run_results = Vec::new();
 
                 for run in runs {
-                    let output = &run["output"];
                     let mut all_pass = true;
                     for exp in &test.expectations {
-                        let actual = navigate_json(output, &exp.path);
+                        let actual = match &exp.assertion {
+                            skillspec_core::ast::AssertionExpr::Resembles(_) => {
+                                run.get("resembles_verdicts")
+                                    .and_then(|v| v.get(&exp.path))
+                                    .cloned()
+                                    .map(|v| serde_json::json!({"resembles_verdict": v}))
+                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
+                            }
+                            skillspec_core::ast::AssertionExpr::Satisfies(_) => {
+                                run.get("satisfies_verdicts")
+                                    .and_then(|v| v.get(&exp.path))
+                                    .cloned()
+                                    .map(|v| serde_json::json!({"satisfies_verdict": v}))
+                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
+                            }
+                            _ => navigate_json(run, &exp.path),
+                        };
                         let r = evaluate_assertion(&exp.assertion, &actual);
                         if !r.passed {
                             eprintln!("  ✗ {}.{}: {}", test.name, exp.path, r.message);
