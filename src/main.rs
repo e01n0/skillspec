@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, BufRead, Write as IoWrite};
 use std::path::Path;
 use clap::Parser;
 use miette::Result;
@@ -37,6 +38,9 @@ enum Commands {
         target: String,
         #[arg(short, long)]
         output: Option<String>,
+        /// Deploy to a runtime: claude, claude-project, cursor, cline, codex, or a custom path. Use --to without a value for an interactive menu.
+        #[arg(long, num_args = 0..=1, default_missing_value = "menu")]
+        to: Option<String>,
         /// Watch for file changes and rebuild automatically
         #[arg(long)]
         watch: bool,
@@ -102,13 +106,25 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output, watch, budget, emit_telemetry_schema } => {
+        Commands::Build { file, target, output, to, watch, budget, emit_telemetry_schema } => {
+            if output.is_some() && to.is_some() {
+                return Err(miette::miette!("--to and --output cannot both be specified"));
+            }
+
+            let (effective_target, effective_output) = if let Some(to_value) = to {
+                let deploy = resolve_deploy_target(&to_value)?;
+                let t = deploy.target_override.unwrap_or(target);
+                (t, Some(deploy.path))
+            } else {
+                (target, output)
+            };
+
             if watch {
-                cmd_build_watch(&file, &target, output.as_deref())
+                cmd_build_watch(&file, &effective_target, effective_output.as_deref())
             } else if emit_telemetry_schema {
                 cmd_emit_telemetry(&file)
             } else {
-                cmd_build(&file, &target, output.as_deref(), budget)
+                cmd_build(&file, &effective_target, effective_output.as_deref(), budget)
             }
         }
         Commands::Init { name } => cmd_init(&name),
@@ -198,6 +214,87 @@ fn cmd_lint(path: &str) -> Result<()> {
     Ok(())
 }
 
+struct DeployTarget {
+    path: String,
+    target_override: Option<String>,
+}
+
+fn resolve_deploy_target(value: &str) -> Result<DeployTarget> {
+    match value {
+        "menu" => show_deploy_menu(),
+        "claude" => {
+            let home = std::env::var("HOME")
+                .map_err(|_| miette::miette!("HOME not set — pass a path to --to instead"))?;
+            Ok(DeployTarget {
+                path: format!("{home}/.claude/skills"),
+                target_override: None,
+            })
+        }
+        "claude-project" => Ok(DeployTarget {
+            path: ".claude/skills".to_string(),
+            target_override: None,
+        }),
+        "cursor" => Ok(DeployTarget {
+            path: ".cursor/rules".to_string(),
+            target_override: Some("cursor".to_string()),
+        }),
+        "cline" => Ok(DeployTarget {
+            path: ".".to_string(),
+            target_override: Some("clinerules".to_string()),
+        }),
+        "codex" => Ok(DeployTarget {
+            path: ".codex".to_string(),
+            target_override: Some("system-prompt".to_string()),
+        }),
+        custom => Ok(DeployTarget {
+            path: custom.to_string(),
+            target_override: None,
+        }),
+    }
+}
+
+fn show_deploy_menu() -> Result<DeployTarget> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+
+    eprintln!("Deploy to:");
+    eprintln!("  1) Claude Code (global)   → {}/.claude/skills/", home);
+    eprintln!("  2) Claude Code (project)  → .claude/skills/");
+    eprintln!("  3) Cursor                 → .cursor/rules/");
+    eprintln!("  4) Cline                  → ./");
+    eprintln!("  5) Codex                  → .codex/");
+    eprintln!("  6) Custom path");
+    eprint!("Pick a target [1-6]: ");
+    io::stderr().flush().map_err(|e| miette::miette!("flush: {e}"))?;
+
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input)
+        .map_err(|e| miette::miette!("Failed to read input: {e}"))?;
+
+    match input.trim() {
+        "1" => resolve_deploy_target("claude"),
+        "2" => resolve_deploy_target("claude-project"),
+        "3" => resolve_deploy_target("cursor"),
+        "4" => resolve_deploy_target("cline"),
+        "5" => resolve_deploy_target("codex"),
+        "6" => {
+            eprint!("Path: ");
+            io::stderr().flush().map_err(|e| miette::miette!("flush: {e}"))?;
+            let mut path_input = String::new();
+            io::stdin().lock().read_line(&mut path_input)
+                .map_err(|e| miette::miette!("Failed to read input: {e}"))?;
+            let trimmed = path_input.trim();
+            if trimmed.is_empty() {
+                return Err(miette::miette!("No path provided"));
+            }
+            Ok(DeployTarget {
+                path: trimmed.to_string(),
+                target_override: None,
+            })
+        }
+        other => Err(miette::miette!("Invalid choice: '{}'; expected 1-6", other)),
+    }
+}
+
 fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Option<usize>) -> Result<()> {
     match target {
         "skillmd" => {
@@ -284,6 +381,9 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
                 _ => unreachable!(),
             };
             let out_base = output.unwrap_or(".");
+            fs::create_dir_all(out_base).map_err(|e| {
+                miette::miette!("Failed to create output directory '{}': {}", out_base, e)
+            })?;
             for skill in &ast.skills {
                 let content = compiler.compile_skill(skill, &ast);
                 let ext = compiler.file_extension();

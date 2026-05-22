@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`--to` flag on `build`** — deploy compiled skills directly to a runtime. Accepts named targets (`claude`, `claude-project`, `cursor`, `cline`, `codex`) or any custom path. Use `--to` without a value for an interactive picker. Auto-selects the correct build target per runtime (e.g. `--to cursor` implies `--target cursor`). Works with `--watch` for auto-redeploy on save. Mutually exclusive with `--output`.
+
+---
+
 ## [0.1.0] — 2026-05-21
 
 Initial release. 89 tests passing.

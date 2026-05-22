@@ -21,8 +21,6 @@ The full compile pipeline is complete: lex → parse → check → compile (SKIL
 ## Medium-term
 
 - **Formal grammar (EBNF)** — a machine-readable spec so third-party parsers and tools can target SkillSpec
-- **`skillspec watch`** — live recompilation on file save, streaming errors to the terminal
-- **Cross-file import resolution** — `import` is parsed but not yet resolved across files; wire up the resolver
 - **Token budget optimisation suggestions** — `skillspec budget` currently reports; make it suggest reductions
 - **Native runtime SDK** — a small library for runtimes that want to consume `.agentpkg` bundles directly without invoking the CLI
 
