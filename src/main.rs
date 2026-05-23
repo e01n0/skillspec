@@ -64,8 +64,8 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Mechanically extract a SKILL.md into a .agent.partial file
-    Migrate { file: String },
+    /// Mechanically extract a SKILL.md (or directory of skills) into a .agent.partial file
+    Migrate { path: String },
     /// Package an .agent file containing a package declaration into a .skillpkg directory
     Pack {
         file: String,
@@ -133,7 +133,7 @@ fn main() -> Result<()> {
         Commands::Fmt { file } => cmd_fmt(&file),
         Commands::Budget { file } => cmd_budget(&file),
         Commands::Deps { file, format } => cmd_deps(&file, &format),
-        Commands::Migrate { file } => cmd_migrate(&file),
+        Commands::Migrate { path } => cmd_migrate(&path),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
         Commands::Test { file, prepare, evaluate } => cmd_test(&file, prepare, evaluate.as_deref()),
@@ -605,12 +605,17 @@ fn format_dep(dep: &Option<Dependency>) -> String {
 }
 
 fn cmd_migrate(path: &str) -> Result<()> {
+    let p = Path::new(path);
+
+    if p.is_dir() {
+        return cmd_migrate_directory(p);
+    }
+
     let source = fs::read_to_string(path)
         .map_err(|e| miette::miette!("Failed to read '{}': {}", path, e))?;
 
     let result = migrate::migrate_skillmd(&source, path);
 
-    // Write to .agent.partial alongside the source
     let out_path = if path.ends_with(".md") {
         path.replace(".md", ".agent.partial")
     } else {
@@ -625,6 +630,307 @@ fn cmd_migrate(path: &str) -> Result<()> {
     println!("\nPreview:");
     println!("{}", result.output);
     Ok(())
+}
+
+fn cmd_migrate_directory(dir: &Path) -> Result<()> {
+    let result = match migrate::migrate_directory(dir) {
+        Ok(r) => r,
+        Err(e) if e.contains("No SKILL.md found") => {
+            return cmd_migrate_batch(dir);
+        }
+        Err(e) => return Err(miette::miette!("{}", e)),
+    };
+
+    let dir_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "migrated".to_string());
+
+    let out_path = dir.join(format!("{}.agent.partial", dir_name));
+
+    fs::write(&out_path, &result.output).map_err(|e| {
+        miette::miette!("Failed to write '{}': {}", out_path.display(), e)
+    })?;
+
+    for warning in &result.warnings {
+        eprintln!("⚠ {}", warning);
+    }
+
+    println!(
+        "✓ migrated {} → {} (found {} additional file(s), {} truncated)",
+        dir.display(),
+        out_path.display(),
+        result.files_found,
+        result.files_truncated,
+    );
+    println!("\nPreview:");
+    println!("{}", result.output);
+    Ok(())
+}
+
+fn cmd_migrate_batch(dir: &Path) -> Result<()> {
+    let mut subdirs: Vec<_> = fs::read_dir(dir)
+        .map_err(|e| miette::miette!("Failed to read '{}': {}", dir.display(), e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+
+    subdirs.sort();
+
+    let skill_dirs: Vec<&Path> = subdirs.iter()
+        .filter(|p| p.join("SKILL.md").exists())
+        .map(|p| p.as_path())
+        .collect();
+    let non_skill_dirs: Vec<&Path> = subdirs.iter()
+        .filter(|p| !p.join("SKILL.md").exists())
+        .map(|p| p.as_path())
+        .collect();
+
+    if skill_dirs.is_empty() {
+        return Err(miette::miette!(
+            "No SKILL.md found in '{}' or any immediate subdirectory",
+            dir.display()
+        ));
+    }
+
+    // Build sibling skill summaries (name + description from each SKILL.md frontmatter)
+    let sibling_summaries: Vec<(String, String, String)> = skill_dirs.iter()
+        .filter_map(|d| {
+            let skill_md = d.join("SKILL.md");
+            let content = fs::read_to_string(&skill_md).ok()?;
+            let dir_name = d.file_name()?.to_string_lossy().to_string();
+            let (fm, _, _) = migrate::parse_frontmatter_pub(&content);
+            let name = fm.get("name").cloned().unwrap_or_else(|| dir_name.clone());
+            let desc = fm.get("description").cloned().unwrap_or_default();
+            Some((dir_name, name, desc))
+        })
+        .collect();
+
+    // Collect shared (non-skill) directories as cross-reference context
+    let shared_files: Vec<migrate::CollectedFile> = non_skill_dirs.iter()
+        .flat_map(|d| {
+            let mut files = migrate::collect_directory_files(d);
+            // Rewrite paths relative to the parent dir
+            for f in &mut files {
+                let dir_name = d.file_name().unwrap_or_default().to_string_lossy();
+                f.relative_path = f.relative_path.replacen("./", &format!("./{}/", dir_name), 1);
+            }
+            files
+        })
+        .collect();
+
+    let has_shared = !shared_files.is_empty();
+
+    println!(
+        "Found {} skill directories in {}{}",
+        skill_dirs.len(),
+        dir.display(),
+        if has_shared {
+            format!(" (+{} shared file(s) from {} non-skill dir(s))",
+                shared_files.len(),
+                non_skill_dirs.len())
+        } else {
+            String::new()
+        }
+    );
+    println!();
+
+    let mut succeeded = 0;
+    let mut failed = 0;
+
+    for subdir in &skill_dirs {
+        let current_dir_name = subdir.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        match migrate::migrate_directory(subdir) {
+            Ok(mut result) => {
+                let insertion_point = result.output.rfind("  }\n}\n").unwrap_or(result.output.len());
+                let mut extra_context = String::new();
+
+                // Append sibling skills context
+                if sibling_summaries.len() > 1 {
+                    extra_context.push_str("\n    // === SIBLING SKILLS ===\n");
+                    extra_context.push_str("    // Other skills in this directory that this skill may reference or orchestrate.\n");
+                    extra_context.push_str("    // TODO: The skillspec-migrate skill should determine if this skill\n");
+                    extra_context.push_str("    //   orchestrates, pipelines, or chains any of these siblings.\n\n");
+                    for (dir_name, name, desc) in &sibling_summaries {
+                        if dir_name == &current_dir_name {
+                            continue;
+                        }
+                        extra_context.push_str(&format!(
+                            "    // @{} (dir: {}/): {}\n",
+                            name, dir_name, desc
+                        ));
+                    }
+                    extra_context.push('\n');
+                }
+
+                // Append shared cross-reference context
+                if has_shared {
+                    extra_context.push_str("    // === CROSS-REFERENCE CONTEXT (shared directories) ===\n");
+                    extra_context.push_str("    // These files are from sibling directories referenced by this skill.\n\n");
+                    for f in &shared_files {
+                        extra_context.push_str(&format!(
+                            "    // --- {} ({} lines{}) ---\n",
+                            f.relative_path,
+                            f.line_count,
+                            if f.truncated { ", truncated" } else { "" }
+                        ));
+                        for line in f.content.lines() {
+                            extra_context.push_str(&format!("    // {}\n", line));
+                        }
+                        extra_context.push('\n');
+                    }
+                }
+
+                if !extra_context.is_empty() {
+                    result.output.insert_str(insertion_point, &extra_context);
+                }
+
+                let dir_name = subdir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "migrated".to_string());
+
+                let out_path = subdir.join(format!("{}.agent.partial", dir_name));
+
+                if let Err(e) = fs::write(&out_path, &result.output) {
+                    eprintln!("✗ {} — failed to write: {}", subdir.display(), e);
+                    failed += 1;
+                    continue;
+                }
+
+                for warning in &result.warnings {
+                    eprintln!("  ⚠ {}", warning);
+                }
+
+                println!(
+                    "  ✓ {} → {} ({} additional file(s){})",
+                    subdir.file_name().unwrap_or_default().to_string_lossy(),
+                    out_path.file_name().unwrap_or_default().to_string_lossy(),
+                    result.files_found,
+                    if has_shared { format!(", +{} shared", shared_files.len()) } else { String::new() },
+                );
+                succeeded += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ✗ {} — {}",
+                    subdir.file_name().unwrap_or_default().to_string_lossy(),
+                    e
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    // Generate top-level orchestration partial
+    if skill_dirs.len() > 1 {
+        let parent_name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "orchestration".to_string());
+
+        let mut orch = String::new();
+        orch.push_str(&format!("// Auto-generated orchestration scaffold for: {}\n", dir.display()));
+        orch.push_str("// TODO: The skillspec-migrate skill should determine the orchestration structure.\n");
+        orch.push_str("//   - Which skills form a pipeline (sequential validation flow)?\n");
+        orch.push_str("//   - Which skill is the router/orchestrator (e.g., playbook)?\n");
+        orch.push_str("//   - What are the conditional routing rules?\n");
+        orch.push_str("//   - Which skills are independent (invoked ad-hoc)?\n\n");
+
+        orch.push_str("// === SKILLS IN THIS DIRECTORY ===\n\n");
+        for (dir_name, name, desc) in &sibling_summaries {
+            orch.push_str(&format!("// @{} (dir: {}/)\n", name, dir_name));
+            orch.push_str(&format!("//   {}\n\n", desc));
+        }
+
+        // Look for orchestration signals in the SKILL.md files
+        orch.push_str("// === ORCHESTRATION SIGNALS ===\n");
+        orch.push_str("// Cross-references between skills found in SKILL.md files:\n\n");
+        for skill_dir in &skill_dirs {
+            let skill_md = skill_dir.join("SKILL.md");
+            if let Ok(content) = fs::read_to_string(&skill_md) {
+                let skill_name = skill_dir.file_name()
+                    .unwrap_or_default().to_string_lossy().to_string();
+                let mut refs_found = Vec::new();
+                for (other_dir, other_name, _) in &sibling_summaries {
+                    if other_dir == &skill_name {
+                        continue;
+                    }
+                    let at_ref = format!("@{}", other_name);
+                    let dir_ref = format!("../{}/", other_dir);
+                    if content.contains(&at_ref) || content.contains(&dir_ref) {
+                        refs_found.push(other_name.as_str());
+                    }
+                }
+                if !refs_found.is_empty() {
+                    orch.push_str(&format!(
+                        "// {} references: {}\n",
+                        skill_name,
+                        refs_found.join(", ")
+                    ));
+                }
+            }
+        }
+
+        // Check for pipeline/sequence patterns
+        orch.push_str("\n// === DETECTED PATTERNS ===\n");
+        for skill_dir in &skill_dirs {
+            let skill_md = skill_dir.join("SKILL.md");
+            if let Ok(content) = fs::read_to_string(&skill_md) {
+                let skill_name = skill_dir.file_name()
+                    .unwrap_or_default().to_string_lossy().to_string();
+                if content.contains("->") || content.contains("→") {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if (trimmed.contains("->") || trimmed.contains("→"))
+                            && trimmed.contains('@')
+                        {
+                            orch.push_str(&format!(
+                                "// [{}] pipeline signal: {}\n",
+                                skill_name, trimmed
+                            ));
+                        }
+                    }
+                }
+                if content.contains("routing") || content.contains("Routing") || content.contains("triage") {
+                    orch.push_str(&format!(
+                        "// [{}] appears to be a router/orchestrator (contains routing/triage language)\n",
+                        skill_name
+                    ));
+                }
+            }
+        }
+
+        orch.push_str("\n// TODO: Based on the above signals, the skillspec-migrate skill should produce:\n");
+        orch.push_str("//   - A pipeline construct for any sequential skill chains\n");
+        orch.push_str("//   - An orchestration construct if there's a router skill dispatching to specialists\n");
+        orch.push_str("//   - import statements for each skill\n");
+        orch.push('\n');
+
+        let orch_path = dir.join(format!("{}.orchestration.agent.partial", parent_name));
+        fs::write(&orch_path, &orch).map_err(|e| {
+            miette::miette!("Failed to write orchestration partial: {}", e)
+        })?;
+        println!(
+            "  ✓ {} (orchestration scaffold)",
+            orch_path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+
+    println!(
+        "\nBatch complete: {} succeeded, {} failed",
+        succeeded, failed
+    );
+
+    if failed > 0 && succeeded == 0 {
+        Err(miette::miette!("All migrations failed"))
+    } else {
+        Ok(())
+    }
 }
 
 fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {

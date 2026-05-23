@@ -96,6 +96,24 @@ where human reasoning is needed.
 **Expects:**
 - output.result.inferred_steps: contains(where: _item.requires != [])
 
+### directory single skill with refs
+**Given:** partial_file="fixtures/directory_single_skill.agent.partial"
+**Expects:**
+- output.result.directory_analysis.relationship: == "single-skill"
+- output.result.agent_file: matches(".*lazy context.*ref.*")
+
+### directory detects pipeline
+**Given:** partial_file="fixtures/directory_pipeline.agent.partial"
+**Expects:**
+- output.result.directory_analysis.relationship: == "pipeline"
+- output.result.agent_file: matches(".*pipeline.*")
+
+### directory detects orchestration
+**Given:** partial_file="fixtures/directory_orchestration.agent.partial"
+**Expects:**
+- output.result.directory_analysis.relationship: == "orchestration"
+- output.result.agent_file: matches(".*orchestration.*")
+
 ## Step: read_partial
 
 *Loads reference: skillspec-spec*
@@ -110,6 +128,33 @@ categorise them:
 
 If the original SKILL.md is provided, read it too for
 additional context about the author's intent.
+
+## Step: analyze_directory_context
+
+*Loads reference: skillspec-spec*
+
+If the .agent.partial contains a DIRECTORY CONTEXT section,
+analyze all bundled files and use the SkillSpec language reference
+to determine the best target constructs.
+
+1. **Classify each file** — what role does it play? Reference doc,
+   type/mixin definition, another skill, coordination logic, etc.
+
+2. **Determine the relationship** — is this folder a single skill
+   with docs, a pipeline of chained skills, a multi-agent
+   orchestration, or independent skills sharing a directory?
+
+3. **Map to constructs** — using the language reference, decide
+   which SkillSpec constructs to produce. The language supports
+   skill, pipeline, orchestration, type, mixin, import, package,
+   lazy context (ref/index), observe, extends, includes, and tests.
+   Use whatever combination best represents the folder's intent.
+
+Read truncated files in full from disk if they seem structurally
+important for classification.
+
+If no DIRECTORY CONTEXT section is present, skip this step —
+the partial is a single-file migration.
 
 ## Step: infer_types
 
@@ -160,6 +205,8 @@ should decrease as steps get more specific.
 
 *Produces final output.*
 
+*Loads reference: skillspec-spec*
+
 Generate the completed .agent file by resolving all TODOs.
 
 Rules:
@@ -168,6 +215,14 @@ Rules:
 - If confidence < 0.5, leave the TODO with your best suggestion
 - Preserve ALL original prose exactly — do not rephrase or improve it
 - Validate the result would pass 'skillspec check'
+
+If directory analysis was performed:
+- Use the language reference to produce the right constructs
+- Reference docs become lazy context blocks with ref paths
+- Shared type/mixin files become imports
+- Multiple skills may produce pipeline or orchestration blocks
+- The output is not limited to a single skill — use whatever
+  combination of constructs best represents the folder
 
 Write the completed file and report the MigrationResult.
 

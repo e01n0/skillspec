@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 /// Mechanical SKILL.md to .agent.partial migration.
 ///
 /// This does NOT invoke any LLM. It performs mechanical extraction:
@@ -8,6 +10,25 @@
 pub struct MigrateResult {
     pub output: String,
     pub source_path: String,
+}
+
+const TRUNCATION_THRESHOLD: usize = 500;
+const TRUNCATION_PREVIEW_LINES: usize = 50;
+
+pub struct CollectedFile {
+    pub relative_path: String,
+    pub content: String,
+    pub truncated: bool,
+    pub line_count: usize,
+}
+
+#[derive(Debug)]
+pub struct MigrateDirectoryResult {
+    pub output: String,
+    pub source_dir: String,
+    pub warnings: Vec<String>,
+    pub files_found: usize,
+    pub files_truncated: usize,
 }
 
 pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
@@ -105,6 +126,10 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
 }
 
 // ── Frontmatter parsing ──────────────────────────────────────────────
+
+pub fn parse_frontmatter_pub(source: &str) -> (std::collections::HashMap<String, String>, String, String) {
+    parse_frontmatter(source)
+}
 
 fn parse_frontmatter(source: &str) -> (std::collections::HashMap<String, String>, String, String) {
     let mut map = std::collections::HashMap::new();
@@ -270,6 +295,149 @@ fn sanitize_step_name(heading: &str) -> String {
         .to_string()
 }
 
+// ── Directory migration ─────────────────────────────────────────────
+
+pub fn collect_directory_files(dir: &Path) -> Vec<CollectedFile> {
+    let mut files = Vec::new();
+    collect_md_files_recursive(dir, dir, &mut files);
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    files
+}
+
+fn collect_md_files_recursive(base: &Path, current: &Path, files: &mut Vec<CollectedFile>) {
+    let entries = match std::fs::read_dir(current) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_md_files_recursive(base, &path, files);
+        } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+            let relative = path.strip_prefix(base).unwrap_or(&path);
+            let relative_str = format!("./{}", relative.display());
+            if let Ok(raw_content) = std::fs::read_to_string(&path) {
+                let line_count = raw_content.lines().count();
+                let (content, truncated) = if line_count > TRUNCATION_THRESHOLD {
+                    let preview: String = raw_content
+                        .lines()
+                        .take(TRUNCATION_PREVIEW_LINES)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    (
+                        format!("{}\n// ... (truncated, full file at {})", preview, relative_str),
+                        true,
+                    )
+                } else {
+                    (raw_content, false)
+                };
+                files.push(CollectedFile {
+                    relative_path: relative_str,
+                    content,
+                    truncated,
+                    line_count,
+                });
+            }
+        }
+    }
+}
+
+pub fn migrate_directory(dir: &Path) -> Result<MigrateDirectoryResult, String> {
+    let skill_md_path = dir.join("SKILL.md");
+
+    let (main_path, main_content) = if skill_md_path.exists() {
+        (
+            skill_md_path.clone(),
+            std::fs::read_to_string(&skill_md_path)
+                .map_err(|e| format!("Failed to read SKILL.md: {}", e))?,
+        )
+    } else {
+        find_frontmatter_file(dir)?
+    };
+
+    let main_relative = main_path
+        .strip_prefix(dir)
+        .unwrap_or(&main_path)
+        .display()
+        .to_string();
+
+    let base_result = migrate_skillmd(&main_content, &main_relative);
+    let mut output = base_result.output;
+
+    let all_files = collect_directory_files(dir);
+    let other_files: Vec<&CollectedFile> = all_files
+        .iter()
+        .filter(|f| {
+            let normalized = f.relative_path.trim_start_matches("./");
+            normalized != main_relative && normalized != main_relative.trim_start_matches("./")
+        })
+        .collect();
+
+    let files_found = other_files.len();
+    let files_truncated = other_files.iter().filter(|f| f.truncated).count();
+
+    if !other_files.is_empty() {
+        let insertion_point = output.rfind("  }\n}\n").unwrap_or(output.len());
+        let mut context_section = String::new();
+        context_section.push_str("\n    // === DIRECTORY CONTEXT ===\n");
+        context_section.push_str("    // The following files were found alongside the main SKILL.md.\n");
+        context_section.push_str("    // TODO: The skillspec-migrate skill should determine how to incorporate these:\n");
+        context_section.push_str("    //   - As lazy context refs (reference documentation)\n");
+        context_section.push_str("    //   - As imports (shared types, mixins)\n");
+        context_section.push_str("    //   - As additional skills (multi-skill folder)\n");
+        context_section.push_str("    //   - As pipeline stages or orchestration phases\n\n");
+
+        for file in &other_files {
+            context_section.push_str(&format!(
+                "    // --- {} ({} lines{}) ---\n",
+                file.relative_path,
+                file.line_count,
+                if file.truncated { ", truncated" } else { "" }
+            ));
+            for line in file.content.lines() {
+                context_section.push_str(&format!("    // {}\n", line));
+            }
+            context_section.push('\n');
+        }
+
+        output.insert_str(insertion_point, &context_section);
+    }
+
+    let mut warnings = Vec::new();
+    if files_truncated > 0 {
+        warnings.push(format!(
+            "{} file(s) were truncated (>{} lines)",
+            files_truncated, TRUNCATION_THRESHOLD
+        ));
+    }
+
+    Ok(MigrateDirectoryResult {
+        output,
+        source_dir: dir.display().to_string(),
+        warnings,
+        files_found,
+        files_truncated,
+    })
+}
+
+fn find_frontmatter_file(dir: &Path) -> Result<(PathBuf, String), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))? {
+        let entry = entry.map_err(|e| format!("Directory entry error: {}", e))?;
+        let path = entry.path();
+        if path.extension().map(|e| e == "md").unwrap_or(false) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if content.trim_start().starts_with("---") && content.contains("name:") {
+                    return Ok((path, content));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "No SKILL.md found in '{}', and no .md file with name: in frontmatter",
+        dir.display()
+    ))
+}
+
 fn detect_conditional(content: &str) -> bool {
     let lower = content.to_lowercase();
     // Look for conditional language patterns
@@ -284,6 +452,8 @@ fn detect_conditional(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn migrate_simple_skillmd() {
@@ -415,5 +585,93 @@ Verify test coverage.
         let result = migrate_skillmd(source, "review/SKILL.md");
         assert!(result.output.contains("security vulnerabilities"));
         assert!(result.output.contains("test coverage"));
+    }
+
+    // ── Directory migration tests ───────────────────────────────────
+
+    #[test]
+    fn collect_directory_files_finds_md_only() {
+        let dir = TempDir::new().unwrap();
+        let dir_path = dir.path();
+
+        fs::write(dir_path.join("SKILL.md"), "# Main skill").unwrap();
+        fs::create_dir_all(dir_path.join("refs")).unwrap();
+        fs::write(dir_path.join("refs/a.md"), "# Reference A").unwrap();
+        fs::write(dir_path.join("refs/b.md"), "# Reference B").unwrap();
+        fs::write(dir_path.join("other.txt"), "not markdown").unwrap();
+
+        let files = collect_directory_files(dir_path);
+        assert_eq!(files.len(), 3);
+        let paths: Vec<&str> = files.iter().map(|f| f.relative_path.as_str()).collect();
+        assert!(paths.contains(&"./SKILL.md"));
+        assert!(paths.contains(&"./refs/a.md"));
+        assert!(paths.contains(&"./refs/b.md"));
+        assert!(!paths.iter().any(|p| p.contains("other.txt")));
+    }
+
+    #[test]
+    fn migrate_directory_bundles_context() {
+        let dir = TempDir::new().unwrap();
+        let dir_path = dir.path();
+
+        fs::write(
+            dir_path.join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"A test\"\n---\n\n# test\n\n## Do Thing\n\nDo the thing.\n",
+        ).unwrap();
+        fs::create_dir_all(dir_path.join("refs")).unwrap();
+        fs::write(dir_path.join("refs/guide.md"), "# Style Guide\n\nUse consistent naming.\n").unwrap();
+
+        let result = migrate_directory(dir_path).unwrap();
+        assert!(result.output.contains("skill \"test-skill\""));
+        assert!(result.output.contains("DIRECTORY CONTEXT"));
+        assert!(result.output.contains("refs/guide.md"));
+        assert!(result.output.contains("Style Guide"));
+        assert_eq!(result.files_found, 1);
+    }
+
+    #[test]
+    fn migrate_directory_missing_skillmd() {
+        let dir = TempDir::new().unwrap();
+        let dir_path = dir.path();
+
+        fs::create_dir_all(dir_path.join("refs")).unwrap();
+        fs::write(dir_path.join("refs/guide.md"), "# Just a guide\n\nNo frontmatter.\n").unwrap();
+
+        let result = migrate_directory(dir_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("SKILL.md"), "Error should mention SKILL.md: {}", err);
+    }
+
+    #[test]
+    fn migrate_directory_truncates_large_files() {
+        let dir = TempDir::new().unwrap();
+        let dir_path = dir.path();
+
+        fs::write(
+            dir_path.join("SKILL.md"),
+            "---\nname: big-skill\n---\n\n# big\n\n## Step\n\nDo stuff.\n",
+        ).unwrap();
+        fs::create_dir_all(dir_path.join("refs")).unwrap();
+
+        let huge_content: String = (0..1000).map(|i| format!("Line {} of the huge file\n", i)).collect();
+        fs::write(dir_path.join("refs/huge.md"), &huge_content).unwrap();
+
+        let result = migrate_directory(dir_path).unwrap();
+        assert!(result.output.contains("truncated"));
+        assert!(result.output.contains("Line 0 of the huge file"));
+        assert!(result.output.contains("Line 49 of the huge file"));
+        assert!(!result.output.contains("Line 500 of the huge file"));
+        assert_eq!(result.files_truncated, 1);
+        assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn migrate_single_file_unchanged() {
+        let source = "---\nname: simple\n---\n\n# simple\n\n## Act\n\nDo the thing.\n";
+        let result = migrate_skillmd(source, "simple/SKILL.md");
+        assert!(result.output.contains("skill \"simple\""));
+        assert!(result.output.contains("step act"));
+        assert!(!result.output.contains("DIRECTORY CONTEXT"));
     }
 }
