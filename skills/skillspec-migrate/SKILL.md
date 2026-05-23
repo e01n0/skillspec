@@ -68,6 +68,30 @@ parameters:
 
 *Note:* Prose references to other steps' outputs imply dependencies
 
+**single file migration**
+
+*Input:* partial_file='code-review/code-review.agent.partial'
+
+*Output:* One .agent file with resolved TODOs, typed fields, step dependencies, and context priorities
+
+*Note:* No source_dir — work only from the partial content
+
+**directory migration with references**
+
+*Input:* partial_file='advanced-patterns/advanced-patterns.agent.partial' source_dir='advanced-patterns/'
+
+*Output:* One .agent file with lazy context refs pointing at ./reference/*.md and ./EXAMPLES.md
+
+*Note:* Use source_dir to discover and read reference files. Classify each as lazy context ref, import, or additional construct.
+
+**batch migration — detect orchestration**
+
+*Input:* partial_file='playbook/playbook.agent.partial' source_dir='playbook/'
+
+*Output:* A skill .agent file plus a pipeline or orchestration .agent file if the skill routes to or chains siblings
+
+*Note:* Read sibling SKILL.md files via parent_dir pointer. If this skill orchestrates others, produce an orchestration construct. If it defines a sequential chain, produce a pipeline.
+
 ## References (lazy-loaded)
 
 - **skillspec-spec** (priority: 90): SkillSpec language reference — syntax for types, steps, contexts, and all constructs. → `./references/language-reference.md`

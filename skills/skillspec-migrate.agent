@@ -101,6 +101,21 @@ skill "skillspec-migrate" {
                 output: "step review { requires analyze ... }"
                 note: "Prose references to other steps' outputs imply dependencies"
             }
+            example "single file migration" {
+                input: "partial_file='code-review/code-review.agent.partial'"
+                output: "One .agent file with resolved TODOs, typed fields, step dependencies, and context priorities"
+                note: "No source_dir — work only from the partial content"
+            }
+            example "directory migration with references" {
+                input: "partial_file='advanced-patterns/advanced-patterns.agent.partial' source_dir='advanced-patterns/'"
+                output: "One .agent file with lazy context refs pointing at ./reference/*.md and ./EXAMPLES.md"
+                note: "Use source_dir to discover and read reference files. Classify each as lazy context ref, import, or additional construct."
+            }
+            example "batch migration — detect orchestration" {
+                input: "partial_file='playbook/playbook.agent.partial' source_dir='playbook/'"
+                output: "A skill .agent file plus a pipeline or orchestration .agent file if the skill routes to or chains siblings"
+                note: "Read sibling SKILL.md files via parent_dir pointer. If this skill orchestrates others, produce an orchestration construct. If it defines a sequential chain, produce a pipeline."
+            }
         }
 
         context(priority: 100) {

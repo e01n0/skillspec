@@ -629,6 +629,8 @@ fn cmd_migrate(path: &str) -> Result<()> {
     println!("✓ migrated {} → {}", path, out_path);
     println!("\nPreview:");
     println!("{}", result.output);
+    println!("\nNext: run the skillspec-migrate skill to complete the .agent.partial:");
+    println!("  Use an LLM agent with partial_file=\"{}\"", out_path);
     Ok(())
 }
 
@@ -665,6 +667,9 @@ fn cmd_migrate_directory(dir: &Path) -> Result<()> {
     );
     println!("\nPreview:");
     println!("{}", result.output);
+    println!("\nNext: run the skillspec-migrate skill to complete the .agent.partial:");
+    println!("  Use an LLM agent with partial_file=\"{}\" source_dir=\"{}\"",
+        out_path.display(), dir.display());
     Ok(())
 }
 
@@ -899,6 +904,12 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         "\nBatch complete: {} succeeded, {} failed",
         succeeded, failed
     );
+
+    if succeeded > 0 {
+        println!("\nNext: run the skillspec-migrate skill on each .agent.partial to complete the migration.");
+        println!("For each skill, use an LLM agent with:");
+        println!("  partial_file=\"<skill>/<skill>.agent.partial\" source_dir=\"<skill>/\"");
+    }
 
     if failed > 0 && succeeded == 0 {
         Err(miette::miette!("All migrations failed"))
