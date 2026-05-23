@@ -4,6 +4,7 @@ description: "Complete a .agent.partial file by resolving TODO markers."
 parameters:
   - name: partial_file
     type: string
+    optional: true
   - name: original_skillmd
     type: string
     optional: true
@@ -20,7 +21,7 @@ parameters:
 
 ## Preconditions
 
-- input.partial_file != "" — *Path to .agent.partial file is required*
+- input.partial_file != "" || input.source_dir != "" — *Either partial_file or source_dir is required*
 
 ## Postconditions
 
@@ -92,6 +93,14 @@ parameters:
 
 *Note:* Read sibling SKILL.md files via parent_dir pointer. If this skill orchestrates others, produce an orchestration construct. If it defines a sequential chain, produce a pipeline.
 
+**full tree migration — source_dir only**
+
+*Input:* source_dir='.assistant/skills/'
+
+*Output:* One .agent file per skill subdirectory, plus pipeline and orchestration files for cross-skill relationships
+
+*Note:* No partial_file needed. Explore the entire tree: find all SKILL.md files, grep for .md cross-references, read shared directories. Produce the complete set of .agent files in one pass.
+
 ## References (lazy-loaded)
 
 - **skillspec-spec** (priority: 90): SkillSpec language reference — syntax for types, steps, contexts, and all constructs. → `./references/language-reference.md`
@@ -145,60 +154,72 @@ where human reasoning is needed.
 
 *Loads reference: skillspec-spec*
 
-Read the .agent.partial file. Identify all TODO markers and
-categorise them:
+Two modes of operation:
+
+**Mode A — single partial:** If partial_file is provided,
+read it and identify all TODO markers. Categorise them:
 - type-inference: field types that couldn't be determined
 - step-dependency: requires clauses that need reasoning
 - context-priority: priority values that need assignment
 - conditional-extraction: when guards that need extraction
 - emit-placement: which step should produce final output
 
+If source_dir is also provided, use Bash to list the
+directory contents. Read any file that looks relevant.
+
+**Mode B — full directory tree:** If only source_dir is
+provided (no partial_file), explore the entire directory:
+
+1. Run `find <source_dir> -name 'SKILL.md'` to discover
+   all skill directories
+2. Read each SKILL.md to understand the full skill set
+3. Grep all SKILL.md files for `.md` references to find
+   cross-references between skills and to shared files:
+   `grep -rn '\.md' <source_dir>/*/SKILL.md`
+4. Read referenced .md files to understand shared context
+5. You will produce .agent files for each skill, plus any
+   orchestration or pipeline constructs the structure needs
+
 If the original SKILL.md is provided, read it too for
 additional context about the author's intent.
-
-If source_dir is provided, use Bash to list the directory
-contents recursively. This gives you direct access to all
-files — you do not need to rely on comment blocks in the
-partial. Read any file that looks relevant.
 
 ## Step: analyze_directory_context
 
 *Loads reference: skillspec-spec*
 
-If source_dir is provided, explore the directory yourself:
+If source_dir is provided, explore the directory:
 
-1. Run `find <source_dir> -type f -name '*.md'` to discover
-   all markdown files. Read them directly — do not rely on
-   comment blocks in the partial.
+1. Grep all SKILL.md files for `.md` references to build
+   the cross-reference graph:
+   `grep -rhn '\.md' <source_dir>/*/SKILL.md`
+   This catches references to sibling skills, shared
+   reference files, and documentation.
 
-2. Check the parent directory for sibling skill folders
-   (other directories with SKILL.md files). Read their
-   frontmatter to understand what skills exist alongside
-   this one.
+2. Identify non-skill directories (dirs without SKILL.md)
+   that are referenced by skills — these are shared
+   libraries (e.g. shared-reference/).
 
-3. Check for shared/non-skill sibling directories (e.g.
-   shared-reference/) that other skills reference. Read
-   any files that appear in cross-references.
+3. Look for orchestration signals:
+   - Skills referencing other skills by @name
+   - Routing tables or pipeline sequences (-> arrows)
+   - Hub-and-spoke patterns (one skill references many)
 
-4. Look for orchestration signals:
-   - Does this skill reference other skills by name (@name)?
-   - Is there a routing table or pipeline sequence?
-   - Do sibling skills reference each other?
-
-5. **Classify the relationship** — single skill with docs,
+4. **Classify the relationship** — single skill with docs,
    pipeline of chained skills, multi-agent orchestration,
    or independent skills sharing a directory.
 
-6. **Map to constructs** — using the language reference,
+5. **Map to constructs** — using the language reference,
    decide which SkillSpec constructs to produce. You are
    not limited to a single skill. Use whatever combination
    best represents the folder's intent.
 
-If source_dir is not provided but the partial contains
-DIRECTORY CONTEXT comment blocks, fall back to analyzing
-those.
+In Mode B (full tree), you are producing .agent files for
+ALL skills in the tree, not just one. Plan the full set
+of constructs before generating any files.
 
-If neither is available, skip this step.
+If source_dir is not provided, fall back to analyzing
+comment blocks in the partial. If neither is available,
+skip this step.
 
 ## Step: infer_types
 
@@ -266,7 +287,11 @@ If directory analysis was performed:
 - Multiple skills may produce pipeline or orchestration blocks
 - The output is not limited to a single skill — use whatever
   combination of constructs best represents the folder
-- You may produce multiple .agent files — list all in agent_files
+
+In Mode B (full tree), generate one .agent file per skill
+directory, plus any pipeline or orchestration files that
+tie them together. Write each file into its skill directory.
+List all generated files in agent_files.
 
 After writing each .agent file, validate it:
 
