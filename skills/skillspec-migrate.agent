@@ -30,7 +30,7 @@ type DirectoryAnalysis {
 }
 
 type MigrationResult {
-    agent_file: string
+    agent_files: string[]
     confidence: float
     todos_resolved: int
     todos_remaining: MigrationTodo[]
@@ -42,6 +42,7 @@ skill "skillspec-migrate" {
     input {
         partial_file: string
         original_skillmd?: string
+        source_dir?: string
     }
 
     output {
@@ -145,6 +146,11 @@ skill "skillspec-migrate" {
 
                 If the original SKILL.md is provided, read it too for
                 additional context about the author's intent.
+
+                If source_dir is provided, use Bash to list the directory
+                contents recursively. This gives you direct access to all
+                files — you do not need to rely on comment blocks in the
+                partial. Read any file that looks relevant.
                 """
             }
         }
@@ -155,28 +161,40 @@ skill "skillspec-migrate" {
 
             context(priority: 92) {
                 """
-                If the .agent.partial contains a DIRECTORY CONTEXT section,
-                analyze all bundled files and use the SkillSpec language reference
-                to determine the best target constructs.
+                If source_dir is provided, explore the directory yourself:
 
-                1. **Classify each file** — what role does it play? Reference doc,
-                   type/mixin definition, another skill, coordination logic, etc.
+                1. Run `find <source_dir> -type f -name '*.md'` to discover
+                   all markdown files. Read them directly — do not rely on
+                   comment blocks in the partial.
 
-                2. **Determine the relationship** — is this folder a single skill
-                   with docs, a pipeline of chained skills, a multi-agent
-                   orchestration, or independent skills sharing a directory?
+                2. Check the parent directory for sibling skill folders
+                   (other directories with SKILL.md files). Read their
+                   frontmatter to understand what skills exist alongside
+                   this one.
 
-                3. **Map to constructs** — using the language reference, decide
-                   which SkillSpec constructs to produce. The language supports
-                   skill, pipeline, orchestration, type, mixin, import, package,
-                   lazy context (ref/index), observe, extends, includes, and tests.
-                   Use whatever combination best represents the folder's intent.
+                3. Check for shared/non-skill sibling directories (e.g.
+                   shared-reference/) that other skills reference. Read
+                   any files that appear in cross-references.
 
-                Read truncated files in full from disk if they seem structurally
-                important for classification.
+                4. Look for orchestration signals:
+                   - Does this skill reference other skills by name (@name)?
+                   - Is there a routing table or pipeline sequence?
+                   - Do sibling skills reference each other?
 
-                If no DIRECTORY CONTEXT section is present, skip this step —
-                the partial is a single-file migration.
+                5. **Classify the relationship** — single skill with docs,
+                   pipeline of chained skills, multi-agent orchestration,
+                   or independent skills sharing a directory.
+
+                6. **Map to constructs** — using the language reference,
+                   decide which SkillSpec constructs to produce. You are
+                   not limited to a single skill. Use whatever combination
+                   best represents the folder's intent.
+
+                If source_dir is not provided but the partial contains
+                DIRECTORY CONTEXT comment blocks, fall back to analyzing
+                those.
+
+                If neither is available, skip this step.
                 """
             }
         }
@@ -250,14 +268,13 @@ skill "skillspec-migrate" {
 
             context(priority: 90) {
                 """
-                Generate the completed .agent file by resolving all TODOs.
+                Generate the completed .agent file(s) by resolving all TODOs.
 
                 Rules:
                 - If confidence >= 0.8 for an inference, apply it directly
                 - If confidence 0.5-0.8, apply it with a comment noting uncertainty
                 - If confidence < 0.5, leave the TODO with your best suggestion
                 - Preserve ALL original prose exactly — do not rephrase or improve it
-                - Validate the result would pass 'skillspec check'
 
                 If directory analysis was performed:
                 - Use the language reference to produce the right constructs
@@ -266,8 +283,20 @@ skill "skillspec-migrate" {
                 - Multiple skills may produce pipeline or orchestration blocks
                 - The output is not limited to a single skill — use whatever
                   combination of constructs best represents the folder
+                - You may produce multiple .agent files — list all in agent_files
 
-                Write the completed file and report the MigrationResult.
+                After writing each .agent file, validate it:
+
+                1. Run `skillspec check <path>` via Bash
+                2. If it fails (non-zero exit), read the error, fix the
+                   issue in the .agent file, and re-run the check
+                3. Repeat up to 3 times per file
+                4. If still failing, leave as-is and set confidence below 0.5
+
+                Then run `skillspec build <path>` on files that pass check
+                to verify they compile to valid SKILL.md output.
+
+                Report all generated files in agent_files.
                 """
             }
         }
@@ -291,7 +320,7 @@ skill "skillspec-migrate" {
                 partial_file: "fixtures/prose_preservation.agent"
             }
             expect {
-                output.result.agent_file: matches(".*original instruction text.*")
+                output.result.agent_files: matches(".*original instruction text.*")
             }
         }
 
@@ -310,7 +339,7 @@ skill "skillspec-migrate" {
             }
             expect {
                 output.result.directory_analysis.relationship: == "single-skill"
-                output.result.agent_file: matches(".*lazy context.*ref.*")
+                output.result.agent_files: matches(".*lazy context.*ref.*")
             }
         }
 
@@ -320,7 +349,7 @@ skill "skillspec-migrate" {
             }
             expect {
                 output.result.directory_analysis.relationship: == "pipeline"
-                output.result.agent_file: matches(".*pipeline.*")
+                output.result.agent_files: matches(".*pipeline.*")
             }
         }
 
@@ -330,7 +359,7 @@ skill "skillspec-migrate" {
             }
             expect {
                 output.result.directory_analysis.relationship: == "orchestration"
-                output.result.agent_file: matches(".*orchestration.*")
+                output.result.agent_files: matches(".*orchestration.*")
             }
         }
     }
