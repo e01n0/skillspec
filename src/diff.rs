@@ -4,7 +4,7 @@
 ///   - `structural_diff(a, b)` compares two parsed `SourceFile` ASTs.
 ///   - `skillmd_diff(compiled, actual)` compares a compiled SKILL.md string
 ///     against an on-disk SKILL.md, grouped by `## ` section headers.
-use crate::ast::{ContextBlock, Field, SourceFile, TypeExpr};
+use crate::ast::{BinOp, ContextBlock, Dependency, Expr, Field, SourceFile, TypeExpr};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -13,6 +13,7 @@ pub enum ChangeKind {
     Added,
     Removed,
     Modified,
+    Relocated,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +43,7 @@ impl DiffReport {
                 ChangeKind::Added => "+",
                 ChangeKind::Removed => "-",
                 ChangeKind::Modified => "~",
+                ChangeKind::Relocated => "=>",
             };
             out.push_str(&format!("{} {} — {}\n", symbol, c.path, c.description));
         }
@@ -118,7 +120,7 @@ fn diff_skills(a: &SourceFile, b: &SourceFile, report: &mut DiffReport) {
             );
 
             // Steps
-            diff_steps(skill_a, skill_b, &prefix, report);
+            diff_steps(skill_a, skill_b, b, &prefix, report);
 
             // Body-level contexts (the ones not inside a step)
             diff_contexts(
@@ -173,20 +175,47 @@ fn diff_fields(a_fields: &[Field], b_fields: &[Field], path_prefix: &str, report
 fn diff_steps(
     skill_a: &crate::ast::Skill,
     skill_b: &crate::ast::Skill,
+    b_source: &SourceFile,
     prefix: &str,
     report: &mut DiffReport,
 ) {
     let a_steps = &skill_a.body.steps;
     let b_steps = &skill_b.body.steps;
 
-    // Removed steps
+    // Removed steps — or Relocated into a use-call target
     for step in a_steps {
         if !b_steps.iter().any(|s| s.name == step.name) {
-            report.add(
-                ChangeKind::Removed,
-                format!("{}.step.{}", prefix, step.name),
-                format!("step '{}' was removed", step.name),
-            );
+            if let Some((target_name, modifications)) =
+                find_relocation_target(step, b_steps, b_source)
+            {
+                if modifications.is_empty() {
+                    report.add(
+                        ChangeKind::Relocated,
+                        format!("{}.step.{}", prefix, step.name),
+                        format!(
+                            "step '{}' relocated to skill '{}' (behaviour preserved)",
+                            step.name, target_name
+                        ),
+                    );
+                } else {
+                    report.add(
+                        ChangeKind::Relocated,
+                        format!("{}.step.{}", prefix, step.name),
+                        format!(
+                            "step '{}' relocated to skill '{}' (MODIFIED: {})",
+                            step.name,
+                            target_name,
+                            modifications.join(", ")
+                        ),
+                    );
+                }
+            } else {
+                report.add(
+                    ChangeKind::Removed,
+                    format!("{}.step.{}", prefix, step.name),
+                    format!("step '{}' was removed", step.name),
+                );
+            }
         }
     }
 
@@ -220,6 +249,50 @@ fn diff_steps(
                     ),
                 );
             }
+
+            // requires changed
+            if !dep_eq(&step_a.requires, &step_b.requires) {
+                let desc_a = step_a
+                    .requires
+                    .as_ref()
+                    .map(dep_to_string)
+                    .unwrap_or_else(|| "none".to_string());
+                let desc_b = step_b
+                    .requires
+                    .as_ref()
+                    .map(dep_to_string)
+                    .unwrap_or_else(|| "none".to_string());
+                report.add(
+                    ChangeKind::Modified,
+                    format!("{}.requires", step_path),
+                    format!(
+                        "step '{}' requires changed from {} to {}",
+                        step_a.name, desc_a, desc_b
+                    ),
+                );
+            }
+
+            // step-level when guard changed
+            if !expr_eq(&step_a.when, &step_b.when) {
+                let ga = step_a
+                    .when
+                    .as_ref()
+                    .map(expr_to_string)
+                    .unwrap_or_else(|| "none".to_string());
+                let gb = step_b
+                    .when
+                    .as_ref()
+                    .map(expr_to_string)
+                    .unwrap_or_else(|| "none".to_string());
+                report.add(
+                    ChangeKind::Modified,
+                    format!("{}.when", step_path),
+                    format!(
+                        "step '{}' when guard changed from {} to {}",
+                        step_a.name, ga, gb
+                    ),
+                );
+            }
         }
     }
 }
@@ -239,16 +312,19 @@ fn diff_contexts(
     for i in 0..min_len {
         let ca = &a_ctxs[i];
         let cb = &b_ctxs[i];
-        if ca.text != cb.text || ca.priority != cb.priority || ca.decay != cb.decay {
+        let when_changed = !expr_eq(&ca.when, &cb.when);
+        if ca.text != cb.text || ca.priority != cb.priority || ca.decay != cb.decay || when_changed
+        {
             report.add(
                 ChangeKind::Modified,
                 format!("{}.context[{}]", path_prefix, i),
                 format!(
-                    "context block {} changed (priority: {:?}→{:?}, text changed: {})",
+                    "context block {} changed (priority: {:?}→{:?}, text changed: {}, when changed: {})",
                     i,
                     ca.priority,
                     cb.priority,
-                    ca.text != cb.text
+                    ca.text != cb.text,
+                    when_changed
                 ),
             );
         }
@@ -483,6 +559,258 @@ fn type_expr_eq(a: &TypeExpr, b: &TypeExpr) -> bool {
     }
 }
 
+// ── Relocation detection ─────────────────────────────────────────────────────
+
+fn find_relocation_target(
+    removed_step: &crate::ast::Step,
+    b_steps: &[crate::ast::Step],
+    b_source: &SourceFile,
+) -> Option<(String, Vec<String>)> {
+    for candidate in b_steps {
+        if let Some(use_call) = &candidate.use_call {
+            let target_name = use_call.skill_name.replace('_', "-");
+            if let Some(target_skill) = b_source.skills.iter().find(|s| s.name == target_name) {
+                if let Some(matching_step) = target_skill
+                    .body
+                    .steps
+                    .iter()
+                    .find(|s| s.name == removed_step.name)
+                {
+                    let modifications =
+                        compare_step_content(removed_step, matching_step, target_skill, use_call);
+                    return Some((target_name, modifications));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn compare_step_content(
+    original: &crate::ast::Step,
+    relocated: &crate::ast::Step,
+    target_skill: &crate::ast::Skill,
+    use_call: &crate::ast::UseCall,
+) -> Vec<String> {
+    let mut mods = Vec::new();
+
+    let target_step_names: std::collections::HashSet<&str> = target_skill
+        .body
+        .steps
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+
+    // Build binding: callee input name → caller expression string.
+    // e.g. use extract(paths: input.source_files) → {"paths": "input.source_files"}
+    let binding: std::collections::HashMap<String, String> = use_call
+        .args
+        .iter()
+        .map(|(param, expr)| (param.clone(), expr_to_string(expr)))
+        .collect();
+
+    if !dep_eq(&original.requires, &relocated.requires) {
+        let is_external_removal = is_external_dep_removal(
+            &original.requires,
+            &relocated.requires,
+            &target_step_names,
+        );
+        if !is_external_removal {
+            let from = original
+                .requires
+                .as_ref()
+                .map(dep_to_string)
+                .unwrap_or_else(|| "none".to_string());
+            let to = relocated
+                .requires
+                .as_ref()
+                .map(dep_to_string)
+                .unwrap_or_else(|| "none".to_string());
+            mods.push(format!("requires {} → {}", from, to));
+        }
+    }
+
+    if !expr_eq_with_binding(&original.when, &relocated.when, &binding) {
+        mods.push("step when guard changed".to_string());
+    }
+
+    // emit changes are expected extraction adaptations
+
+    let min_len = original.contexts.len().min(relocated.contexts.len());
+    for i in 0..min_len {
+        let ca = &original.contexts[i];
+        let cb = &relocated.contexts[i];
+        let bound_text = apply_binding(&cb.text, &binding);
+        if ca.text != bound_text {
+            mods.push(format!("context[{}] text changed", i));
+        }
+        if ca.priority != cb.priority {
+            mods.push(format!(
+                "context[{}] priority {:?} → {:?}",
+                i, ca.priority, cb.priority
+            ));
+        }
+        if !expr_eq_with_binding(&ca.when, &cb.when, &binding) {
+            mods.push(format!("context[{}] when guard changed", i));
+        }
+        if ca.decay != cb.decay {
+            mods.push(format!("context[{}] decay changed", i));
+        }
+    }
+    if original.contexts.len() != relocated.contexts.len() {
+        mods.push(format!(
+            "context count {} → {}",
+            original.contexts.len(),
+            relocated.contexts.len()
+        ));
+    }
+
+    mods
+}
+
+/// Compare two optional expressions, applying the argument binding to the
+/// relocated expression before comparison. This accounts for name differences
+/// across the use-call seam (e.g. callee's `input.strict` = caller's
+/// `input.strict_mode` when bound via `use skill(strict: input.strict_mode)`).
+fn expr_eq_with_binding(
+    original: &Option<Expr>,
+    relocated: &Option<Expr>,
+    binding: &std::collections::HashMap<String, String>,
+) -> bool {
+    match (original, relocated) {
+        (None, None) => true,
+        (Some(eo), Some(er)) => {
+            let bound = apply_binding(&expr_to_string(er), binding);
+            expr_to_string(eo) == bound
+        }
+        _ => false,
+    }
+}
+
+fn apply_binding(s: &str, binding: &std::collections::HashMap<String, String>) -> String {
+    let mut result = s.to_string();
+    for (param, replacement) in binding {
+        let pattern = format!("input.{}", param);
+        result = result.replace(&pattern, replacement);
+    }
+    result
+}
+
+/// Returns true if the requires difference is just an external dep being removed
+/// (the original step depended on something outside the extraction, and the
+/// relocated step dropped that dep because it's handled by the wrapper).
+fn is_external_dep_removal(
+    original: &Option<Dependency>,
+    relocated: &Option<Dependency>,
+    target_step_names: &std::collections::HashSet<&str>,
+) -> bool {
+    match (original, relocated) {
+        // Had a dep, now has none — check if the dep was external
+        (Some(dep), None) => all_deps_external(dep, target_step_names),
+        // Had a dep, now has a different dep — check if only externals were dropped
+        (Some(orig_dep), Some(new_dep)) => {
+            let orig_names = dep_names(orig_dep);
+            let new_names = dep_names(new_dep);
+            let removed: Vec<&str> = orig_names
+                .iter()
+                .filter(|n| !new_names.contains(n))
+                .copied()
+                .collect();
+            let added: Vec<&str> = new_names
+                .iter()
+                .filter(|n| !orig_names.contains(n))
+                .copied()
+                .collect();
+            // All removed deps are external AND no new deps were added
+            !removed.is_empty()
+                && added.is_empty()
+                && removed.iter().all(|n| !target_step_names.contains(n))
+        }
+        _ => false,
+    }
+}
+
+fn all_deps_external(dep: &Dependency, target_step_names: &std::collections::HashSet<&str>) -> bool {
+    dep_names(dep).iter().all(|n| !target_step_names.contains(n))
+}
+
+fn dep_names(dep: &Dependency) -> Vec<&str> {
+    match dep {
+        Dependency::Single(name) => vec![name.as_str()],
+        Dependency::All(names) | Dependency::Any(names) => {
+            names.iter().map(|s| s.as_str()).collect()
+        }
+        Dependency::AllSteps => vec![],
+    }
+}
+
+// ── Dependency comparison ─────────────────────────────────────────────────────
+
+fn dep_to_string(dep: &Dependency) -> String {
+    match dep {
+        Dependency::Single(name) => name.clone(),
+        Dependency::All(names) => format!("all({})", names.join(", ")),
+        Dependency::Any(names) => format!("any({})", names.join(", ")),
+        Dependency::AllSteps => "*".to_string(),
+    }
+}
+
+fn dep_eq(a: &Option<Dependency>, b: &Option<Dependency>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(da), Some(db)) => dep_to_string(da) == dep_to_string(db),
+        _ => false,
+    }
+}
+
+// ── Expr comparison ──────────────────────────────────────────────────────────
+
+fn expr_to_string(expr: &Expr) -> String {
+    match expr {
+        Expr::StringLit(s) => format!("\"{}\"", s),
+        Expr::IntLit(n) => n.to_string(),
+        Expr::FloatLit(f) => f.to_string(),
+        Expr::BoolLit(b) => b.to_string(),
+        Expr::Ident(name) => name.clone(),
+        Expr::FieldAccess(obj, field) => format!("{}.{}", expr_to_string(obj), field),
+        Expr::ArrayLit(items) => {
+            let parts: Vec<String> = items.iter().map(expr_to_string).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Expr::BinOp(lhs, op, rhs) => {
+            let op_str = match op {
+                BinOp::Eq => "==",
+                BinOp::NotEq => "!=",
+                BinOp::Lt => "<",
+                BinOp::Gt => ">",
+                BinOp::LtEq => "<=",
+                BinOp::GtEq => ">=",
+                BinOp::In => "in",
+                BinOp::And => "&&",
+                BinOp::Or => "||",
+            };
+            format!("{} {} {}", expr_to_string(lhs), op_str, expr_to_string(rhs))
+        }
+        Expr::Not(inner) => format!("!{}", expr_to_string(inner)),
+        Expr::FnCall(name, args) => {
+            let arg_parts: Vec<String> = args
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, expr_to_string(v)))
+                .collect();
+            format!("{}({})", name, arg_parts.join(", "))
+        }
+        Expr::Interpolated(s) => format!("`{}`", s),
+    }
+}
+
+fn expr_eq(a: &Option<Expr>, b: &Option<Expr>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(ea), Some(eb)) => expr_to_string(ea) == expr_to_string(eb),
+        _ => false,
+    }
+}
+
 // ── SKILL.md diff ─────────────────────────────────────────────────────────────
 
 /// Compare a compiled SKILL.md string against an on-disk (or reference) SKILL.md.
@@ -668,6 +996,7 @@ fn change_symbol(kind: &ChangeKind) -> &'static str {
         ChangeKind::Added => "+",
         ChangeKind::Removed => "-",
         ChangeKind::Modified => "~",
+        ChangeKind::Relocated => "=>",
     }
 }
 
@@ -710,6 +1039,13 @@ fn classify_change(change: &Change, new_file: &SourceFile) -> SemverLevel {
                 SemverLevel::Patch
             } else {
                 SemverLevel::Patch
+            }
+        }
+        ChangeKind::Relocated => {
+            if change.description.contains("behaviour preserved") {
+                SemverLevel::Patch
+            } else {
+                SemverLevel::Minor
             }
         }
     }
@@ -949,5 +1285,680 @@ mod tests {
         let b = parse(r#"skill "x" { input { files: string[] } body { context { "new" } step a { context { "a" } } step b { context { "b" } } } }"#);
         let report = classify_semver(&a, &b);
         assert_eq!(report.level, SemverLevel::Major, "removed input should dominate: {:?}", report.breakdown);
+    }
+
+    // ── Step A: requires comparison ─────────────────────────────────────
+
+    #[test]
+    fn detects_requires_added() {
+        let a = parse(r#"skill "x" { body { step a { context { "a" } } step b { context { "b" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } step b { requires a context { "b" } } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("step.b") && c.path.contains("requires")
+            ),
+            "should detect requires added: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn detects_requires_removed() {
+        let a = parse(r#"skill "x" { body { step a { context { "a" } } step b { requires a context { "b" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } step b { context { "b" } } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("step.b") && c.path.contains("requires")
+            ),
+            "should detect requires removed: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn detects_requires_changed() {
+        let a = parse(r#"skill "x" { body { step a { context { "a" } } step b { context { "b" } } step c { requires a context { "c" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } step b { context { "b" } } step c { requires b context { "c" } } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("step.c") && c.path.contains("requires")
+            ),
+            "should detect requires changed: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn identical_requires_no_change() {
+        let a = parse(r#"skill "x" { body { step a { context { "a" } } step b { requires a context { "b" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } step b { requires a context { "b" } } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(report.is_empty(), "identical requires should produce no diff: {}", report.display());
+    }
+
+    // ── Step A: when guard comparison ────────────────────────────────────
+
+    #[test]
+    fn detects_when_guard_removed() {
+        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: 80) { "Focus area." } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("context")
+            ),
+            "should detect when guard removed: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn detects_when_guard_added() {
+        let a = parse(r#"skill "x" { body { context(priority: 80) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("context")
+            ),
+            "should detect when guard added: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn detects_when_guard_changed() {
+        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.strict_mode) { "Focus area." } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("context")
+            ),
+            "should detect when guard changed: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn identical_when_guard_no_change() {
+        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(report.is_empty(), "identical when guard should produce no diff: {}", report.display());
+    }
+
+    // ── Step A: priority change verification ─────────────────────────────
+
+    #[test]
+    fn detects_priority_change() {
+        let a = parse(r#"skill "x" { body { context(priority: 80) { "Same text." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: 95) { "Same text." } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("context")
+            ),
+            "should detect priority change: {}", report.display()
+        );
+    }
+
+    // ── Step A: step-level when guard ────────────────────────────────────
+
+    #[test]
+    fn detects_step_when_guard_changed() {
+        let a = parse(r#"skill "x" { body { step a { when input.ready context { "a" } } } }"#);
+        let b = parse(r#"skill "x" { body { step a { context { "a" } } } }"#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Modified) && c.path.contains("step.a")
+            ),
+            "should detect step-level when guard change: {}", report.display()
+        );
+    }
+
+    // ── Step C: Relocated change kind ────────────────────────────────────
+
+    #[test]
+    fn relocated_step_detected_behaviour_preserved() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate records." }
+                    }
+                    step transform {
+                        requires validate
+                        context(priority: 80) { "Transform records." }
+                    }
+                    step export {
+                        requires transform
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate records." }
+                    }
+                    step transform {
+                        requires validate
+                        context(priority: 80) { "Transform records." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run extracted skill." }
+                    }
+                    step export {
+                        requires run_vt
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Relocated)
+                    && c.path.contains("step.validate")
+                    && c.description.contains("behaviour preserved")
+            ),
+            "validate should be Relocated (behaviour preserved): {}", report.display()
+        );
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Relocated)
+                    && c.path.contains("step.transform")
+                    && c.description.contains("behaviour preserved")
+            ),
+            "transform should be Relocated (behaviour preserved): {}", report.display()
+        );
+    }
+
+    #[test]
+    fn relocated_step_detected_modified() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate records." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 60) { "Validate records." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Relocated)
+                    && c.path.contains("step.validate")
+                    && c.description.contains("MODIFIED")
+            ),
+            "should be Relocated (MODIFIED) due to priority change: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn relocated_vs_genuinely_removed() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate." }
+                    }
+                    step legacy {
+                        context { "Legacy code." }
+                    }
+                    step export {
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                    step export {
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Relocated) && c.path.contains("step.validate")
+            ),
+            "validate should be Relocated: {}", report.display()
+        );
+        assert!(
+            report.changes.iter().any(|c|
+                matches!(c.kind, ChangeKind::Removed) && c.path.contains("step.legacy")
+            ),
+            "legacy should be Removed (not Relocated): {}", report.display()
+        );
+    }
+
+    #[test]
+    fn relocated_display_uses_arrow_symbol() {
+        let mut report = DiffReport::default();
+        report.add(ChangeKind::Relocated, "skill.x.step.a", "relocated to skill 'y' (behaviour preserved)");
+        let output = report.display();
+        assert!(
+            output.starts_with("=>"),
+            "Relocated should display with => symbol: {}", output
+        );
+    }
+
+    #[test]
+    fn relocated_semver_is_patch_when_preserved() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context { "Validate." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context { "Validate." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = classify_semver(&a, &b);
+        let relocated_levels: Vec<_> = report.breakdown.iter()
+            .filter(|(_, desc)| desc.contains("relocated"))
+            .map(|(level, _)| *level)
+            .collect();
+        assert!(
+            relocated_levels.iter().all(|l| *l == SemverLevel::Patch),
+            "behaviour-preserved relocation should be Patch: {:?}", report.breakdown
+        );
+    }
+
+    #[test]
+    fn relocated_semver_is_minor_when_modified() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 60) { "Validate." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = classify_semver(&a, &b);
+        let relocated_levels: Vec<_> = report.breakdown.iter()
+            .filter(|(_, desc)| desc.contains("relocated"))
+            .map(|(level, _)| *level)
+            .collect();
+        assert!(
+            relocated_levels.iter().any(|l| *l == SemverLevel::Minor),
+            "modified relocation should be Minor: {:?}", report.breakdown
+        );
+    }
+
+    #[test]
+    fn no_false_relocation_when_content_totally_different() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context { "Check schema." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context { "Completely different text." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        // With totally different content, it should still be Relocated but MODIFIED
+        // (the step name matches but content differs)
+        let validate_change = report.changes.iter()
+            .find(|c| c.path.contains("step.validate"))
+            .expect("should have a change for validate step");
+        assert!(
+            matches!(validate_change.kind, ChangeKind::Relocated),
+            "should still be Relocated (name match in target): {}", report.display()
+        );
+        assert!(
+            validate_change.description.contains("MODIFIED"),
+            "should report as MODIFIED since content differs: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn relocated_detects_dropped_internal_requires() {
+        // transform originally requires validate (both are in the extraction).
+        // Dropping that INTERNAL requires is a genuine modification, not an adaptation.
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate { context { "Validate." } }
+                    step transform {
+                        requires validate
+                        context { "Transform." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate { context { "Validate." } }
+                    step transform {
+                        context { "Transform." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        let transform_change = report.changes.iter()
+            .find(|c| c.path.contains("step.transform"))
+            .expect("should have a change for transform");
+        assert!(
+            matches!(transform_change.kind, ChangeKind::Relocated),
+            "should be Relocated: {}", report.display()
+        );
+        assert!(
+            transform_change.description.contains("MODIFIED") && transform_change.description.contains("requires"),
+            "internal requires drop should be flagged: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn relocated_detects_removed_when_guard() {
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context(priority: 85, when: input.strict_mode) { "Validate." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        let validate_change = report.changes.iter()
+            .find(|c| c.path.contains("step.validate"))
+            .expect("should have a change for validate");
+        assert!(
+            matches!(validate_change.kind, ChangeKind::Relocated),
+            "should be Relocated: {}", report.display()
+        );
+        assert!(
+            validate_change.description.contains("MODIFIED") && validate_change.description.contains("when"),
+            "should report when guard change: {}", report.display()
+        );
+    }
+
+    // ── Extraction adaptation tests ──────────────────────────────────────
+
+    #[test]
+    fn external_requires_removal_is_adaptation_not_modification() {
+        // validate originally requires ingest, but ingest isn't in the extracted skill.
+        // Removing that outer-facing requires is an expected extraction adaptation.
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step ingest { context { "Ingest." } }
+                    step validate {
+                        requires ingest
+                        context(priority: 85) { "Validate." }
+                    }
+                    step transform {
+                        requires validate
+                        context(priority: 80) { "Transform." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context(priority: 85) { "Validate." }
+                    }
+                    step transform {
+                        requires validate
+                        context(priority: 80) { "Transform." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step ingest { context { "Ingest." } }
+                    step run_vt {
+                        requires ingest
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        let validate_change = report.changes.iter()
+            .find(|c| c.path.contains("step.validate"))
+            .expect("should have a change for validate");
+        assert!(
+            matches!(validate_change.kind, ChangeKind::Relocated),
+            "should be Relocated: {}", report.display()
+        );
+        assert!(
+            validate_change.description.contains("behaviour preserved"),
+            "external requires removal should be treated as adaptation, not MODIFIED: {}",
+            report.display()
+        );
+    }
+
+    #[test]
+    fn internal_requires_removal_is_still_flagged() {
+        // transform originally requires validate, and both are in the extracted skill.
+        // Removing that internal requires IS a genuine modification.
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step validate {
+                        context { "Validate." }
+                    }
+                    step transform {
+                        requires validate
+                        context { "Transform." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step validate {
+                        context { "Validate." }
+                    }
+                    step transform {
+                        context { "Transform." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        let transform_change = report.changes.iter()
+            .find(|c| c.path.contains("step.transform"))
+            .expect("should have a change for transform");
+        assert!(
+            matches!(transform_change.kind, ChangeKind::Relocated),
+            "should be Relocated: {}", report.display()
+        );
+        assert!(
+            transform_change.description.contains("MODIFIED") && transform_change.description.contains("requires"),
+            "internal requires removal should still be flagged: {}", report.display()
+        );
+    }
+
+    #[test]
+    fn emit_change_is_adaptation_not_modification() {
+        // export had emit output in the original. When transform moves to the
+        // extracted skill and gains emit output, that's an expected adaptation.
+        let a = parse(r#"
+            skill "main" {
+                body {
+                    step transform {
+                        context { "Transform." }
+                    }
+                    step export {
+                        requires transform
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let b = parse(r#"
+            skill "vt" {
+                body {
+                    step transform {
+                        emit output
+                        context { "Transform." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step run_vt {
+                        use vt()
+                        context { "Run." }
+                    }
+                    step export {
+                        requires run_vt
+                        emit output
+                        context { "Export." }
+                    }
+                }
+            }
+        "#);
+        let report = structural_diff(&a, &b);
+        let transform_change = report.changes.iter()
+            .find(|c| c.path.contains("step.transform"))
+            .expect("should have a change for transform");
+        assert!(
+            matches!(transform_change.kind, ChangeKind::Relocated),
+            "should be Relocated: {}", report.display()
+        );
+        assert!(
+            transform_change.description.contains("behaviour preserved"),
+            "emit change should be treated as adaptation: {}", report.display()
+        );
     }
 }

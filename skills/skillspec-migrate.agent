@@ -13,12 +13,29 @@ type InferredStep {
     confidence: float
 }
 
+type DirectoryFile {
+    path: string
+    content: string
+    truncated: bool
+    line_count: int
+}
+
+type DirectoryAnalysis {
+    main_skill: string
+    references: string[]
+    additional_skills: string[]
+    shared_types: string[]
+    relationship: enum("single-skill", "pipeline", "orchestration", "multi-skill")
+    rationale: string
+}
+
 type MigrationResult {
     agent_file: string
     confidence: float
     todos_resolved: int
     todos_remaining: MigrationTodo[]
     inferred_steps: InferredStep[]
+    directory_analysis?: DirectoryAnalysis
 }
 
 skill "skillspec-migrate" {
@@ -132,6 +149,38 @@ skill "skillspec-migrate" {
             }
         }
 
+        step analyze_directory_context {
+            requires read_partial
+            load "skillspec-spec"
+
+            context(priority: 92) {
+                """
+                If the .agent.partial contains a DIRECTORY CONTEXT section,
+                analyze all bundled files and use the SkillSpec language reference
+                to determine the best target constructs.
+
+                1. **Classify each file** — what role does it play? Reference doc,
+                   type/mixin definition, another skill, coordination logic, etc.
+
+                2. **Determine the relationship** — is this folder a single skill
+                   with docs, a pipeline of chained skills, a multi-agent
+                   orchestration, or independent skills sharing a directory?
+
+                3. **Map to constructs** — using the language reference, decide
+                   which SkillSpec constructs to produce. The language supports
+                   skill, pipeline, orchestration, type, mixin, import, package,
+                   lazy context (ref/index), observe, extends, includes, and tests.
+                   Use whatever combination best represents the folder's intent.
+
+                Read truncated files in full from disk if they seem structurally
+                important for classification.
+
+                If no DIRECTORY CONTEXT section is present, skip this step —
+                the partial is a single-file migration.
+                """
+            }
+        }
+
         step infer_types {
             requires read_partial
             load "type-inference-patterns"
@@ -195,7 +244,8 @@ skill "skillspec-migrate" {
         }
 
         step generate_agent_file {
-            requires infer_types & infer_dependencies & assign_priorities
+            requires infer_types & infer_dependencies & assign_priorities & analyze_directory_context
+            load "skillspec-spec"
             emit output
 
             context(priority: 90) {
@@ -208,6 +258,14 @@ skill "skillspec-migrate" {
                 - If confidence < 0.5, leave the TODO with your best suggestion
                 - Preserve ALL original prose exactly — do not rephrase or improve it
                 - Validate the result would pass 'skillspec check'
+
+                If directory analysis was performed:
+                - Use the language reference to produce the right constructs
+                - Reference docs become lazy context blocks with ref paths
+                - Shared type/mixin files become imports
+                - Multiple skills may produce pipeline or orchestration blocks
+                - The output is not limited to a single skill — use whatever
+                  combination of constructs best represents the folder
 
                 Write the completed file and report the MigrationResult.
                 """
@@ -243,6 +301,36 @@ skill "skillspec-migrate" {
             }
             expect {
                 output.result.inferred_steps: contains(where: .requires != [])
+            }
+        }
+
+        test "directory single skill with refs" {
+            given {
+                partial_file: "fixtures/directory_single_skill.agent.partial"
+            }
+            expect {
+                output.result.directory_analysis.relationship: == "single-skill"
+                output.result.agent_file: matches(".*lazy context.*ref.*")
+            }
+        }
+
+        test "directory detects pipeline" {
+            given {
+                partial_file: "fixtures/directory_pipeline.agent.partial"
+            }
+            expect {
+                output.result.directory_analysis.relationship: == "pipeline"
+                output.result.agent_file: matches(".*pipeline.*")
+            }
+        }
+
+        test "directory detects orchestration" {
+            given {
+                partial_file: "fixtures/directory_orchestration.agent.partial"
+            }
+            expect {
+                output.result.directory_analysis.relationship: == "orchestration"
+                output.result.agent_file: matches(".*orchestration.*")
             }
         }
     }

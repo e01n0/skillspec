@@ -803,3 +803,44 @@ fn lint_full_featured_fixture() {
         "full_featured.agent should have no warnings, got: {:?}",
         warnings.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
 }
+
+// ── Migrate directory integration ───────────────────────────────────
+
+#[test]
+fn migrate_directory_integration() {
+    let dir = std::env::temp_dir().join("skillspec_migrate_dir_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("refs")).unwrap();
+
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: integ-test\ndescription: \"Integration test skill\"\n---\n\n# integ-test\n\n## Analyze\n\nAnalyze the input.\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("refs/patterns.md"),
+        "# Patterns\n\nCommon patterns to look for.\n",
+    ).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let output = std::process::Command::new(bin)
+        .args(["migrate", dir.to_str().unwrap()])
+        .output()
+        .expect("failed to run skillspec migrate");
+
+    assert!(output.status.success(), "migrate should succeed, stderr: {}", String::from_utf8_lossy(&output.stderr));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("migrated"), "should report migration: {}", stdout);
+    assert!(stdout.contains("1 additional file"), "should report file count: {}", stdout);
+
+    let dir_name = dir.file_name().unwrap().to_string_lossy().to_string();
+    let partial_path = dir.join(format!("{}.agent.partial", dir_name));
+    assert!(partial_path.exists(), "should create .agent.partial at {}", partial_path.display());
+
+    let content = std::fs::read_to_string(&partial_path).unwrap();
+    assert!(content.contains("skill \"integ-test\""));
+    assert!(content.contains("DIRECTORY CONTEXT"));
+    assert!(content.contains("patterns.md"));
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -226,11 +226,15 @@ impl SkillMdCompiler {
 
         let sorted_steps = self.topo_sort(&all_steps);
 
+        let mut visited = HashSet::new();
+        visited.insert(skill.name.clone());
+
         for step in sorted_steps {
             out.push_str(&format!("## Step: {}\n\n", step.name));
 
             if let Some(use_call) = &step.use_call {
                 out.push_str(&format!("*Uses: {}*\n\n", use_call.skill_name));
+                out.push_str(&self.expand_use_target(use_call, source, &mut visited));
             }
 
             if step.emit {
@@ -445,6 +449,108 @@ impl SkillMdCompiler {
         out.push_str(&self.dedent(&ctx.text));
         out.push_str("\n\n");
 
+        out
+    }
+
+    // ── Use-call inline expansion ───────────────────────────────────────────────
+
+    fn expand_use_target(
+        &self,
+        use_call: &UseCall,
+        source: &SourceFile,
+        visited: &mut HashSet<String>,
+    ) -> String {
+        let target_name = use_call.skill_name.replace('_', "-");
+
+        if !visited.insert(target_name.clone()) {
+            return String::new();
+        }
+
+        let target = match source.skills.iter().find(|s| s.name == target_name) {
+            Some(s) => s,
+            None => {
+                visited.remove(&target_name);
+                return String::new();
+            }
+        };
+
+        let binding = self.build_binding_map(use_call);
+        let mut out = String::new();
+
+        // Inline target's body-level contexts
+        let mut body_ctxs: Vec<&ContextBlock> = target.body.contexts.iter().collect();
+        body_ctxs.sort_by(|a, b| {
+            b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+        });
+        for ctx in &body_ctxs {
+            out.push_str(&self.emit_context_with_binding(ctx, &binding));
+        }
+
+        // Inline target's steps
+        let sorted_steps = self.topo_sort(&target.body.steps);
+        for step in sorted_steps {
+            out.push_str(&format!("### {}\n\n", step.name));
+
+            if let Some(nested_use) = &step.use_call {
+                out.push_str(&format!("*Uses: {}*\n\n", nested_use.skill_name));
+                out.push_str(&self.expand_use_target(nested_use, source, visited));
+            }
+
+            if step.emit {
+                out.push_str("*Produces final output.*\n\n");
+            }
+
+            for load_name in &step.loads {
+                out.push_str(&format!("*Loads reference: {}*\n\n", load_name));
+            }
+
+            let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
+            step_contexts.sort_by(|a, b| {
+                b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+            });
+            for ctx in &step_contexts {
+                out.push_str(&self.emit_context_with_binding(ctx, &binding));
+            }
+        }
+
+        visited.remove(&target_name);
+        out
+    }
+
+    fn build_binding_map(&self, use_call: &UseCall) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for (param_name, expr) in &use_call.args {
+            map.insert(param_name.clone(), self.expr_to_string(expr));
+        }
+        map
+    }
+
+    fn apply_binding_to_string(&self, s: &str, binding: &HashMap<String, String>) -> String {
+        let mut result = s.to_string();
+        for (param, replacement) in binding {
+            let pattern = format!("input.{}", param);
+            result = result.replace(&pattern, replacement);
+        }
+        result
+    }
+
+    fn emit_context_with_binding(
+        &self,
+        ctx: &ContextBlock,
+        binding: &HashMap<String, String>,
+    ) -> String {
+        let mut out = String::new();
+        if let Some(when) = &ctx.when {
+            let expr_str = self.expr_to_string(when);
+            let bound = self.apply_binding_to_string(&expr_str, binding);
+            out.push_str(&format!("**Condition:** `{}`\n\n", bound));
+        }
+        if let Some(decay) = ctx.decay {
+            out.push_str(&format!("*Decay: {}*\n\n", decay));
+        }
+        let text = self.apply_binding_to_string(&self.dedent(&ctx.text), binding);
+        out.push_str(&text);
+        out.push_str("\n\n");
         out
     }
 
@@ -1951,6 +2057,274 @@ mod tests {
             md.contains("Review code for bugs and security issues"),
             "description should come from base's high-priority context, not child's conditional: {}",
             md
+        );
+    }
+
+    // ── Step B: inline use-target expansion ──────────────────────────────
+
+    #[test]
+    fn use_call_inlines_target_steps() {
+        let md = compile_named(r#"
+            skill "sub-skill" {
+                body {
+                    step alpha {
+                        context(priority: 90) { "Alpha instruction." }
+                    }
+                    step beta {
+                        requires alpha
+                        context(priority: 80) { "Beta instruction." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step do_work {
+                        use sub_skill()
+                        context { "Wrapper context." }
+                    }
+                }
+            }
+        "#, "main");
+        assert!(
+            md.contains("Alpha instruction."),
+            "should inline target's alpha step content: {}", md
+        );
+        assert!(
+            md.contains("Beta instruction."),
+            "should inline target's beta step content: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_preserves_uses_annotation() {
+        let md = compile_named(r#"
+            skill "helper" {
+                body {
+                    step work {
+                        context { "Do the work." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step invoke {
+                        use helper()
+                        context { "Call helper." }
+                    }
+                }
+            }
+        "#, "main");
+        assert!(
+            md.contains("*Uses: helper*"),
+            "should preserve the Uses annotation: {}", md
+        );
+        assert!(
+            md.contains("Do the work."),
+            "should also inline the content: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_argument_binding_renames_references() {
+        let md = compile_named(r#"
+            skill "extract" {
+                input {
+                    paths: string[]
+                }
+                body {
+                    step scan {
+                        context(priority: 80, when: input.paths) {
+                            "Scan the provided paths for issues."
+                        }
+                    }
+                }
+            }
+            skill "main" {
+                input {
+                    source_files: string[]
+                }
+                body {
+                    step do_extract {
+                        use extract(paths: input.source_files)
+                        context { "Run extraction." }
+                    }
+                }
+            }
+        "#, "main");
+        assert!(
+            md.contains("input.source_files"),
+            "should rewrite input.paths → input.source_files in condition: {}", md
+        );
+        assert!(
+            !md.contains("input.paths"),
+            "should NOT contain the callee's input.paths after binding: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_argument_binding_identity() {
+        let md = compile_named(r#"
+            skill "helper" {
+                input {
+                    files: string[]
+                }
+                body {
+                    step scan {
+                        context(priority: 80, when: input.files) {
+                            "Scan input.files for issues."
+                        }
+                    }
+                }
+            }
+            skill "main" {
+                input {
+                    files: string[]
+                }
+                body {
+                    step invoke {
+                        use helper(files: input.files)
+                        context { "Call helper." }
+                    }
+                }
+            }
+        "#, "main");
+        assert!(
+            md.contains("input.files"),
+            "identity binding should preserve input.files: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_missing_target_graceful_fallback() {
+        let md = compile(r#"
+            skill "main" {
+                body {
+                    step invoke {
+                        use nonexistent_skill()
+                        context { "Call something." }
+                    }
+                }
+            }
+        "#);
+        assert!(
+            md.contains("*Uses: nonexistent_skill*"),
+            "should fall back to annotation when target not found: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_cycle_guard() {
+        let md = compile_named(r#"
+            skill "a" {
+                body {
+                    step work {
+                        use b()
+                        context { "A does work." }
+                    }
+                }
+            }
+            skill "b" {
+                body {
+                    step work {
+                        use a()
+                        context { "B does work." }
+                    }
+                }
+            }
+        "#, "a");
+        assert!(md.contains("A does work."), "should contain own content: {}", md);
+        assert!(md.contains("B does work."), "should expand B once: {}", md);
+    }
+
+    #[test]
+    fn use_call_nested_expansion() {
+        let md = compile_named(r#"
+            skill "c" {
+                body {
+                    step leaf {
+                        context { "Leaf instruction." }
+                    }
+                }
+            }
+            skill "b" {
+                body {
+                    step mid {
+                        use c()
+                        context { "Middle instruction." }
+                    }
+                }
+            }
+            skill "a" {
+                body {
+                    step top {
+                        use b()
+                        context { "Top instruction." }
+                    }
+                }
+            }
+        "#, "a");
+        assert!(
+            md.contains("Leaf instruction."),
+            "should recursively inline through a→b→c: {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_same_skill_used_twice() {
+        let md = compile_named(r#"
+            skill "helper" {
+                body {
+                    step work {
+                        context { "Helper work." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step first {
+                        use helper()
+                        context { "First call." }
+                    }
+                    step second {
+                        requires first
+                        use helper()
+                        context { "Second call." }
+                    }
+                }
+            }
+        "#, "main");
+        let count = md.matches("Helper work.").count();
+        assert_eq!(
+            count, 2,
+            "should inline helper twice (once per step): {}", md
+        );
+    }
+
+    #[test]
+    fn use_call_preserves_context_priority_ordering() {
+        let md = compile_named(r#"
+            skill "target" {
+                body {
+                    step work {
+                        context(priority: 70) { "Low priority." }
+                        context(priority: 90) { "High priority." }
+                    }
+                }
+            }
+            skill "main" {
+                body {
+                    step invoke {
+                        use target()
+                        context { "Wrapper." }
+                    }
+                }
+            }
+        "#, "main");
+        let high_pos = md.find("High priority.").expect("should contain high priority");
+        let low_pos = md.find("Low priority.").expect("should contain low priority");
+        assert!(
+            high_pos < low_pos,
+            "higher priority context should appear first in inlined output: {}", md
         );
     }
 }
