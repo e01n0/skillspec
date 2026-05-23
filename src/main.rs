@@ -707,20 +707,12 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         })
         .collect();
 
-    // Collect shared (non-skill) directories as cross-reference context
-    let shared_files: Vec<migrate::CollectedFile> = non_skill_dirs.iter()
-        .flat_map(|d| {
-            let mut files = migrate::collect_directory_files(d);
-            // Rewrite paths relative to the parent dir
-            for f in &mut files {
-                let dir_name = d.file_name().unwrap_or_default().to_string_lossy();
-                f.relative_path = f.relative_path.replacen("./", &format!("./{}/", dir_name), 1);
-            }
-            files
-        })
-        .collect();
+    // Count shared files in non-skill sibling dirs (skill reads them directly)
+    let shared_file_count: usize = non_skill_dirs.iter()
+        .map(|d| migrate::collect_directory_files(d).len())
+        .sum();
 
-    let has_shared = !shared_files.is_empty();
+    let has_shared = shared_file_count > 0;
 
     println!(
         "Found {} skill directories in {}{}",
@@ -728,7 +720,7 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         dir.display(),
         if has_shared {
             format!(" (+{} shared file(s) from {} non-skill dir(s))",
-                shared_files.len(),
+                shared_file_count,
                 non_skill_dirs.len())
         } else {
             String::new()
@@ -746,47 +738,29 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
 
         match migrate::migrate_directory(subdir) {
             Ok(mut result) => {
+                // Append lightweight pointers — the skill reads files itself via source_dir
                 let insertion_point = result.output.rfind("  }\n}\n").unwrap_or(result.output.len());
-                let mut extra_context = String::new();
+                let mut pointers = String::new();
 
-                // Append sibling skills context
                 if sibling_summaries.len() > 1 {
-                    extra_context.push_str("\n    // === SIBLING SKILLS ===\n");
-                    extra_context.push_str("    // Other skills in this directory that this skill may reference or orchestrate.\n");
-                    extra_context.push_str("    // TODO: The skillspec-migrate skill should determine if this skill\n");
-                    extra_context.push_str("    //   orchestrates, pipelines, or chains any of these siblings.\n\n");
-                    for (dir_name, name, desc) in &sibling_summaries {
+                    pointers.push_str(&format!("    // parent_dir: {}\n", dir.display()));
+                    pointers.push_str(&format!("    // {} sibling skill(s):\n", sibling_summaries.len() - 1));
+                    for (dir_name, name, _) in &sibling_summaries {
                         if dir_name == &current_dir_name {
                             continue;
                         }
-                        extra_context.push_str(&format!(
-                            "    // @{} (dir: {}/): {}\n",
-                            name, dir_name, desc
-                        ));
+                        pointers.push_str(&format!("    //   @{} ({}/) \n", name, dir_name));
                     }
-                    extra_context.push('\n');
                 }
 
-                // Append shared cross-reference context
                 if has_shared {
-                    extra_context.push_str("    // === CROSS-REFERENCE CONTEXT (shared directories) ===\n");
-                    extra_context.push_str("    // These files are from sibling directories referenced by this skill.\n\n");
-                    for f in &shared_files {
-                        extra_context.push_str(&format!(
-                            "    // --- {} ({} lines{}) ---\n",
-                            f.relative_path,
-                            f.line_count,
-                            if f.truncated { ", truncated" } else { "" }
-                        ));
-                        for line in f.content.lines() {
-                            extra_context.push_str(&format!("    // {}\n", line));
-                        }
-                        extra_context.push('\n');
-                    }
+                    pointers.push_str(&format!("    // {} shared file(s) in non-skill sibling dir(s)\n",
+                        shared_file_count));
                 }
 
-                if !extra_context.is_empty() {
-                    result.output.insert_str(insertion_point, &extra_context);
+                if !pointers.is_empty() {
+                    pointers.push('\n');
+                    result.output.insert_str(insertion_point, &pointers);
                 }
 
                 let dir_name = subdir
@@ -811,7 +785,7 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
                     subdir.file_name().unwrap_or_default().to_string_lossy(),
                     out_path.file_name().unwrap_or_default().to_string_lossy(),
                     result.files_found,
-                    if has_shared { format!(", +{} shared", shared_files.len()) } else { String::new() },
+                    if has_shared { format!(", +{} shared", shared_file_count) } else { String::new() },
                 );
                 succeeded += 1;
             }

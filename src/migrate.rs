@@ -379,26 +379,15 @@ pub fn migrate_directory(dir: &Path) -> Result<MigrateDirectoryResult, String> {
     if !other_files.is_empty() {
         let insertion_point = output.rfind("  }\n}\n").unwrap_or(output.len());
         let mut context_section = String::new();
-        context_section.push_str("\n    // === DIRECTORY CONTEXT ===\n");
-        context_section.push_str("    // The following files were found alongside the main SKILL.md.\n");
-        context_section.push_str("    // TODO: The skillspec-migrate skill should determine how to incorporate these:\n");
-        context_section.push_str("    //   - As lazy context refs (reference documentation)\n");
-        context_section.push_str("    //   - As imports (shared types, mixins)\n");
-        context_section.push_str("    //   - As additional skills (multi-skill folder)\n");
-        context_section.push_str("    //   - As pipeline stages or orchestration phases\n\n");
-
+        context_section.push_str(&format!("\n    // source_dir: {}\n", dir.display()));
+        context_section.push_str(&format!("    // {} additional file(s) found — the migrate skill should read them directly:\n", other_files.len()));
         for file in &other_files {
             context_section.push_str(&format!(
-                "    // --- {} ({} lines{}) ---\n",
-                file.relative_path,
-                file.line_count,
-                if file.truncated { ", truncated" } else { "" }
+                "    //   {} ({} lines)\n",
+                file.relative_path, file.line_count,
             ));
-            for line in file.content.lines() {
-                context_section.push_str(&format!("    // {}\n", line));
-            }
-            context_section.push('\n');
         }
+        context_section.push('\n');
 
         output.insert_str(insertion_point, &context_section);
     }
@@ -623,9 +612,8 @@ Verify test coverage.
 
         let result = migrate_directory(dir_path).unwrap();
         assert!(result.output.contains("skill \"test-skill\""));
-        assert!(result.output.contains("DIRECTORY CONTEXT"));
         assert!(result.output.contains("refs/guide.md"));
-        assert!(result.output.contains("Style Guide"));
+        assert!(result.output.contains("1 additional file(s) found"));
         assert_eq!(result.files_found, 1);
     }
 
@@ -658,9 +646,8 @@ Verify test coverage.
         fs::write(dir_path.join("refs/huge.md"), &huge_content).unwrap();
 
         let result = migrate_directory(dir_path).unwrap();
-        assert!(result.output.contains("truncated"));
-        assert!(result.output.contains("Line 0 of the huge file"));
-        assert!(result.output.contains("Line 49 of the huge file"));
+        assert!(result.output.contains("refs/huge.md"));
+        assert!(result.output.contains("1000 lines"));
         assert!(!result.output.contains("Line 500 of the huge file"));
         assert_eq!(result.files_truncated, 1);
         assert_eq!(result.warnings.len(), 1);

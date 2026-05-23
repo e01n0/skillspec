@@ -839,7 +839,7 @@ fn migrate_directory_integration() {
 
     let content = std::fs::read_to_string(&partial_path).unwrap();
     assert!(content.contains("skill \"integ-test\""));
-    assert!(content.contains("DIRECTORY CONTEXT"));
+    assert!(content.contains("additional file(s) found"));
     assert!(content.contains("patterns.md"));
 
     std::fs::remove_dir_all(&dir).ok();
