@@ -238,27 +238,45 @@ skillspec build my-skill.agent --to                   # interactive menu
 
 ## Migrating an existing skill
 
-You don't have to start from scratch. If you've got a SKILL.md that works and you want to bring it under SkillSpec:
+You don't have to start from scratch. If you've got SKILL.md files that work and you want to bring them under SkillSpec:
 
 ```bash
-# 1. Mechanical extraction: pulls out frontmatter, headings, obvious conditionals
+# Single file
 skillspec migrate my-skill/SKILL.md
-# -> my-skill.agent.partial (with TODO markers where it couldn't infer structure)
+# -> my-skill.agent.partial
 
-# 2. LLM-powered completion: infers types, step deps, context priorities
-#    Run the migrate skill in your agent runtime (Claude Code, Cursor, etc)
-#    It reads the .agent.partial and your original SKILL.md, fills in the gaps
+# Single skill directory (SKILL.md + reference docs, examples, etc.)
+skillspec migrate my-skill/
+# -> my-skill/my-skill.agent.partial (with file listing for the skill to read)
 
-# 3. Rename when you're happy with it
-mv my-skill.agent.partial my-skill.agent
+# Entire skills folder (multiple skill subdirs + shared references)
+skillspec migrate .assistant/skills/
+# -> one .agent.partial per skill subdir
+# -> orchestration scaffold detecting cross-skill pipelines and routing
+```
 
-# 4. Check and compile
+The CLI does mechanical extraction only — frontmatter, headings, obvious conditionals. It produces `.agent.partial` files with TODO markers and lightweight pointers to sibling skills and shared directories.
+
+The real work happens in the migrate skill (`skills/skillspec-migrate.agent`). Run it in your agent runtime (Claude Code, Cursor, etc.):
+
+```bash
+# Single skill — give it the partial and the directory to explore
+#   partial_file="my-skill/my-skill.agent.partial" source_dir="my-skill/"
+
+# Full tree — just give it the parent directory, no partial needed
+#   source_dir=".assistant/skills/"
+# It finds all SKILL.md files, greps for .md cross-references,
+# reads shared directories, and produces the complete set of .agent files
+```
+
+The skill reads files directly via `Read` and `Bash` — it explores the directory, detects orchestration patterns between skills, and produces whatever SkillSpec constructs fit (skills, pipelines, orchestrations, lazy context refs, imports). It validates its own output by running `skillspec check` and iterating on failures.
+
+```bash
+# When you're happy with the output
 skillspec check my-skill.agent
 skillspec build my-skill.agent
 # -> my-skill/SKILL.md (your runtimes never notice the difference)
 ```
-
-Step 1 gets you maybe 10-20% of the way. The migrate skill (`skills/skillspec-migrate.agent`) does the real work. How good that is depends on your LLM, not on SkillSpec.
 
 You don't need to migrate everything at once. Start with the skills that break most often or that multiple people edit. The rest can stay as markdown until you need them.
 
@@ -274,7 +292,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `fmt`     | Canonical formatting |
 | `deps`    | Step dependency graph |
 | `init`    | Scaffold a new `.agent` file |
-| `migrate` | Extract a SKILL.md into `.agent.partial` |
+| `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
 | `pack` / `install` | Bundle and install `.skillpkg` archives |
 | `test`    | List test blocks (doesn't run them) |
 
