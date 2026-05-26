@@ -1,2 +1,5 @@
 /target
 .claude/
+
+# Local cargo config (contains internal registry URLs)
+.cargo/config.toml
