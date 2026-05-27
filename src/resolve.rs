@@ -33,16 +33,26 @@ pub fn resolve_import_path(import_path: &str, base_dir: &Path) -> Option<PathBuf
 fn try_resolve(relative: &str, base_dir: &Path) -> Option<PathBuf> {
     let candidate = base_dir.join(relative);
 
-    if candidate.is_file() {
+    if candidate.is_file() && is_within(base_dir, &candidate) {
         return Some(candidate);
     }
 
     let with_ext = candidate.with_extension("agent");
-    if with_ext.is_file() {
+    if with_ext.is_file() && is_within(base_dir, &with_ext) {
         return Some(with_ext);
     }
 
     None
+}
+
+fn is_within(base: &Path, target: &Path) -> bool {
+    let Ok(canonical_base) = base.canonicalize() else {
+        return false;
+    };
+    let Ok(canonical_target) = target.canonicalize() else {
+        return false;
+    };
+    canonical_target.starts_with(&canonical_base)
 }
 
 /// Walk up from base_dir looking for `.skillspec/packages/<path>.agent`.

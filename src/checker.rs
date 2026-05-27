@@ -79,6 +79,27 @@ impl Checker {
             }
         }
 
+        // Validate construct names don't contain path separators
+        for skill in &file.skills {
+            if skill.name.contains('/') || skill.name.contains('\\') || skill.name.contains("..") {
+                self.errors.push(SkillSpecError::InvalidName {
+                    name: skill.name.clone(),
+                    span: skill.span,
+                });
+            }
+        }
+        for pipeline in &file.pipelines {
+            if pipeline.name.contains('/')
+                || pipeline.name.contains('\\')
+                || pipeline.name.contains("..")
+            {
+                self.errors.push(SkillSpecError::InvalidName {
+                    name: pipeline.name.clone(),
+                    span: pipeline.span,
+                });
+            }
+        }
+
         // Second pass: check each skill (with access to all skills/mixins for inheritance resolution)
         for skill in &file.skills {
             self.check_skill(

@@ -1311,7 +1311,7 @@ fn cmd_install(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Recursively copy directory contents from `src` to `dst`.
+/// Recursively copy directory contents from `src` to `dst`, skipping symlinks.
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(src)
         .map_err(|e| miette::miette!("Failed to read directory '{}': {}", src.display(), e))?
@@ -1320,7 +1320,16 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         let entry_path = entry.path();
         let dest_path = dst.join(entry.file_name());
 
-        if entry_path.is_dir() {
+        let metadata = entry_path.symlink_metadata().map_err(|e| {
+            miette::miette!("Failed to read metadata '{}': {}", entry_path.display(), e)
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            eprintln!("⚠ skipping symlink '{}'", entry_path.display());
+            continue;
+        }
+
+        if metadata.is_dir() {
             fs::create_dir_all(&dest_path).map_err(|e| {
                 miette::miette!("Failed to create dir '{}': {}", dest_path.display(), e)
             })?;

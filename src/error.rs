@@ -115,6 +115,9 @@ pub enum SkillSpecError {
         span: Span,
     },
 
+    #[error("Invalid name '{name}': must not contain path separators or '..' at {span}")]
+    InvalidName { name: String, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 
