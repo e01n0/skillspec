@@ -295,21 +295,23 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
 | `pack` / `install` | Bundle and install `.skillpkg` archives |
 | `test`    | List test blocks (doesn't run them) |
+| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). Routes LLM calls through the hosting agent |
 
-No LLM calls, no network. Anything that needs reasoning runs as a skill in your agent runtime.
+No LLM calls for core commands, no network. `optimize` uses SkillOpt and routes all LLM calls through the hosting agent session — zero external API cost.
 
 ## Roadmap
 
 Designed but not shipped.
 
 - **Runtime composition.** `use`, `pipeline`, `orchestration` currently compile to prose the LLM interprets. Real dispatch needs `.agentpkg` and runtimes that support it.
-- **Test execution.** Test blocks parse and type-check; `skillspec test` lists them. Running them needs LLM integration, which will be a skill, not a CLI command.
+- **Test execution.** Test blocks parse and type-check; `skillspec test --prepare` generates execution skills. Full LLM-driven execution available via `skillspec optimize`.
+- **Optimization writeback.** `skillspec optimize --writeback` to apply SkillOpt improvements back to `.agent` source (priorities, sampling, context text).
 - **Remote registry.** `publish` / `install` from a central registry.
 - **Language server.** LSP for highlighting, completion, diagnostics.
 
 ## Contributing
 
-Rust. `cargo test` (252 tests), `cargo build --release`. See `tests/` and `examples/`.
+Rust. `cargo test` (268 tests), `cargo build --release`. See `tests/` and `examples/`.
 
 ## License
 
