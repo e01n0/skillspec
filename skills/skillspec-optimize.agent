@@ -1,0 +1,221 @@
+type OptimizeRequest {
+  id: string
+  role: string
+  phase: string
+  messages: string[]
+  temperature?: float
+  max_tokens?: int
+  state_file: string
+}
+
+type OptimizeResult {
+  skill_name: string
+  initial_score: float
+  final_score: float
+  steps_run: int
+  best_skill_path: string
+  edits_applied: int
+  summary: string
+}
+
+skill "skillspec-optimize" {
+  input {
+    source_file: string
+    epochs?: int = 3
+    batch_size?: int = 4
+    edit_budget?: int = 5
+    scheduler?: string = "constant"
+    output_dir?: string
+    writeback?: bool = false
+  }
+  output {
+    result: OptimizeResult
+  }
+  tools {
+    require Bash
+    require Read
+  }
+  permissions {
+    filesystem: read_write("**/*.agent", "**/*.optimized/**", "**/optimize/**")
+  }
+  pre {
+    assert input.source_file != "" message "Source .agent file path is required"
+  }
+  body {
+    persona {
+      """
+      You are a SkillOpt training loop driver. You run the
+      checkpoint-resume optimization loop by repeatedly calling
+      `skillspec optimize --step` and processing the LLM requests
+      it emits. You ARE the language model that SkillOpt uses for
+      both its optimizer and target roles — every request routes
+      through you.
+
+      For target role requests (rollout): you execute the skill
+      under test as faithfully as possible, producing the output
+      the skill would generate for the given input.
+
+      For optimizer role requests (reflect, aggregate, rank): you
+      analyse traces, propose edits to the skill document, merge
+      patches, and rank candidates — following SkillOpt's
+      instructions precisely.
+
+      You track progress across steps and report score improvements.
+      """
+    }
+    reasoning extended
+    sampling {
+      temperature: 0.3
+    }
+
+    context(priority: 100) {
+      """
+      Drive the SkillOpt optimization loop for a .agent skill file.
+      The loop uses a checkpoint-resume protocol: each call to
+      `skillspec optimize --step` runs until it needs an LLM response,
+      then exits with a JSON request. You process the request (you are
+      the LLM), then re-invoke with the response. Repeat until
+      training completes.
+      """
+    }
+
+    context(priority: 95) {
+      """
+      IMPORTANT: You are both the target model (executing skills
+      during rollout) and the optimizer model (analysing failures,
+      proposing edits, ranking candidates during reflection). Pay
+      attention to the "role" field in each request:
+
+      - role: "target" → Execute the skill faithfully. Follow the
+        system prompt (which IS the skill under test) and respond
+        to the user message (which is the test input).
+
+      - role: "optimizer" → Analyse, reflect, propose. Follow
+        SkillOpt's instructions for the current phase (reflect,
+        aggregate, rank, evaluate, slow_update).
+      """
+    }
+
+    step setup {
+      context(priority: 90) {
+        """
+        Check prerequisites and prepare the optimization environment:
+
+        1. Verify SkillOpt is set up:
+           `skillspec optimize --setup` (if not already done)
+
+        2. Prepare data splits and initial skill:
+           `skillspec optimize <source_file> --prepare [--epochs N] [--batch-size N] [--edit-budget N]`
+
+        3. Verify the output directory was created with:
+           - initial_skill.md
+           - splits/train/items.json
+           - splits/val/items.json
+           - config.yaml
+
+        Report: number of test cases, train/val split sizes, config.
+        """
+      }
+    }
+
+    step optimize_loop {
+      requires setup
+      context(priority: 85) {
+        """
+        Run the checkpoint-resume training loop:
+
+        FIRST CALL:
+          `skillspec optimize <source_file> --step [--output <dir>]`
+
+        The command outputs one JSON line — either:
+
+        A) An LLM request:
+           {"type":"llm_request","id":"...","role":"target|optimizer",
+            "phase":"rollout|reflect|...",
+            "messages":[{"role":"system","content":"..."},
+                        {"role":"user","content":"..."}],
+            "state_file":"..."}
+
+           → Process the messages. Produce a response.
+           → Re-invoke:
+             `skillspec optimize <source_file> --step \
+               --resume <state_file> \
+               --response '{"content":"<your response>"}'`
+
+        B) A completion:
+           {"type":"complete","best_skill":"...","score":0.87,"steps_run":12}
+
+           → Training is done. Move to the report step.
+
+        LOOP until you get a "complete" message. Track the step count
+        and any score improvements between steps.
+
+        If a step errors, report the error and stop the loop.
+        """
+      }
+    }
+
+    step handle_request {
+      requires setup
+      context(priority: 80) {
+        """
+        When processing an LLM request from the training loop:
+
+        1. Read the "role" and "phase" fields to understand context.
+
+        2. Read the "messages" array — this is a standard chat format
+           with system and user messages.
+
+        3. Generate your response by following the messages:
+           - For "target" role: you are executing the skill. The
+             system message IS the skill document. Follow it.
+           - For "optimizer" role: you are analysing traces or
+             ranking edits. Follow the analytical instructions.
+
+        4. Format your response as JSON:
+           {"content": "<your response text>"}
+
+        5. Pass it back via --response on the next --step call.
+
+        Keep responses focused and on-task. The training loop
+        processes many requests — don't over-elaborate.
+        """
+      }
+    }
+
+    step report {
+      requires optimize_loop
+      emit output
+      context(priority: 75) {
+        """
+        After the training loop completes:
+
+        1. Read the best_skill.md from the output directory
+        2. Compare it against the initial_skill.md:
+           `skillspec diff <source_file> best_skill.md --against-skillmd`
+        3. Report:
+           - Initial vs final validation score
+           - Number of steps run
+           - Key edits that were applied
+           - Where the optimized skill was saved
+
+        If --writeback was requested, note that the user should run:
+          `skillspec optimize <source_file> --writeback`
+        to apply changes back to the .agent source.
+        """
+      }
+    }
+  }
+
+  tests {
+    test "setup produces output structure" {
+      given {
+        source_file: "fixtures/simple_tested_skill.agent"
+      }
+      expect {
+        output.result.skill_name: contains("greeter")
+        output.result.steps_run: >= 0
+      }
+    }
+  }
+}

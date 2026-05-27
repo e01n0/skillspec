@@ -147,6 +147,82 @@ pub fn evaluate_confidence(results: &[bool], threshold: f64) -> bool {
     pass_rate >= threshold
 }
 
+// ── SkillOpt split data ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SplitData {
+    pub train_items: Vec<TestItem>,
+    pub val_items: Vec<TestItem>,
+    pub valid_seen_items: Vec<TestItem>,
+    pub valid_unseen_items: Vec<TestItem>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TestItem {
+    pub id: String,
+    pub input: serde_json::Value,
+    pub expected_output: serde_json::Value,
+    pub task_type: String,
+}
+
+pub fn prepare_split_data(skill: &Skill) -> SplitData {
+    let items: Vec<TestItem> = skill.tests.iter().map(|test| {
+        let input: serde_json::Map<String, serde_json::Value> = test.given.iter()
+            .map(|(name, expr)| (name.clone(), expr_to_json(expr)))
+            .collect();
+
+        let expected: Vec<serde_json::Value> = test.expectations.iter()
+            .map(|exp| serde_json::json!({
+                "path": exp.path,
+                "assertion": format!("{:?}", exp.assertion),
+            }))
+            .collect();
+
+        TestItem {
+            id: test.name.clone(),
+            input: serde_json::Value::Object(input),
+            expected_output: serde_json::json!({
+                "assertions": expected,
+                "confidence": test.confidence,
+                "runs": test.runs,
+            }),
+            task_type: skill.name.clone(),
+        }
+    }).collect();
+
+    // Deterministic 80/20 split by hashing the test name
+    let mut train = Vec::new();
+    let mut val = Vec::new();
+
+    for item in items {
+        let hash = simple_hash(&item.id);
+        if hash % 5 == 0 {
+            val.push(item);
+        } else {
+            train.push(item);
+        }
+    }
+
+    // Ensure at least one item in each split
+    if val.is_empty() && train.len() > 1 {
+        val.push(train.pop().unwrap());
+    } else if train.is_empty() && val.len() > 1 {
+        train.push(val.pop().unwrap());
+    }
+
+    let valid_seen = val.clone();
+    let valid_unseen = val.clone();
+    SplitData { train_items: train, val_items: val, valid_seen_items: valid_seen, valid_unseen_items: valid_unseen }
+}
+
+fn simple_hash(s: &str) -> u64 {
+    let mut hash: u64 = 5381;
+    for byte in s.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
+    }
+    hash
+}
+
 // ── Test preparation ────────────────────────────────────────────────────────
 
 pub fn prepare_test_skill(skill: &Skill, source: &SourceFile) -> String {
@@ -447,6 +523,83 @@ mod tests {
     fn eval_confidence_not_met() {
         let results = vec![true, true, true, true, true, true, true, false, false, false];
         assert!(!evaluate_confidence(&results, 0.9));
+    }
+
+    #[test]
+    fn split_data_produces_items_with_required_fields() {
+        let source = r#"
+            skill "greeter" {
+                input { name: string }
+                body { context { "Greet." } }
+                tests {
+                    test "alice" { given { name: "Alice" } expect { output.result: contains("Alice") } }
+                    test "bob"   { given { name: "Bob" }   expect { output.result: contains("Bob") } }
+                    test "carol" { given { name: "Carol" } expect { output.result: contains("Carol") } }
+                    test "dave"  { given { name: "Dave" }  expect { output.result: contains("Dave") } }
+                    test "eve"   { given { name: "Eve" }   expect { output.result: contains("Eve") } }
+                    test "frank" { given { name: "Frank" } expect { output.result: contains("Frank") } }
+                }
+            }
+        "#;
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let ast = crate::parser::Parser::new(tokens).parse().unwrap();
+        let split = prepare_split_data(&ast.skills[0]);
+
+        let total = split.train_items.len() + split.val_items.len();
+        assert_eq!(total, 6);
+        assert!(!split.train_items.is_empty());
+        assert!(!split.val_items.is_empty());
+
+        for item in split.train_items.iter().chain(split.val_items.iter()) {
+            assert!(!item.id.is_empty());
+            assert_eq!(item.task_type, "greeter");
+            assert!(item.input.is_object());
+            assert!(item.expected_output.get("assertions").is_some());
+        }
+    }
+
+    #[test]
+    fn split_data_single_test_has_both_splits() {
+        let source = r#"
+            skill "solo" {
+                input { q: string }
+                body { context { "Go." } }
+                tests {
+                    test "only" { given { q: "x" } expect { output.result: equals("y") } }
+                }
+            }
+        "#;
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let ast = crate::parser::Parser::new(tokens).parse().unwrap();
+        let split = prepare_split_data(&ast.skills[0]);
+
+        assert_eq!(split.train_items.len() + split.val_items.len(), 1);
+        // With only 1 item, it goes to either train or val but both shouldn't be empty isn't enforced
+        // for single items — it has to go somewhere
+        assert!(split.train_items.len() == 1 || split.val_items.len() == 1);
+    }
+
+    #[test]
+    fn split_data_deterministic() {
+        let source = r#"
+            skill "det" {
+                input { x: string }
+                body { context { "." } }
+                tests {
+                    test "a" { given { x: "1" } expect { output.r: equals("1") } }
+                    test "b" { given { x: "2" } expect { output.r: equals("2") } }
+                    test "c" { given { x: "3" } expect { output.r: equals("3") } }
+                }
+            }
+        "#;
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let ast = crate::parser::Parser::new(tokens).parse().unwrap();
+        let split1 = prepare_split_data(&ast.skills[0]);
+        let split2 = prepare_split_data(&ast.skills[0]);
+
+        let ids1: Vec<&str> = split1.train_items.iter().map(|i| i.id.as_str()).collect();
+        let ids2: Vec<&str> = split2.train_items.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids1, ids2);
     }
 
     #[test]

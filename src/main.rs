@@ -17,6 +17,7 @@ use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
 use skillspec_core::compiler_cursor::CursorCompiler;
 use skillspec_core::compiler_clinerules::ClineRulesCompiler;
 use skillspec_core::migrate;
+use skillspec_core::optimize;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
 
@@ -102,6 +103,50 @@ enum Commands {
         #[arg(long)]
         semver: bool,
     },
+    /// Optimize skills using SkillOpt — iterative LLM-driven improvement via the hosting agent
+    Optimize {
+        /// Path to the .agent file to optimize
+        file: String,
+        /// Set up SkillOpt: clone repo, create venv, install deps
+        #[arg(long)]
+        setup: bool,
+        /// Show config and data splits without running
+        #[arg(long)]
+        dry_run: bool,
+        /// Compile initial SKILL.md and export data splits (no training)
+        #[arg(long)]
+        prepare: bool,
+        /// Run one training step: returns LLM request or completion
+        #[arg(long)]
+        step: bool,
+        /// Resume from checkpoint state file
+        #[arg(long)]
+        resume: Option<String>,
+        /// Agent's JSON response to the last LLM request
+        #[arg(long)]
+        response: Option<String>,
+        /// Number of training epochs (default: 3)
+        #[arg(long, default_value = "3")]
+        epochs: u32,
+        /// Minibatch size for reflection (default: 4)
+        #[arg(long, default_value = "4")]
+        batch_size: u32,
+        /// Max edits per step — the "learning rate" (default: 5)
+        #[arg(long, default_value = "5")]
+        edit_budget: u32,
+        /// Edit budget scheduler: constant, linear, or cosine (default: constant)
+        #[arg(long, default_value = "constant")]
+        scheduler: String,
+        /// Output directory (default: <skill>.optimized/)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Write optimized changes back to .agent source
+        #[arg(long)]
+        writeback: bool,
+        /// Write to .agent.optimized instead of modifying source
+        #[arg(long)]
+        no_overwrite: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -140,6 +185,50 @@ fn main() -> Result<()> {
         Commands::Grammar => cmd_grammar(),
         Commands::Lint { file } => cmd_lint(&file),
         Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
+        Commands::Optimize { file, setup, dry_run, prepare, step, resume, response,
+                             epochs, batch_size, edit_budget, scheduler, output,
+                             writeback, no_overwrite } => {
+            let config = optimize::OptimizeConfig {
+                file: file.clone(),
+                setup,
+                dry_run,
+                prepare,
+                step,
+                resume,
+                response,
+                epochs,
+                batch_size,
+                edit_budget,
+                scheduler,
+                output,
+                writeback,
+                no_overwrite,
+            };
+            if setup {
+                return optimize::cmd_optimize(config, &SourceFile {
+                    imports: vec![], type_defs: vec![], skills: vec![],
+                    pipelines: vec![], orchestrations: vec![], mixins: vec![],
+                    packages: vec![],
+                });
+            }
+            let ast = read_and_parse(&file)?;
+            let base_dir = std::path::Path::new(&file)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let mut checker = Checker::with_base_dir(base_dir);
+            if let Err(errors) = checker.check(&ast) {
+                for err in &errors {
+                    eprintln!("error: {}", err);
+                }
+                return Err(miette::miette!(
+                    "{} error(s) in '{}'; fix them before optimizing",
+                    errors.len(),
+                    file
+                ));
+            }
+            optimize::cmd_optimize(config, &ast)
+        }
     }
 }
 
