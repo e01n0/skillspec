@@ -698,6 +698,32 @@ greeter.optimized/
     └── valid_unseen/items.json
 ```
 
+### Writing changes back to source
+
+After optimization, apply the improvements back to your `.agent` file:
+
+```sh
+skillspec optimize greeter.agent --writeback
+```
+
+This reads `best_skill.md`, diffs it against `initial_skill.md`, and maps changes back to the AST:
+
+- **Updated context text**: The optimizer rewrote a context → the source text is updated.
+- **Priority changes**: The optimizer promoted a context from `supplementary` to `critical` → the priority flag is updated.
+- **New contexts**: The optimizer added guidance that didn't exist before → a new `context` block is inserted.
+- **Sampling/persona changes**: Adjusted temperature or persona text → directives are updated.
+
+Matching uses word-level overlap, so the optimizer can heavily rewrite a context and it still maps back to the right source block.
+
+Use `--no-overwrite` to write to a separate file instead of modifying the source:
+
+```sh
+skillspec optimize greeter.agent --writeback --no-overwrite
+# → greeter.agent.optimized
+```
+
+The output is validated with `skillspec check` before writing — if the mutations produce an invalid `.agent` file, the source is left untouched.
+
 ### Cost
 
 When running inside an agent session (the default mode), all LLM calls are handled by the hosting agent. **No external API keys, no additional cost.** The only cost is the agent's own token usage.
