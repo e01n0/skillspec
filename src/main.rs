@@ -297,7 +297,7 @@ fn cmd_lint(path: &str) -> Result<()> {
     }
 
     let engine = LintEngine::new();
-    let diagnostics = engine.run(&ast);
+    let diagnostics = engine.run_with_path(&ast, std::path::Path::new(path));
 
     if diagnostics.is_empty() {
         println!("✓ {}: no lint warnings", path);
