@@ -844,3 +844,23 @@ fn migrate_directory_integration() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn test_no_tests_shows_hint() {
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let dir = std::env::temp_dir().join("skillspec_test_hint");
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent = dir.join("empty.agent");
+    std::fs::write(&agent, r#"skill "empty" { body { context { "ok" } } }"#).unwrap();
+    let output = std::process::Command::new(bin)
+        .args(["test", agent.to_str().unwrap()])
+        .output()
+        .expect("failed to run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tests {"),
+        "should hint about adding a tests block: {}",
+        stderr
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1337,7 +1337,7 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
     }
 
     if total == 0 {
-        eprintln!("No tests found in '{path}'.");
+        eprintln!("No tests found in '{path}'.\n\nHint: add a tests {{ }} block to your skill — see docs/guide.md#tests");
     } else {
         eprintln!("To execute tests:\n  skillspec test {path} --prepare\n  <run the test skill in your agent runtime>\n  skillspec test {path} --evaluate results.json");
     }
