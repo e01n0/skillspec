@@ -49,37 +49,49 @@ impl Formatter {
         let mut first = true;
 
         for import in &file.imports {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_import(import);
         }
 
         for td in &file.type_defs {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_type_def(td);
         }
 
         for mixin in &file.mixins {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_mixin(mixin);
         }
 
         for skill in &file.skills {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_skill(skill);
         }
 
         for pipeline in &file.pipelines {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_pipeline(pipeline);
         }
 
         for orch in &file.orchestrations {
-            if !first { self.blank(); }
+            if !first {
+                self.blank();
+            }
             first = false;
             self.emit_orchestration(orch);
         }
@@ -108,7 +120,13 @@ impl Formatter {
         let opt = if field.optional { "?" } else { "" };
         let ty = type_expr_to_string(&field.ty);
         if let Some(default) = &field.default {
-            self.line(&format!("{}{}: {} = {}", field.name, opt, ty, expr_to_string(default)));
+            self.line(&format!(
+                "{}{}: {} = {}",
+                field.name,
+                opt,
+                ty,
+                expr_to_string(default)
+            ));
         } else {
             self.line(&format!("{}{}: {}", field.name, opt, ty));
         }
@@ -206,13 +224,17 @@ impl Formatter {
                     self.line(&format!("{} mcp(\"{}\") {{", keyword, server));
                     self.indent += 1;
                     for method in &tool.methods {
-                        let params: Vec<String> = method.params.iter().map(|(name, ty, opt)| {
-                            if *opt {
-                                format!("{}?: {}", name, type_expr_to_string(ty))
-                            } else {
-                                format!("{}: {}", name, type_expr_to_string(ty))
-                            }
-                        }).collect();
+                        let params: Vec<String> = method
+                            .params
+                            .iter()
+                            .map(|(name, ty, opt)| {
+                                if *opt {
+                                    format!("{}?: {}", name, type_expr_to_string(ty))
+                                } else {
+                                    format!("{}: {}", name, type_expr_to_string(ty))
+                                }
+                            })
+                            .collect();
                         self.line(&format!(
                             "{}({}) -> {}",
                             method.name,
@@ -486,10 +508,17 @@ impl Formatter {
         self.line("observe {");
         self.indent += 1;
         for event in &observe.events {
-            self.line(&format!("on {} {{ emit_event \"{}\" }}", event.trigger, event.event_name));
+            self.line(&format!(
+                "on {} {{ emit_event \"{}\" }}",
+                event.trigger, event.event_name
+            ));
         }
         for metric in &observe.metrics {
-            self.line(&format!("metric \"{}\" from {}", metric.name, expr_to_string(&metric.source)));
+            self.line(&format!(
+                "metric \"{}\" from {}",
+                metric.name,
+                expr_to_string(&metric.source)
+            ));
         }
         self.indent -= 1;
         self.line("}");
@@ -514,7 +543,11 @@ impl Formatter {
             self.emit_use_call(use_call);
         }
         for binding in &step.lets {
-            self.line(&format!("let {} = {}", binding.name, expr_to_string(&binding.value)));
+            self.line(&format!(
+                "let {} = {}",
+                binding.name,
+                expr_to_string(&binding.value)
+            ));
         }
         if step.emit {
             self.line("emit output");
@@ -531,7 +564,9 @@ impl Formatter {
         if call.args.is_empty() {
             self.line(&format!("use {}()", call.skill_name));
         } else {
-            let args: Vec<String> = call.args.iter()
+            let args: Vec<String> = call
+                .args
+                .iter()
                 .map(|(k, v)| format!("{}: {}", k, expr_to_string(v)))
                 .collect();
             self.line(&format!("use {}({})", call.skill_name, args.join(", ")));
@@ -616,12 +651,16 @@ impl Formatter {
                 if action.args.is_empty() {
                     self.line(&format!("{}.{}()", action.agent_name, action.method));
                 } else {
-                    let args: Vec<String> = action.args.iter()
+                    let args: Vec<String> = action
+                        .args
+                        .iter()
                         .map(|(k, v)| format!("{}: {}", k, expr_to_string(v)))
                         .collect();
                     self.line(&format!(
                         "{}.{}({})",
-                        action.agent_name, action.method, args.join(", ")
+                        action.agent_name,
+                        action.method,
+                        args.join(", ")
                     ));
                 }
             }
@@ -667,7 +706,11 @@ impl Formatter {
                 self.line("expect {");
                 self.indent += 1;
                 for exp in &test.expectations {
-                    self.line(&format!("{}: {}", exp.path, assertion_to_string(&exp.assertion)));
+                    self.line(&format!(
+                        "{}: {}",
+                        exp.path,
+                        assertion_to_string(&exp.assertion)
+                    ));
                 }
                 self.indent -= 1;
                 self.line("}");
@@ -713,7 +756,9 @@ impl Formatter {
                 self.line(&format!("mock {} {{", mock.tool_path));
                 self.indent += 1;
                 for resp in responses {
-                    let args: Vec<String> = resp.args.iter()
+                    let args: Vec<String> = resp
+                        .args
+                        .iter()
                         .map(|(k, v)| format!("{}: {}", k, expr_to_string(v)))
                         .collect();
                     self.line(&format!(
@@ -766,7 +811,11 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
         TypeExpr::Float => "float".to_string(),
         TypeExpr::Bool => "bool".to_string(),
         TypeExpr::Array(inner) => format!("{}[]", type_expr_to_string(inner)),
-        TypeExpr::Map(k, v) => format!("map<{}, {}>", type_expr_to_string(k), type_expr_to_string(v)),
+        TypeExpr::Map(k, v) => format!(
+            "map<{}, {}>",
+            type_expr_to_string(k),
+            type_expr_to_string(v)
+        ),
         TypeExpr::Enum(variants) => {
             let vs: Vec<String> = variants.iter().map(|v| format!("\"{}\"", v)).collect();
             format!("enum({})", vs.join(", "))
@@ -803,7 +852,8 @@ fn expr_to_string(expr: &Expr) -> String {
         }
         Expr::Not(inner) => format!("!{}", expr_to_string(inner)),
         Expr::FnCall(name, args) => {
-            let parts: Vec<String> = args.iter()
+            let parts: Vec<String> = args
+                .iter()
                 .map(|(k, v)| format!("{}: {}", k, expr_to_string(v)))
                 .collect();
             format!("{}({})", name, parts.join(", "))
@@ -828,7 +878,9 @@ fn assertion_to_string(a: &AssertionExpr) -> String {
         AssertionExpr::Matches(p) => format!("matches(\"{}\")", p),
         AssertionExpr::Resembles(d) => format!("resembles(\"{}\")", d),
         AssertionExpr::Satisfies(d) => format!("satisfies(\"{}\")", d),
-        AssertionExpr::Between(lo, hi) => format!("between({}, {})", expr_to_string(lo), expr_to_string(hi)),
+        AssertionExpr::Between(lo, hi) => {
+            format!("between({}, {})", expr_to_string(lo), expr_to_string(hi))
+        }
         AssertionExpr::Comparison(op, val) => {
             let op_str = match op {
                 BinOp::Eq => "==",
@@ -930,8 +982,11 @@ mod tests {
 
     #[test]
     fn formats_full_brainstorming() {
-        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brainstorming.agent"))
-            .unwrap();
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/brainstorming.agent"
+        ))
+        .unwrap();
         let formatted = format_source(&source).unwrap();
         // Should round-trip parse
         let tokens = crate::lexer::Lexer::new(&formatted).tokenize().unwrap();
@@ -953,7 +1008,10 @@ mod tests {
         let formatted = format_source(input).unwrap();
         let input_pos = formatted.find("input {").unwrap();
         let body_pos = formatted.find("body {").unwrap();
-        assert!(input_pos < body_pos, "input should come before body in canonical output");
+        assert!(
+            input_pos < body_pos,
+            "input should come before body in canonical output"
+        );
     }
 
     // ── Round-trip property tests for fixtures ──────────────────────
@@ -965,14 +1023,16 @@ mod tests {
         let ast1 = crate::parser::Parser::new(tokens1).parse().unwrap();
         let formatted = Formatter::format(&ast1);
 
-        let tokens2 = crate::lexer::Lexer::new(&formatted).tokenize()
+        let tokens2 = crate::lexer::Lexer::new(&formatted)
+            .tokenize()
             .unwrap_or_else(|e| {
                 for (i, line) in formatted.lines().enumerate() {
                     eprintln!("{:>4}: {}", i + 1, line);
                 }
                 panic!("Lexer failed on formatted output: {}", e);
             });
-        let ast2 = crate::parser::Parser::new(tokens2).parse()
+        let ast2 = crate::parser::Parser::new(tokens2)
+            .parse()
             .unwrap_or_else(|e| {
                 for (i, line) in formatted.lines().enumerate() {
                     eprintln!("{:>4}: {}", i + 1, line);
@@ -982,20 +1042,43 @@ mod tests {
 
         // Same number of top-level constructs
         assert_eq!(ast1.skills.len(), ast2.skills.len(), "skill count mismatch");
-        assert_eq!(ast1.pipelines.len(), ast2.pipelines.len(), "pipeline count mismatch");
-        assert_eq!(ast1.orchestrations.len(), ast2.orchestrations.len(), "orchestration count mismatch");
-        assert_eq!(ast1.type_defs.len(), ast2.type_defs.len(), "type_defs count mismatch");
+        assert_eq!(
+            ast1.pipelines.len(),
+            ast2.pipelines.len(),
+            "pipeline count mismatch"
+        );
+        assert_eq!(
+            ast1.orchestrations.len(),
+            ast2.orchestrations.len(),
+            "orchestration count mismatch"
+        );
+        assert_eq!(
+            ast1.type_defs.len(),
+            ast2.type_defs.len(),
+            "type_defs count mismatch"
+        );
         assert_eq!(ast1.mixins.len(), ast2.mixins.len(), "mixin count mismatch");
-        assert_eq!(ast1.imports.len(), ast2.imports.len(), "import count mismatch");
+        assert_eq!(
+            ast1.imports.len(),
+            ast2.imports.len(),
+            "import count mismatch"
+        );
 
         // Same skill names and step counts
         for (s1, s2) in ast1.skills.iter().zip(ast2.skills.iter()) {
             assert_eq!(s1.name, s2.name, "skill name mismatch");
-            assert_eq!(s1.body.steps.len(), s2.body.steps.len(),
-                "step count mismatch in skill '{}'", s1.name);
+            assert_eq!(
+                s1.body.steps.len(),
+                s2.body.steps.len(),
+                "step count mismatch in skill '{}'",
+                s1.name
+            );
             for (st1, st2) in s1.body.steps.iter().zip(s2.body.steps.iter()) {
-                assert_eq!(st1.name, st2.name,
-                    "step name mismatch in skill '{}'", s1.name);
+                assert_eq!(
+                    st1.name, st2.name,
+                    "step name mismatch in skill '{}'",
+                    s1.name
+                );
             }
         }
 
@@ -1012,15 +1095,23 @@ mod tests {
         // Same pipeline names and stage counts
         for (p1, p2) in ast1.pipelines.iter().zip(ast2.pipelines.iter()) {
             assert_eq!(p1.name, p2.name, "pipeline name mismatch");
-            assert_eq!(p1.stages.len(), p2.stages.len(),
-                "stage count mismatch in pipeline '{}'", p1.name);
+            assert_eq!(
+                p1.stages.len(),
+                p2.stages.len(),
+                "stage count mismatch in pipeline '{}'",
+                p1.name
+            );
         }
 
         // Same orchestration names and phase counts
         for (o1, o2) in ast1.orchestrations.iter().zip(ast2.orchestrations.iter()) {
             assert_eq!(o1.name, o2.name, "orchestration name mismatch");
-            assert_eq!(o1.phases.len(), o2.phases.len(),
-                "phase count mismatch in orchestration '{}'", o1.name);
+            assert_eq!(
+                o1.phases.len(),
+                o2.phases.len(),
+                "phase count mismatch in orchestration '{}'",
+                o1.name
+            );
         }
     }
 

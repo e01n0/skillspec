@@ -237,6 +237,8 @@ skillspec build my-skill.agent --to                   # interactive menu
 
 `--to` auto-selects the right build target for each runtime. Combine with `--watch` to redeploy on every save.
 
+See `examples/` for more: [pipelines](examples/pipeline.agent), [orchestrations](examples/orchestration.agent), [tests](examples/tested-skill.agent), [composition](examples/composition.agent).
+
 [Quickstart guide](docs/quickstart.md) has more. [Language reference](docs/language-reference.md) has everything.
 
 ## Migrating an existing skill
@@ -298,7 +300,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
 | `pack` / `install` | Bundle and install `.skillpkg` archives |
 | `test`    | List test blocks (doesn't run them) |
-| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source |
+| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source. [Guide](docs/optimize-guide.md) |
 
 No LLM calls for core commands, no network. `optimize` uses SkillOpt and routes all LLM calls through the hosting agent session — zero external API cost.
 
@@ -313,7 +315,7 @@ Designed but not shipped.
 
 ## Contributing
 
-Rust. `cargo test` (268 tests), `cargo build --release`. See `tests/` and `examples/`.
+Rust. `cargo test`, `cargo build --release`. See `tests/` and `examples/`.
 
 ## License
 

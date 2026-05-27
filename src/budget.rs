@@ -25,13 +25,34 @@ impl BudgetReport {
     pub fn display(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("Skill: {}\n", self.skill_name));
-        out.push_str(&format!("  Eager context:   ~{} tokens\n", self.eager_context_tokens));
-        out.push_str(&format!("  Lazy summaries:  ~{} tokens\n", self.lazy_summary_tokens));
-        out.push_str(&format!("  Lazy bodies:     ~{} tokens (on demand)\n", self.lazy_body_tokens));
-        out.push_str(&format!("  Directives:      ~{} tokens\n", self.directive_tokens));
-        out.push_str(&format!("  Steps ({}):      ~{} tokens\n", self.step_count, self.step_tokens));
-        out.push_str(&format!("  Total eager:     ~{} tokens\n", self.total_eager()));
-        out.push_str(&format!("  Total potential: ~{} tokens\n", self.total_potential()));
+        out.push_str(&format!(
+            "  Eager context:   ~{} tokens\n",
+            self.eager_context_tokens
+        ));
+        out.push_str(&format!(
+            "  Lazy summaries:  ~{} tokens\n",
+            self.lazy_summary_tokens
+        ));
+        out.push_str(&format!(
+            "  Lazy bodies:     ~{} tokens (on demand)\n",
+            self.lazy_body_tokens
+        ));
+        out.push_str(&format!(
+            "  Directives:      ~{} tokens\n",
+            self.directive_tokens
+        ));
+        out.push_str(&format!(
+            "  Steps ({}):      ~{} tokens\n",
+            self.step_count, self.step_tokens
+        ));
+        out.push_str(&format!(
+            "  Total eager:     ~{} tokens\n",
+            self.total_eager()
+        ));
+        out.push_str(&format!(
+            "  Total potential: ~{} tokens\n",
+            self.total_potential()
+        ));
         out
     }
 }
@@ -68,8 +89,12 @@ fn directive_chars(d: &PromptDirectives) -> usize {
     }
     if let Some(sampling) = &d.sampling {
         total += 30; // sampling block is small
-        if sampling.temperature.is_some() { total += 15; }
-        if sampling.top_p.is_some() { total += 10; }
+        if sampling.temperature.is_some() {
+            total += 15;
+        }
+        if sampling.top_p.is_some() {
+            total += 10;
+        }
     }
     if let Some(fmt) = &d.format {
         total += fmt.style.len() + fmt.structure.len() + 20;
@@ -88,22 +113,29 @@ fn directive_chars(d: &PromptDirectives) -> usize {
 
 pub fn estimate_skill_budget(skill: &Skill) -> BudgetReport {
     // Eager context: all context blocks in body
-    let eager_chars: usize = skill.body.contexts.iter()
-        .map(context_block_chars)
-        .sum();
+    let eager_chars: usize = skill.body.contexts.iter().map(context_block_chars).sum();
 
     // Lazy summaries
-    let lazy_summary_chars: usize = skill.body.lazy_contexts.iter()
+    let lazy_summary_chars: usize = skill
+        .body
+        .lazy_contexts
+        .iter()
         .map(|lc| lc.summary.len())
         .sum();
 
     // Lazy bodies
-    let lazy_body_chars: usize = skill.body.lazy_contexts.iter()
+    let lazy_body_chars: usize = skill
+        .body
+        .lazy_contexts
+        .iter()
         .map(lazy_content_chars)
         .sum();
 
     // Steps: context blocks within steps
-    let step_chars: usize = skill.body.steps.iter()
+    let step_chars: usize = skill
+        .body
+        .steps
+        .iter()
         .flat_map(|s| s.contexts.iter())
         .map(context_block_chars)
         .sum();
@@ -149,7 +181,8 @@ pub fn trim_to_budget(contexts: &mut Vec<ContextBlock>, budget: usize) -> Vec<Tr
     }
 
     while total_tokens(contexts) > budget && !contexts.is_empty() {
-        let lowest_idx = contexts.iter()
+        let lowest_idx = contexts
+            .iter()
             .enumerate()
             .filter(|(_, c)| c.priority != Some(Priority::Critical))
             .min_by_key(|(_, c)| c.priority.unwrap_or(Priority::Supplementary).rank())
@@ -230,20 +263,30 @@ mod tests {
             decay: None,
             until: None,
             text: text.to_string(),
-            span: crate::token::Span { start: 0, end: 0, line: 0, col: 0 },
+            span: crate::token::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
+            },
         }
     }
 
     #[test]
     fn trim_drops_lowest_priority_first() {
         let mut contexts = vec![
-            make_context(&"h".repeat(80), Some(Priority::Critical)),      // 20 tokens
+            make_context(&"h".repeat(80), Some(Priority::Critical)), // 20 tokens
             make_context(&"m".repeat(800), Some(Priority::Supplementary)), // 200 tokens
-            make_context(&"l".repeat(800), Some(Priority::Optional)),      // 200 tokens
+            make_context(&"l".repeat(800), Some(Priority::Optional)), // 200 tokens
         ];
         let trimmed = trim_to_budget(&mut contexts, 250);
         assert_eq!(contexts.len(), 2, "should keep 2 contexts");
-        assert!(contexts.iter().all(|c| c.priority != Some(Priority::Optional)), "optional should be dropped");
+        assert!(
+            contexts
+                .iter()
+                .all(|c| c.priority != Some(Priority::Optional)),
+            "optional should be dropped"
+        );
         assert_eq!(trimmed.len(), 1);
         assert_eq!(trimmed[0].priority, Some(Priority::Optional));
     }
@@ -251,14 +294,17 @@ mod tests {
     #[test]
     fn trim_drops_multiple_until_budget_met() {
         let mut contexts = vec![
-            make_context(&"a".repeat(400), Some(Priority::Critical)),       // 100 tokens
-            make_context(&"b".repeat(400), Some(Priority::Important)),      // 100 tokens
-            make_context(&"c".repeat(400), Some(Priority::Supplementary)),  // 100 tokens
-            make_context(&"d".repeat(400), Some(Priority::Optional)),       // 100 tokens
+            make_context(&"a".repeat(400), Some(Priority::Critical)), // 100 tokens
+            make_context(&"b".repeat(400), Some(Priority::Important)), // 100 tokens
+            make_context(&"c".repeat(400), Some(Priority::Supplementary)), // 100 tokens
+            make_context(&"d".repeat(400), Some(Priority::Optional)), // 100 tokens
         ];
         let trimmed = trim_to_budget(&mut contexts, 100);
         assert!(estimate_context_tokens(&contexts) <= 100);
-        assert!(trimmed.len() >= 2, "should drop at least 2 to reach 100 tokens (critical is protected)");
+        assert!(
+            trimmed.len() >= 2,
+            "should drop at least 2 to reach 100 tokens (critical is protected)"
+        );
     }
 
     #[test]
@@ -275,9 +321,7 @@ mod tests {
 
     #[test]
     fn trim_under_budget_no_changes() {
-        let mut contexts = vec![
-            make_context("short", Some(Priority::Important)),
-        ];
+        let mut contexts = vec![make_context("short", Some(Priority::Important))];
         let trimmed = trim_to_budget(&mut contexts, 1000);
         assert!(trimmed.is_empty());
         assert_eq!(contexts.len(), 1);
@@ -286,18 +330,25 @@ mod tests {
     #[test]
     fn trim_never_drops_critical() {
         let mut contexts = vec![
-            make_context(&"a".repeat(800), Some(Priority::Critical)),  // 200 tokens
-            make_context(&"b".repeat(800), Some(Priority::Critical)),  // 200 tokens
+            make_context(&"a".repeat(800), Some(Priority::Critical)), // 200 tokens
+            make_context(&"b".repeat(800), Some(Priority::Critical)), // 200 tokens
         ];
         let trimmed = trim_to_budget(&mut contexts, 50);
-        assert_eq!(contexts.len(), 2, "critical contexts should never be trimmed");
+        assert_eq!(
+            contexts.len(),
+            2,
+            "critical contexts should never be trimmed"
+        );
         assert!(trimmed.is_empty());
     }
 
     #[test]
     fn budget_full_brainstorming() {
-        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brainstorming.agent"))
-            .unwrap();
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/brainstorming.agent"
+        ))
+        .unwrap();
         let report = budget_from_source(&source).unwrap();
         assert!(report.contains("brainstorming"));
         assert!(report.contains("Steps (4)"));

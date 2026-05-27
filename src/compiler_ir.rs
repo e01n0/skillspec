@@ -1,7 +1,7 @@
-use std::io::Write;
-use std::path::Path;
 use crate::ast::SourceFile;
 use crate::compiler_skillmd::SkillMdCompiler;
+use std::io::Write;
+use std::path::Path;
 
 pub struct AgentPkg {
     pub manifest: serde_json::Value,
@@ -34,13 +34,19 @@ impl IrCompiler {
         });
 
         let compiler = SkillMdCompiler::new();
-        let skills: Vec<(String, String)> = file.skills.iter()
+        let skills: Vec<(String, String)> = file
+            .skills
+            .iter()
             .map(|s| (s.name.clone(), compiler.compile(s, file)))
             .collect();
 
-        let types: serde_json::Value = file.type_defs.iter()
+        let types: serde_json::Value = file
+            .type_defs
+            .iter()
             .map(|t| {
-                let fields: Vec<serde_json::Value> = t.fields.iter()
+                let fields: Vec<serde_json::Value> = t
+                    .fields
+                    .iter()
                     .map(|f| serde_json::json!({ "name": f.name, "optional": f.optional }))
                     .collect();
                 serde_json::json!({ "name": t.name, "fields": fields })
@@ -61,7 +67,8 @@ impl IrCompiler {
         std::fs::write(
             dir.join("manifest.json"),
             serde_json::to_string_pretty(&pkg.manifest).map_err(|e| e.to_string())?,
-        ).map_err(|e| format!("write manifest: {e}"))?;
+        )
+        .map_err(|e| format!("write manifest: {e}"))?;
 
         std::fs::write(dir.join("source.agent"), &pkg.source)
             .map_err(|e| format!("write source: {e}"))?;
@@ -70,7 +77,8 @@ impl IrCompiler {
             std::fs::write(
                 dir.join(".types.json"),
                 serde_json::to_string_pretty(&pkg.types).map_err(|e| e.to_string())?,
-            ).map_err(|e| format!("write types: {e}"))?;
+            )
+            .map_err(|e| format!("write types: {e}"))?;
         }
 
         for (name, content) in &pkg.skills {
@@ -231,11 +239,26 @@ mod tests {
         let manifest: serde_json::Value = serde_json::from_reader(manifest).unwrap();
 
         assert_eq!(manifest["ir_version"], 1);
-        assert_eq!(manifest["skills"].as_array().unwrap().len(), ast.skills.len());
-        assert_eq!(manifest["pipelines"].as_array().unwrap().len(), ast.pipelines.len());
-        assert_eq!(manifest["orchestrations"].as_array().unwrap().len(), ast.orchestrations.len());
-        assert_eq!(manifest["types"].as_array().unwrap().len(), ast.type_defs.len());
-        assert_eq!(manifest["mixins"].as_array().unwrap().len(), ast.mixins.len());
+        assert_eq!(
+            manifest["skills"].as_array().unwrap().len(),
+            ast.skills.len()
+        );
+        assert_eq!(
+            manifest["pipelines"].as_array().unwrap().len(),
+            ast.pipelines.len()
+        );
+        assert_eq!(
+            manifest["orchestrations"].as_array().unwrap().len(),
+            ast.orchestrations.len()
+        );
+        assert_eq!(
+            manifest["types"].as_array().unwrap().len(),
+            ast.type_defs.len()
+        );
+        assert_eq!(
+            manifest["mixins"].as_array().unwrap().len(),
+            ast.mixins.len()
+        );
     }
 
     // ── Directory-based native format ────────────────────────────────
@@ -264,9 +287,9 @@ mod tests {
         let dir = std::env::temp_dir().join("skillspec_native_test_manifest");
         let _ = std::fs::remove_dir_all(&dir);
         compiler.write_to_dir(&pkg, &dir).unwrap();
-        let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(dir.join("manifest.json")).unwrap()
-        ).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
+                .unwrap();
         assert_eq!(manifest["ir_version"], 1);
         assert_eq!(manifest["skills"][0], "hello");
         std::fs::remove_dir_all(&dir).ok();
@@ -318,9 +341,9 @@ mod tests {
         let dir = std::env::temp_dir().join("skillspec_native_test_types");
         let _ = std::fs::remove_dir_all(&dir);
         compiler.write_to_dir(&pkg, &dir).unwrap();
-        let types: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(dir.join(".types.json")).unwrap()
-        ).unwrap();
+        let types: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(".types.json")).unwrap())
+                .unwrap();
         assert_eq!(types[0]["name"], "Finding");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -335,7 +358,10 @@ mod tests {
         let dir = std::env::temp_dir().join("skillspec_native_test_notypes");
         let _ = std::fs::remove_dir_all(&dir);
         compiler.write_to_dir(&pkg, &dir).unwrap();
-        assert!(!dir.join(".types.json").exists(), ".types.json should not exist when no types");
+        assert!(
+            !dir.join(".types.json").exists(),
+            ".types.json should not exist when no types"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

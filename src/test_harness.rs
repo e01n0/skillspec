@@ -10,7 +10,10 @@ pub struct AssertionResult {
     pub message: String,
 }
 
-pub fn evaluate_assertion(assertion: &AssertionExpr, actual: &serde_json::Value) -> AssertionResult {
+pub fn evaluate_assertion(
+    assertion: &AssertionExpr,
+    actual: &serde_json::Value,
+) -> AssertionResult {
     match assertion {
         AssertionExpr::Equals(expected) => {
             let expected_val = expr_to_json(expected);
@@ -60,7 +63,10 @@ pub fn evaluate_assertion(assertion: &AssertionExpr, actual: &serde_json::Value)
         AssertionExpr::Between(lo, hi) => {
             let lo_val = expr_to_f64(lo);
             let hi_val = expr_to_f64(hi);
-            let actual_f = actual.as_f64().or_else(|| actual.as_i64().map(|i| i as f64)).unwrap_or(f64::NAN);
+            let actual_f = actual
+                .as_f64()
+                .or_else(|| actual.as_i64().map(|i| i as f64))
+                .unwrap_or(f64::NAN);
             let passed = actual_f >= lo_val && actual_f <= hi_val;
             AssertionResult {
                 passed,
@@ -73,7 +79,10 @@ pub fn evaluate_assertion(assertion: &AssertionExpr, actual: &serde_json::Value)
         }
         AssertionExpr::Comparison(op, expected) => {
             let expected_f = expr_to_f64(expected);
-            let actual_f = actual.as_f64().or_else(|| actual.as_i64().map(|i| i as f64)).unwrap_or(f64::NAN);
+            let actual_f = actual
+                .as_f64()
+                .or_else(|| actual.as_i64().map(|i| i as f64))
+                .unwrap_or(f64::NAN);
             let passed = match op {
                 BinOp::Lt => actual_f < expected_f,
                 BinOp::Gt => actual_f > expected_f,
@@ -108,23 +117,30 @@ pub fn evaluate_assertion(assertion: &AssertionExpr, actual: &serde_json::Value)
             })
         }
         AssertionExpr::Resembles(_) => {
-            let verdict = actual.get("resembles_verdict")
+            let verdict = actual
+                .get("resembles_verdict")
                 .or_else(|| actual.as_bool().map(|_| actual))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             AssertionResult {
                 passed: verdict,
-                message: if verdict { "resembles: pass (LLM verdict)".into() } else { "resembles: fail (LLM verdict)".into() },
+                message: if verdict {
+                    "resembles: pass (LLM verdict)".into()
+                } else {
+                    "resembles: fail (LLM verdict)".into()
+                },
             }
         }
         AssertionExpr::Satisfies(_) => {
-            let verdict = actual.get("satisfies_verdict")
+            let verdict = actual
+                .get("satisfies_verdict")
                 .and_then(|v| v.as_object())
                 .and_then(|obj| obj.get("verdict"))
                 .and_then(|v| v.as_bool())
                 .or_else(|| actual.get("satisfies_verdict").and_then(|v| v.as_bool()))
                 .unwrap_or(false);
-            let reason = actual.get("satisfies_verdict")
+            let reason = actual
+                .get("satisfies_verdict")
                 .and_then(|v| v.as_object())
                 .and_then(|obj| obj.get("reason"))
                 .and_then(|v| v.as_str())
@@ -142,7 +158,9 @@ pub fn evaluate_assertion(assertion: &AssertionExpr, actual: &serde_json::Value)
 }
 
 pub fn evaluate_confidence(results: &[bool], threshold: f64) -> bool {
-    if results.is_empty() { return false; }
+    if results.is_empty() {
+        return false;
+    }
     let pass_rate = results.iter().filter(|&&r| r).count() as f64 / results.len() as f64;
     pass_rate >= threshold
 }
@@ -166,29 +184,39 @@ pub struct TestItem {
 }
 
 pub fn prepare_split_data(skill: &Skill) -> SplitData {
-    let items: Vec<TestItem> = skill.tests.iter().map(|test| {
-        let input: serde_json::Map<String, serde_json::Value> = test.given.iter()
-            .map(|(name, expr)| (name.clone(), expr_to_json(expr)))
-            .collect();
+    let items: Vec<TestItem> = skill
+        .tests
+        .iter()
+        .map(|test| {
+            let input: serde_json::Map<String, serde_json::Value> = test
+                .given
+                .iter()
+                .map(|(name, expr)| (name.clone(), expr_to_json(expr)))
+                .collect();
 
-        let expected: Vec<serde_json::Value> = test.expectations.iter()
-            .map(|exp| serde_json::json!({
-                "path": exp.path,
-                "assertion": format!("{:?}", exp.assertion),
-            }))
-            .collect();
+            let expected: Vec<serde_json::Value> = test
+                .expectations
+                .iter()
+                .map(|exp| {
+                    serde_json::json!({
+                        "path": exp.path,
+                        "assertion": format!("{:?}", exp.assertion),
+                    })
+                })
+                .collect();
 
-        TestItem {
-            id: test.name.clone(),
-            input: serde_json::Value::Object(input),
-            expected_output: serde_json::json!({
-                "assertions": expected,
-                "confidence": test.confidence,
-                "runs": test.runs,
-            }),
-            task_type: skill.name.clone(),
-        }
-    }).collect();
+            TestItem {
+                id: test.name.clone(),
+                input: serde_json::Value::Object(input),
+                expected_output: serde_json::json!({
+                    "assertions": expected,
+                    "confidence": test.confidence,
+                    "runs": test.runs,
+                }),
+                task_type: skill.name.clone(),
+            }
+        })
+        .collect();
 
     // Deterministic 80/20 split by hashing the test name
     let mut train = Vec::new();
@@ -196,7 +224,7 @@ pub fn prepare_split_data(skill: &Skill) -> SplitData {
 
     for item in items {
         let hash = simple_hash(&item.id);
-        if hash % 5 == 0 {
+        if hash.is_multiple_of(5) {
             val.push(item);
         } else {
             train.push(item);
@@ -212,7 +240,12 @@ pub fn prepare_split_data(skill: &Skill) -> SplitData {
 
     let valid_seen = val.clone();
     let valid_unseen = val.clone();
-    SplitData { train_items: train, val_items: val, valid_seen_items: valid_seen, valid_unseen_items: valid_unseen }
+    SplitData {
+        train_items: train,
+        val_items: val,
+        valid_seen_items: valid_seen,
+        valid_unseen_items: valid_unseen,
+    }
 }
 
 fn simple_hash(s: &str) -> u64 {
@@ -232,7 +265,10 @@ pub fn prepare_test_skill(skill: &Skill, source: &SourceFile) -> String {
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("name: {}-test\n", skill.name));
-    out.push_str(&format!("description: Test execution skill for {}\n", skill.name));
+    out.push_str(&format!(
+        "description: Test execution skill for {}\n",
+        skill.name
+    ));
     out.push_str("---\n\n");
 
     out.push_str("# Test Execution Skill\n\n");
@@ -258,13 +294,19 @@ pub fn prepare_test_skill(skill: &Skill, source: &SourceFile) -> String {
         if !test.mocks.is_empty() {
             out.push_str("**Mocks:**\n");
             for mock in &test.mocks {
-                out.push_str(&format!("- Simulate `{}` as {:?}\n", mock.tool_path, mock.mock_type));
+                out.push_str(&format!(
+                    "- Simulate `{}` as {:?}\n",
+                    mock.tool_path, mock.mock_type
+                ));
             }
             out.push('\n');
         }
 
         if let Some(runs) = test.runs {
-            out.push_str(&format!("**Execute {} times** and return all results.\n\n", runs));
+            out.push_str(&format!(
+                "**Execute {} times** and return all results.\n\n",
+                runs
+            ));
         }
 
         out.push_str("**Assertions (evaluate after execution):**\n");
@@ -295,7 +337,9 @@ pub fn prepare_test_skill(skill: &Skill, source: &SourceFile) -> String {
     out.push_str("    {\n");
     out.push_str("      \"name\": \"test name\",\n");
     out.push_str("      \"runs\": [\n");
-    out.push_str("        { \"output\": { ... }, \"resembles_verdicts\": {}, \"satisfies_verdicts\": {} }\n");
+    out.push_str(
+        "        { \"output\": { ... }, \"resembles_verdicts\": {}, \"satisfies_verdicts\": {} }\n",
+    );
     out.push_str("      ]\n");
     out.push_str("    }\n");
     out.push_str("  ]\n");
@@ -345,12 +389,12 @@ fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 }
 
 fn eval_predicate(item: &serde_json::Value, predicate: &Expr) -> bool {
-    if let Expr::BinOp(lhs, BinOp::Eq, rhs) = predicate {
-        if let Expr::FieldAccess(_, field) = lhs.as_ref() {
-            let actual = item.get(field).cloned().unwrap_or(serde_json::Value::Null);
-            let expected = expr_to_json(rhs);
-            return json_eq(&actual, &expected);
-        }
+    if let Expr::BinOp(lhs, BinOp::Eq, rhs) = predicate
+        && let Expr::FieldAccess(_, field) = lhs.as_ref()
+    {
+        let actual = item.get(field).cloned().unwrap_or(serde_json::Value::Null);
+        let expected = expr_to_json(rhs);
+        return json_eq(&actual, &expected);
     }
     false
 }
@@ -384,8 +428,12 @@ fn eval_quantifier(
 mod tests {
     use super::*;
 
-    fn str_val(s: &str) -> serde_json::Value { serde_json::Value::String(s.into()) }
-    fn int_val(i: i64) -> serde_json::Value { serde_json::json!(i) }
+    fn str_val(s: &str) -> serde_json::Value {
+        serde_json::Value::String(s.into())
+    }
+    fn int_val(i: i64) -> serde_json::Value {
+        serde_json::json!(i)
+    }
 
     #[test]
     fn eval_equals_pass() {
@@ -417,19 +465,13 @@ mod tests {
 
     #[test]
     fn eval_matches_regex_pass() {
-        let r = evaluate_assertion(
-            &AssertionExpr::Matches(r"\d+".into()),
-            &str_val("42"),
-        );
+        let r = evaluate_assertion(&AssertionExpr::Matches(r"\d+".into()), &str_val("42"));
         assert!(r.passed);
     }
 
     #[test]
     fn eval_matches_regex_fail() {
-        let r = evaluate_assertion(
-            &AssertionExpr::Matches(r"^\d+$".into()),
-            &str_val("abc"),
-        );
+        let r = evaluate_assertion(&AssertionExpr::Matches(r"^\d+$".into()), &str_val("abc"));
         assert!(!r.passed);
     }
 
@@ -464,7 +506,10 @@ mod tests {
     fn eval_contains_where_pass() {
         let arr = serde_json::json!([{"status": "active"}, {"status": "inactive"}]);
         let pred = Expr::BinOp(
-            Box::new(Expr::FieldAccess(Box::new(Expr::Ident("item".into())), "status".into())),
+            Box::new(Expr::FieldAccess(
+                Box::new(Expr::Ident("item".into())),
+                "status".into(),
+            )),
             BinOp::Eq,
             Box::new(Expr::StringLit("active".into())),
         );
@@ -476,7 +521,10 @@ mod tests {
     fn eval_all_where_fail() {
         let arr = serde_json::json!([{"status": "active"}, {"status": "inactive"}]);
         let pred = Expr::BinOp(
-            Box::new(Expr::FieldAccess(Box::new(Expr::Ident("item".into())), "status".into())),
+            Box::new(Expr::FieldAccess(
+                Box::new(Expr::Ident("item".into())),
+                "status".into(),
+            )),
             BinOp::Eq,
             Box::new(Expr::StringLit("active".into())),
         );
@@ -488,7 +536,10 @@ mod tests {
     fn eval_none_where_pass() {
         let arr = serde_json::json!([{"status": "active"}]);
         let pred = Expr::BinOp(
-            Box::new(Expr::FieldAccess(Box::new(Expr::Ident("item".into())), "status".into())),
+            Box::new(Expr::FieldAccess(
+                Box::new(Expr::Ident("item".into())),
+                "status".into(),
+            )),
             BinOp::Eq,
             Box::new(Expr::StringLit("deleted".into())),
         );
@@ -521,7 +572,9 @@ mod tests {
 
     #[test]
     fn eval_confidence_not_met() {
-        let results = vec![true, true, true, true, true, true, true, false, false, false];
+        let results = vec![
+            true, true, true, true, true, true, true, false, false, false,
+        ];
         assert!(!evaluate_confidence(&results, 0.9));
     }
 

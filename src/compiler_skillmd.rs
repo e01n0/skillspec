@@ -20,7 +20,9 @@ impl SkillMdCompiler {
         // ── Resolution ───────────────────────────────────────────────────
         let ancestors = self.resolve_ancestry(skill, source);
 
-        let included_mixins: Vec<&Mixin> = skill.includes.iter()
+        let included_mixins: Vec<&Mixin> = skill
+            .includes
+            .iter()
             .filter_map(|name| source.mixins.iter().find(|m| &m.name == name))
             .collect();
 
@@ -46,22 +48,23 @@ impl SkillMdCompiler {
         }
 
         if let Some(input_fields) = &merged_input
-            && !input_fields.is_empty() {
-                out.push_str("parameters:\n");
-                for field in input_fields {
-                    out.push_str(&format!("  - name: {}\n", field.name));
-                    out.push_str(&format!("    type: {}\n", self.type_expr_to_string(&field.ty)));
-                    if field.optional {
-                        out.push_str("    optional: true\n");
-                    }
-                    if let Some(default) = &field.default {
-                        out.push_str(&format!(
-                            "    default: {}\n",
-                            self.expr_to_string(default)
-                        ));
-                    }
+            && !input_fields.is_empty()
+        {
+            out.push_str("parameters:\n");
+            for field in input_fields {
+                out.push_str(&format!("  - name: {}\n", field.name));
+                out.push_str(&format!(
+                    "    type: {}\n",
+                    self.type_expr_to_string(&field.ty)
+                ));
+                if field.optional {
+                    out.push_str("    optional: true\n");
+                }
+                if let Some(default) = &field.default {
+                    out.push_str(&format!("    default: {}\n", self.expr_to_string(default)));
                 }
             }
+        }
 
         out.push_str("---\n\n");
 
@@ -70,28 +73,26 @@ impl SkillMdCompiler {
 
         // ── Output section ────────────────────────────────────────────────
         if let Some(output_fields) = &merged_output
-            && !output_fields.is_empty() {
-                out.push_str("## Output\n\n");
-                for field in output_fields {
-                    let mut annotation = String::new();
-                    if field.optional {
-                        annotation.push_str(" (optional)");
-                    }
-                    if let Some(default) = &field.default {
-                        annotation.push_str(&format!(
-                            " (default: {})",
-                            self.expr_to_string(default)
-                        ));
-                    }
-                    out.push_str(&format!(
-                        "- **{}**: {}{}\n",
-                        field.name,
-                        self.type_expr_to_string(&field.ty),
-                        annotation
-                    ));
+            && !output_fields.is_empty()
+        {
+            out.push_str("## Output\n\n");
+            for field in output_fields {
+                let mut annotation = String::new();
+                if field.optional {
+                    annotation.push_str(" (optional)");
                 }
-                out.push('\n');
+                if let Some(default) = &field.default {
+                    annotation.push_str(&format!(" (default: {})", self.expr_to_string(default)));
+                }
+                out.push_str(&format!(
+                    "- **{}**: {}{}\n",
+                    field.name,
+                    self.type_expr_to_string(&field.ty),
+                    annotation
+                ));
             }
+            out.push('\n');
+        }
 
         // ── Preconditions (ancestors + child, with when_guard) ────────────
         let mut all_pre: Vec<&Assertion> = Vec::new();
@@ -146,18 +147,28 @@ impl SkillMdCompiler {
         // ── Prompt directives (child overrides ancestors field-by-field) ───
         let mut acc_directives = PromptDirectives::default();
         for ancestor in &ancestors {
-            acc_directives = self.merge_directives(Some(&acc_directives), &ancestor.body.directives);
+            acc_directives =
+                self.merge_directives(Some(&acc_directives), &ancestor.body.directives);
         }
-        let merged_directives = self.merge_directives(Some(&acc_directives), &skill.body.directives);
+        let merged_directives =
+            self.merge_directives(Some(&acc_directives), &skill.body.directives);
         out.push_str(&self.emit_prompt_directives(&merged_directives));
 
         // ── Lazy contexts (merged ancestors + child, child wins) ──────────
-        let child_lazy_names: HashSet<&str> = skill.body.lazy_contexts.iter()
-            .map(|lc| lc.name.as_str()).collect();
+        let child_lazy_names: HashSet<&str> = skill
+            .body
+            .lazy_contexts
+            .iter()
+            .map(|lc| lc.name.as_str())
+            .collect();
         let mut all_lazy: Vec<LazyContext> = Vec::new();
         for ancestor in &ancestors {
-            let ancestor_lazy_names: HashSet<&str> = ancestor.body.lazy_contexts.iter()
-                .map(|lc| lc.name.as_str()).collect();
+            let ancestor_lazy_names: HashSet<&str> = ancestor
+                .body
+                .lazy_contexts
+                .iter()
+                .map(|lc| lc.name.as_str())
+                .collect();
             all_lazy.retain(|lc| !ancestor_lazy_names.contains(lc.name.as_str()));
             for lc in &ancestor.body.lazy_contexts {
                 if !child_lazy_names.contains(lc.name.as_str()) {
@@ -201,13 +212,15 @@ impl SkillMdCompiler {
 
         // ── Steps (merged: ancestors + mixin + child, topo sorted) ────────
         // Child steps win on name collision; later ancestors override earlier.
-        let child_names: HashSet<&str> = skill.body.steps.iter()
-            .map(|s| s.name.as_str())
-            .collect();
+        let child_names: HashSet<&str> = skill.body.steps.iter().map(|s| s.name.as_str()).collect();
         let mut all_steps: Vec<Step> = Vec::new();
         for ancestor in &ancestors {
-            let ancestor_names: HashSet<&str> = ancestor.body.steps.iter()
-                .map(|s| s.name.as_str()).collect();
+            let ancestor_names: HashSet<&str> = ancestor
+                .body
+                .steps
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
             all_steps.retain(|s| !ancestor_names.contains(s.name.as_str()));
             for step in &ancestor.body.steps {
                 if !child_names.contains(step.name.as_str()) {
@@ -232,14 +245,21 @@ impl SkillMdCompiler {
         for step in sorted_steps {
             out.push_str(&format!("## Step: {}\n\n", step.name));
 
-            let expired: Vec<&&ContextBlock> = all_contexts.iter()
+            let expired: Vec<&&ContextBlock> = all_contexts
+                .iter()
                 .filter(|c| c.until.as_deref() == Some(step.name.as_str()))
                 .collect();
             if !expired.is_empty() {
-                out.push_str("*The following setup context is no longer active after this step:*\n\n");
+                out.push_str(
+                    "*The following setup context is no longer active after this step:*\n\n",
+                );
                 for ctx in &expired {
                     let snippet = ctx.text.trim();
-                    let snippet = if snippet.len() > 80 { &snippet[..80] } else { snippet };
+                    let snippet = if snippet.len() > 80 {
+                        &snippet[..80]
+                    } else {
+                        snippet
+                    };
                     out.push_str(&format!("- ~{}~\n", snippet));
                 }
                 out.push('\n');
@@ -289,30 +309,32 @@ impl SkillMdCompiler {
 
         // Input/Output
         if let Some(input_fields) = &pipeline.input
-            && !input_fields.is_empty() {
-                out.push_str("## Input\n\n");
-                for field in input_fields {
-                    out.push_str(&format!(
-                        "- **{}**: {}\n",
-                        field.name,
-                        self.type_expr_to_string(&field.ty)
-                    ));
-                }
-                out.push('\n');
+            && !input_fields.is_empty()
+        {
+            out.push_str("## Input\n\n");
+            for field in input_fields {
+                out.push_str(&format!(
+                    "- **{}**: {}\n",
+                    field.name,
+                    self.type_expr_to_string(&field.ty)
+                ));
             }
+            out.push('\n');
+        }
 
         if let Some(output_fields) = &pipeline.output
-            && !output_fields.is_empty() {
-                out.push_str("## Output\n\n");
-                for field in output_fields {
-                    out.push_str(&format!(
-                        "- **{}**: {}\n",
-                        field.name,
-                        self.type_expr_to_string(&field.ty)
-                    ));
-                }
-                out.push('\n');
+            && !output_fields.is_empty()
+        {
+            out.push_str("## Output\n\n");
+            for field in output_fields {
+                out.push_str(&format!(
+                    "- **{}**: {}\n",
+                    field.name,
+                    self.type_expr_to_string(&field.ty)
+                ));
             }
+            out.push('\n');
+        }
 
         // Stages
         for stage in &pipeline.stages {
@@ -376,30 +398,32 @@ impl SkillMdCompiler {
 
         // Input/Output
         if let Some(input_fields) = &orch.input
-            && !input_fields.is_empty() {
-                out.push_str("## Input\n\n");
-                for field in input_fields {
-                    out.push_str(&format!(
-                        "- **{}**: {}\n",
-                        field.name,
-                        self.type_expr_to_string(&field.ty)
-                    ));
-                }
-                out.push('\n');
+            && !input_fields.is_empty()
+        {
+            out.push_str("## Input\n\n");
+            for field in input_fields {
+                out.push_str(&format!(
+                    "- **{}**: {}\n",
+                    field.name,
+                    self.type_expr_to_string(&field.ty)
+                ));
             }
+            out.push('\n');
+        }
 
         if let Some(output_fields) = &orch.output
-            && !output_fields.is_empty() {
-                out.push_str("## Output\n\n");
-                for field in output_fields {
-                    out.push_str(&format!(
-                        "- **{}**: {}\n",
-                        field.name,
-                        self.type_expr_to_string(&field.ty)
-                    ));
-                }
-                out.push('\n');
+            && !output_fields.is_empty()
+        {
+            out.push_str("## Output\n\n");
+            for field in output_fields {
+                out.push_str(&format!(
+                    "- **{}**: {}\n",
+                    field.name,
+                    self.type_expr_to_string(&field.ty)
+                ));
             }
+            out.push('\n');
+        }
 
         // Phases
         for phase in &orch.phases {
@@ -428,10 +452,7 @@ impl SkillMdCompiler {
             }
 
             if let Some(emit_source) = &phase.emit {
-                out.push_str(&format!(
-                    "*Produces final output from {}*\n\n",
-                    emit_source
-                ));
+                out.push_str(&format!("*Produces final output from {}*\n\n", emit_source));
             }
         }
 
@@ -516,7 +537,10 @@ impl SkillMdCompiler {
         // Inline target's body-level contexts
         let mut body_ctxs: Vec<&ContextBlock> = target.body.contexts.iter().collect();
         body_ctxs.sort_by(|a, b| {
-            b.priority.unwrap_or(Priority::Supplementary).rank().cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
+            b.priority
+                .unwrap_or(Priority::Supplementary)
+                .rank()
+                .cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
         });
         for ctx in &body_ctxs {
             out.push_str(&self.emit_context_with_binding(ctx, &binding));
@@ -542,7 +566,10 @@ impl SkillMdCompiler {
 
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
             step_contexts.sort_by(|a, b| {
-                b.priority.unwrap_or(Priority::Supplementary).rank().cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
+                b.priority
+                    .unwrap_or(Priority::Supplementary)
+                    .rank()
+                    .cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
             });
             for ctx in &step_contexts {
                 out.push_str(&self.emit_context_with_binding(ctx, &binding));
@@ -621,8 +648,7 @@ impl SkillMdCompiler {
             (None, Some(c)) => Some(c.to_vec()),
             (Some(b), None) => Some(b.to_vec()),
             (Some(b), Some(c)) => {
-                let child_names: HashSet<&str> =
-                    c.iter().map(|f| f.name.as_str()).collect();
+                let child_names: HashSet<&str> = c.iter().map(|f| f.name.as_str()).collect();
                 let mut merged: Vec<Field> = b
                     .iter()
                     .filter(|f| !child_names.contains(f.name.as_str()))
@@ -644,10 +670,8 @@ impl SkillMdCompiler {
             (None, Some(c)) => Some(c.clone()),
             (Some(b), None) => Some(b.clone()),
             (Some(b), Some(c)) => {
-                let child_req: HashSet<&str> =
-                    c.required.iter().map(|t| t.name.as_str()).collect();
-                let child_opt: HashSet<&str> =
-                    c.optional.iter().map(|t| t.name.as_str()).collect();
+                let child_req: HashSet<&str> = c.required.iter().map(|t| t.name.as_str()).collect();
+                let child_opt: HashSet<&str> = c.optional.iter().map(|t| t.name.as_str()).collect();
 
                 let mut merged = ToolsBlock {
                     required: b
@@ -852,11 +876,7 @@ impl SkillMdCompiler {
         }
 
         if let Some((mode, hosts)) = &perms.network {
-            out.push_str(&format!(
-                "- **Network:** {} — {}\n",
-                mode,
-                hosts.join(", ")
-            ));
+            out.push_str(&format!("- **Network:** {} — {}\n", mode, hosts.join(", ")));
         }
 
         for secret in &perms.secrets {
@@ -886,7 +906,11 @@ impl SkillMdCompiler {
             out.push_str("| Metric | Source |\n");
             out.push_str("|--------|--------|\n");
             for metric in &observe.metrics {
-                out.push_str(&format!("| {} | `{}` |\n", metric.name, self.expr_to_string(&metric.source)));
+                out.push_str(&format!(
+                    "| {} | `{}` |\n",
+                    metric.name,
+                    self.expr_to_string(&metric.source)
+                ));
             }
             out.push('\n');
         }
@@ -1311,8 +1335,12 @@ impl SkillMdCompiler {
 }
 
 impl crate::compiler::TargetCompiler for SkillMdCompiler {
-    fn name(&self) -> &str { "skillmd" }
-    fn file_extension(&self) -> &str { "md" }
+    fn name(&self) -> &str {
+        "skillmd"
+    }
+    fn file_extension(&self) -> &str {
+        "md"
+    }
     fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
         self.compile(skill, source)
     }
@@ -1335,7 +1363,10 @@ mod tests {
         let tokens = Lexer::new(input).tokenize().unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
         let compiler = SkillMdCompiler::new();
-        let skill = ast.skills.iter().find(|s| s.name == name)
+        let skill = ast
+            .skills
+            .iter()
+            .find(|s| s.name == name)
             .unwrap_or_else(|| panic!("skill '{}' not found", name));
         compiler.compile(skill, &ast)
     }
@@ -1350,7 +1381,8 @@ mod tests {
 
     #[test]
     fn skill_with_input_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "review" {
                 input {
                     files: string[]
@@ -1363,7 +1395,8 @@ mod tests {
                     context { "Review the code." }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("name: review"));
         assert!(md.contains("files"));
         assert!(md.contains("string[]"));
@@ -1373,7 +1406,8 @@ mod tests {
 
     #[test]
     fn steps_become_sections() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "test" {
                 body {
                     context(priority: critical) { "You are a reviewer." }
@@ -1387,7 +1421,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("## Step: analyze"));
         assert!(md.contains("## Step: report"));
         assert!(md.contains("You are a reviewer."));
@@ -1397,22 +1432,28 @@ mod tests {
 
     #[test]
     fn context_priority_ordering() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "test" {
                 body {
                     context(priority: supplementary) { "Low priority." }
                     context(priority: important) { "High priority." }
                 }
             }
-        "#);
+        "#,
+        );
         let high_pos = md.find("High priority.").unwrap();
         let low_pos = md.find("Low priority.").unwrap();
-        assert!(high_pos < low_pos, "Higher priority context should appear first");
+        assert!(
+            high_pos < low_pos,
+            "Higher priority context should appear first"
+        );
     }
 
     #[test]
     fn lazy_context_in_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -1422,16 +1463,26 @@ mod tests {
                     context { "Use the docs." }
                 }
             }
-        "#);
-        assert!(md.contains("References"), "should have References section: {}", md);
+        "#,
+        );
+        assert!(
+            md.contains("References"),
+            "should have References section: {}",
+            md
+        );
         assert!(md.contains("docs"), "should mention docs: {}", md);
-        assert!(md.contains("API reference"), "should include summary: {}", md);
+        assert!(
+            md.contains("API reference"),
+            "should include summary: {}",
+            md
+        );
         assert!(md.contains("./api.md"), "should include ref path: {}", md);
     }
 
     #[test]
     fn tools_in_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 tools {
                     require Bash
@@ -1441,7 +1492,8 @@ mod tests {
                 }
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("Tools"), "should have Tools section: {}", md);
         assert!(md.contains("Bash"), "should mention Bash: {}", md);
         assert!(md.contains("github"), "should mention github MCP: {}", md);
@@ -1450,7 +1502,8 @@ mod tests {
 
     #[test]
     fn prompt_directives_in_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body {
                     reasoning extended
@@ -1458,15 +1511,25 @@ mod tests {
                     context { "Do stuff." }
                 }
             }
-        "#);
-        assert!(md.contains("Reasoning mode"), "should have Reasoning mode: {}", md);
+        "#,
+        );
+        assert!(
+            md.contains("Reasoning mode"),
+            "should have Reasoning mode: {}",
+            md
+        );
         assert!(md.contains("extended"), "should say extended: {}", md);
-        assert!(md.contains("You are an expert"), "should include persona: {}", md);
+        assert!(
+            md.contains("You are an expert"),
+            "should include persona: {}",
+            md
+        );
     }
 
     #[test]
     fn persona_dedented_in_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body {
                     persona {
@@ -1478,7 +1541,8 @@ mod tests {
                     context { "ok" }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("> You are an expert."));
         assert!(md.contains("> You value simplicity."));
         assert!(!md.contains(">             You")); // no leftover indentation
@@ -1486,7 +1550,8 @@ mod tests {
 
     #[test]
     fn quantifier_assertions_in_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -1498,13 +1563,15 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("contains(where:"));
     }
 
     #[test]
     fn tests_in_compiled_output() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -1518,7 +1585,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("## Tests"), "should have Tests section: {}", md);
         assert!(md.contains("basic"), "should contain test name: {}", md);
         assert!(md.contains("query"), "should contain given field: {}", md);
@@ -1527,7 +1595,8 @@ mod tests {
 
     #[test]
     fn tests_with_mocks_and_confidence_compiled() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -1548,18 +1617,28 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(md.contains("## Tests"), "should have Tests section: {}", md);
         assert!(md.contains("complex"), "should contain test name: {}", md);
-        assert!(md.contains("unavailable"), "should contain mock type: {}", md);
-        assert!(md.contains("custom responses"), "should describe mock responses: {}", md);
+        assert!(
+            md.contains("unavailable"),
+            "should contain mock type: {}",
+            md
+        );
+        assert!(
+            md.contains("custom responses"),
+            "should describe mock responses: {}",
+            md
+        );
         assert!(md.contains("0.9"), "should contain confidence: {}", md);
         assert!(md.contains("10 runs"), "should contain runs: {}", md);
     }
 
     #[test]
     fn pipeline_compiles() {
-        let tokens = Lexer::new(r#"
+        let tokens = Lexer::new(
+            r#"
             pipeline "review" {
                 input { repo: string }
                 stage lint { use linter(repo: input.repo) }
@@ -1569,13 +1648,24 @@ mod tests {
                 }
                 timeout 30m
             }
-        "#).tokenize().unwrap();
+        "#,
+        )
+        .tokenize()
+        .unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
         let compiler = SkillMdCompiler::new();
         let md = compiler.compile_pipeline(&ast.pipelines[0]);
-        assert!(md.contains("Pipeline: review"), "should have pipeline title: {}", md);
+        assert!(
+            md.contains("Pipeline: review"),
+            "should have pipeline title: {}",
+            md
+        );
         assert!(md.contains("Stage: lint"), "should have lint stage: {}", md);
-        assert!(md.contains("Stage: check"), "should have check stage: {}", md);
+        assert!(
+            md.contains("Stage: check"),
+            "should have check stage: {}",
+            md
+        );
         assert!(md.contains("30m"), "should include timeout: {}", md);
     }
 
@@ -1583,7 +1673,8 @@ mod tests {
 
     #[test]
     fn step_loads_emitted() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -1597,7 +1688,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(
             md.contains("Loads reference: docs"),
             "compiled output should contain load annotation: {}",
@@ -1609,7 +1701,8 @@ mod tests {
 
     #[test]
     fn context_when_guard_emitted() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 input { focus?: string }
                 body {
@@ -1619,7 +1712,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(
             md.contains("Condition:"),
             "compiled output should contain condition annotation: {}",
@@ -1636,13 +1730,15 @@ mod tests {
 
     #[test]
     fn context_decay_emitted() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 body {
                     context(priority: important, decay: 0.5) { "Fading instruction." }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(
             md.contains("Decay: 0.5"),
             "compiled output should contain decay annotation: {}",
@@ -1685,14 +1781,46 @@ mod tests {
         let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
         let md = compiler.compile(child, &ast);
 
-        assert!(md.contains("extends: base"), "frontmatter should note extends: {}", md);
-        assert!(md.contains("Base instructions."), "should include base context: {}", md);
-        assert!(md.contains("Child-specific."), "should include child context: {}", md);
-        assert!(md.contains("Step: analyze"), "should include base steps: {}", md);
-        assert!(md.contains("Step: report"), "should include child steps: {}", md);
-        assert!(md.contains("No files"), "should include base preconditions: {}", md);
-        assert!(md.contains("files"), "should inherit base input fields: {}", md);
-        assert!(md.contains("severity"), "should have child input fields: {}", md);
+        assert!(
+            md.contains("extends: base"),
+            "frontmatter should note extends: {}",
+            md
+        );
+        assert!(
+            md.contains("Base instructions."),
+            "should include base context: {}",
+            md
+        );
+        assert!(
+            md.contains("Child-specific."),
+            "should include child context: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: analyze"),
+            "should include base steps: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: report"),
+            "should include child steps: {}",
+            md
+        );
+        assert!(
+            md.contains("No files"),
+            "should include base preconditions: {}",
+            md
+        );
+        assert!(
+            md.contains("files"),
+            "should inherit base input fields: {}",
+            md
+        );
+        assert!(
+            md.contains("severity"),
+            "should have child input fields: {}",
+            md
+        );
     }
 
     #[test]
@@ -1733,15 +1861,51 @@ mod tests {
         let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
         let md = compiler.compile(child, &ast);
 
-        assert!(md.contains("x"), "should inherit grandparent input field 'x': {}", md);
-        assert!(md.contains("y"), "should inherit parent input field 'y': {}", md);
-        assert!(md.contains("z"), "should have child input field 'z': {}", md);
-        assert!(md.contains("Grandparent context."), "should inherit grandparent context: {}", md);
-        assert!(md.contains("Parent context."), "should inherit parent context: {}", md);
-        assert!(md.contains("Child context."), "should have child context: {}", md);
-        assert!(md.contains("Step: gp_step"), "should inherit grandparent step: {}", md);
-        assert!(md.contains("Step: p_step"), "should inherit parent step: {}", md);
-        assert!(md.contains("Step: c_step"), "should have child step: {}", md);
+        assert!(
+            md.contains("x"),
+            "should inherit grandparent input field 'x': {}",
+            md
+        );
+        assert!(
+            md.contains("y"),
+            "should inherit parent input field 'y': {}",
+            md
+        );
+        assert!(
+            md.contains("z"),
+            "should have child input field 'z': {}",
+            md
+        );
+        assert!(
+            md.contains("Grandparent context."),
+            "should inherit grandparent context: {}",
+            md
+        );
+        assert!(
+            md.contains("Parent context."),
+            "should inherit parent context: {}",
+            md
+        );
+        assert!(
+            md.contains("Child context."),
+            "should have child context: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: gp_step"),
+            "should inherit grandparent step: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: p_step"),
+            "should inherit parent step: {}",
+            md
+        );
+        assert!(
+            md.contains("Step: c_step"),
+            "should have child step: {}",
+            md
+        );
     }
 
     #[test]
@@ -1773,9 +1937,21 @@ mod tests {
         let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
         let md = compiler.compile(child, &ast);
 
-        assert!(md.contains("Parent version."), "parent should override grandparent step: {}", md);
-        assert!(!md.contains("GP version."), "grandparent step should be overridden: {}", md);
-        assert_eq!(md.matches("Step: shared").count(), 1, "should have exactly one 'shared' step");
+        assert!(
+            md.contains("Parent version."),
+            "parent should override grandparent step: {}",
+            md
+        );
+        assert!(
+            !md.contains("GP version."),
+            "grandparent step should be overridden: {}",
+            md
+        );
+        assert_eq!(
+            md.matches("Step: shared").count(),
+            1,
+            "should have exactly one 'shared' step"
+        );
     }
 
     #[test]
@@ -1805,8 +1981,16 @@ mod tests {
         let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
         let md = compiler.compile(child, &ast);
 
-        assert!(md.contains("GP persona"), "grandparent persona should propagate through 2 levels: {}", md);
-        assert!(md.contains("extended"), "grandparent reasoning should propagate: {}", md);
+        assert!(
+            md.contains("GP persona"),
+            "grandparent persona should propagate through 2 levels: {}",
+            md
+        );
+        assert!(
+            md.contains("extended"),
+            "grandparent reasoning should propagate: {}",
+            md
+        );
     }
 
     #[test]
@@ -1837,11 +2021,21 @@ mod tests {
         let child = ast.skills.iter().find(|s| s.name == "child").unwrap();
         let md = compiler.compile(child, &ast);
 
-        assert!(md.contains("Child docs."), "child lazy context should appear: {}", md);
-        assert!(!md.contains("Base docs."), "base lazy context should be overridden: {}", md);
-        assert_eq!(md.matches("docs").count() - md.matches("Child docs").count(),
+        assert!(
+            md.contains("Child docs."),
+            "child lazy context should appear: {}",
+            md
+        );
+        assert!(
+            !md.contains("Base docs."),
+            "base lazy context should be overridden: {}",
+            md
+        );
+        assert_eq!(
             md.matches("docs").count() - md.matches("Child docs").count(),
-            "should have exactly one 'docs' lazy context entry");
+            md.matches("docs").count() - md.matches("Child docs").count(),
+            "should have exactly one 'docs' lazy context entry"
+        );
     }
 
     #[test]
@@ -1951,7 +2145,11 @@ mod tests {
             md
         );
         let count = md.matches("Step: analyze").count();
-        assert_eq!(count, 1, "should have exactly one analyze step, got {}", count);
+        assert_eq!(
+            count, 1,
+            "should have exactly one analyze step, got {}",
+            count
+        );
     }
 
     // ── Fix #5: mixin include injects actual content ────────────────
@@ -2044,7 +2242,8 @@ mod tests {
 
     #[test]
     fn assertion_when_guard_emitted() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "x" {
                 input { focus?: string }
                 pre {
@@ -2052,7 +2251,8 @@ mod tests {
                 }
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(
             md.contains("**When**"),
             "should contain When annotation: {}",
@@ -2072,7 +2272,8 @@ mod tests {
 
     #[test]
     fn extends_description_uses_base_context() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "base" {
                 body {
                     context(priority: critical) {
@@ -2087,7 +2288,9 @@ mod tests {
                     }
                 }
             }
-        "#, "child");
+        "#,
+            "child",
+        );
 
         assert!(
             md.contains("Review code for bugs and security issues"),
@@ -2100,7 +2303,8 @@ mod tests {
 
     #[test]
     fn use_call_inlines_target_steps() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "sub-skill" {
                 body {
                     step alpha {
@@ -2120,20 +2324,25 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
+        "#,
+            "main",
+        );
         assert!(
             md.contains("Alpha instruction."),
-            "should inline target's alpha step content: {}", md
+            "should inline target's alpha step content: {}",
+            md
         );
         assert!(
             md.contains("Beta instruction."),
-            "should inline target's beta step content: {}", md
+            "should inline target's beta step content: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_preserves_uses_annotation() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "helper" {
                 body {
                     step work {
@@ -2149,20 +2358,25 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
+        "#,
+            "main",
+        );
         assert!(
             md.contains("*Uses: helper*"),
-            "should preserve the Uses annotation: {}", md
+            "should preserve the Uses annotation: {}",
+            md
         );
         assert!(
             md.contains("Do the work."),
-            "should also inline the content: {}", md
+            "should also inline the content: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_argument_binding_renames_references() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "extract" {
                 input {
                     paths: string[]
@@ -2186,20 +2400,25 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
+        "#,
+            "main",
+        );
         assert!(
             md.contains("input.source_files"),
-            "should rewrite input.paths → input.source_files in condition: {}", md
+            "should rewrite input.paths → input.source_files in condition: {}",
+            md
         );
         assert!(
             !md.contains("input.paths"),
-            "should NOT contain the callee's input.paths after binding: {}", md
+            "should NOT contain the callee's input.paths after binding: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_argument_binding_identity() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "helper" {
                 input {
                     files: string[]
@@ -2223,16 +2442,20 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
+        "#,
+            "main",
+        );
         assert!(
             md.contains("input.files"),
-            "identity binding should preserve input.files: {}", md
+            "identity binding should preserve input.files: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_missing_target_graceful_fallback() {
-        let md = compile(r#"
+        let md = compile(
+            r#"
             skill "main" {
                 body {
                     step invoke {
@@ -2241,16 +2464,19 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(
             md.contains("*Uses: nonexistent_skill*"),
-            "should fall back to annotation when target not found: {}", md
+            "should fall back to annotation when target not found: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_cycle_guard() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "a" {
                 body {
                     step work {
@@ -2267,14 +2493,21 @@ mod tests {
                     }
                 }
             }
-        "#, "a");
-        assert!(md.contains("A does work."), "should contain own content: {}", md);
+        "#,
+            "a",
+        );
+        assert!(
+            md.contains("A does work."),
+            "should contain own content: {}",
+            md
+        );
         assert!(md.contains("B does work."), "should expand B once: {}", md);
     }
 
     #[test]
     fn use_call_nested_expansion() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "c" {
                 body {
                     step leaf {
@@ -2298,16 +2531,20 @@ mod tests {
                     }
                 }
             }
-        "#, "a");
+        "#,
+            "a",
+        );
         assert!(
             md.contains("Leaf instruction."),
-            "should recursively inline through a→b→c: {}", md
+            "should recursively inline through a→b→c: {}",
+            md
         );
     }
 
     #[test]
     fn use_call_same_skill_used_twice() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "helper" {
                 body {
                     step work {
@@ -2328,17 +2565,21 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
+        "#,
+            "main",
+        );
         let count = md.matches("Helper work.").count();
         assert_eq!(
             count, 2,
-            "should inline helper twice (once per step): {}", md
+            "should inline helper twice (once per step): {}",
+            md
         );
     }
 
     #[test]
     fn use_call_preserves_context_priority_ordering() {
-        let md = compile_named(r#"
+        let md = compile_named(
+            r#"
             skill "target" {
                 body {
                     step work {
@@ -2355,12 +2596,19 @@ mod tests {
                     }
                 }
             }
-        "#, "main");
-        let high_pos = md.find("High priority.").expect("should contain high priority");
-        let low_pos = md.find("Low priority.").expect("should contain low priority");
+        "#,
+            "main",
+        );
+        let high_pos = md
+            .find("High priority.")
+            .expect("should contain high priority");
+        let low_pos = md
+            .find("Low priority.")
+            .expect("should contain low priority");
         assert!(
             high_pos < low_pos,
-            "higher priority context should appear first in inlined output: {}", md
+            "higher priority context should appear first in inlined output: {}",
+            md
         );
     }
 }

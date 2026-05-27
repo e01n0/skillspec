@@ -3,3 +3,20 @@
 
 # Local cargo config (contains internal registry URLs)
 .cargo/config.toml
+
+# Build artifacts from skillspec build/test/pack
+brainstorming/
+cal_results/
+code-review/
+full-review/
+harness/
+skill-writer/
+skillspec-backport/
+skillspec-migrate/
+skillspec-test/
+
+# SkillOpt working files
+optimize/venv/
+optimize/configs/
+optimize/agent_proxy.py
+*.optimized/

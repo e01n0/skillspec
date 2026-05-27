@@ -22,9 +22,10 @@ pub fn resolve_import_path(import_path: &str, base_dir: &Path) -> Option<PathBuf
 
     // For @-prefixed paths, also search .skillspec/packages/
     if import_path.starts_with('@')
-        && let Some(found) = resolve_in_packages(import_path, base_dir) {
-            return Some(found);
-        }
+        && let Some(found) = resolve_in_packages(import_path, base_dir)
+    {
+        return Some(found);
+    }
 
     None
 }
@@ -32,16 +33,26 @@ pub fn resolve_import_path(import_path: &str, base_dir: &Path) -> Option<PathBuf
 fn try_resolve(relative: &str, base_dir: &Path) -> Option<PathBuf> {
     let candidate = base_dir.join(relative);
 
-    if candidate.is_file() {
+    if candidate.is_file() && is_within(base_dir, &candidate) {
         return Some(candidate);
     }
 
     let with_ext = candidate.with_extension("agent");
-    if with_ext.is_file() {
+    if with_ext.is_file() && is_within(base_dir, &with_ext) {
         return Some(with_ext);
     }
 
     None
+}
+
+fn is_within(base: &Path, target: &Path) -> bool {
+    let Ok(canonical_base) = base.canonicalize() else {
+        return false;
+    };
+    let Ok(canonical_target) = target.canonicalize() else {
+        return false;
+    };
+    canonical_target.starts_with(&canonical_base)
 }
 
 /// Walk up from base_dir looking for `.skillspec/packages/<path>.agent`.
@@ -60,7 +71,10 @@ fn resolve_in_packages(import_path: &str, start_dir: &Path) -> Option<PathBuf> {
             // Try: .skillspec/packages/<path>/<stem>.agent (packaged skill directory)
             let pkg_dir = pkg_base.join(stripped);
             if pkg_dir.is_dir() {
-                if let Some(stem) = std::path::Path::new(stripped).file_name().and_then(|n| n.to_str()) {
+                if let Some(stem) = std::path::Path::new(stripped)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                {
                     let named = pkg_dir.join(format!("{}.agent", stem));
                     if named.is_file() {
                         return Some(named);
@@ -119,11 +133,7 @@ mod tests {
     fn resolves_relative_path() {
         let dir = std::env::temp_dir().join("skillspec_resolve_test_rel");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("shared.agent"),
-            "type Shared { value: string }",
-        )
-        .unwrap();
+        fs::write(dir.join("shared.agent"), "type Shared { value: string }").unwrap();
 
         let result = resolve_import_path("./shared", &dir);
         assert!(result.is_some(), "should resolve ./shared");
@@ -151,17 +161,10 @@ mod tests {
             .join("my-lib")
             .join("types");
         fs::create_dir_all(&pkg_dir).unwrap();
-        fs::write(
-            pkg_dir.join("shared.agent"),
-            "type Shared { val: string }",
-        )
-        .unwrap();
+        fs::write(pkg_dir.join("shared.agent"), "type Shared { val: string }").unwrap();
 
         let result = resolve_import_path("@my-lib/types/shared", &dir);
-        assert!(
-            result.is_some(),
-            "should resolve from .skillspec/packages/"
-        );
+        assert!(result.is_some(), "should resolve from .skillspec/packages/");
 
         fs::remove_dir_all(&dir).ok();
     }

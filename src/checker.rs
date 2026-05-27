@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use crate::ast::*;
 use crate::error::SkillSpecError;
 use crate::resolve;
 use crate::token::Span;
 use crate::types::{ResolvedType, TypeRegistry};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 pub struct Checker {
     registry: TypeRegistry,
@@ -79,9 +79,36 @@ impl Checker {
             }
         }
 
+        // Validate construct names don't contain path separators
+        for skill in &file.skills {
+            if skill.name.contains('/') || skill.name.contains('\\') || skill.name.contains("..") {
+                self.errors.push(SkillSpecError::InvalidName {
+                    name: skill.name.clone(),
+                    span: skill.span,
+                });
+            }
+        }
+        for pipeline in &file.pipelines {
+            if pipeline.name.contains('/')
+                || pipeline.name.contains('\\')
+                || pipeline.name.contains("..")
+            {
+                self.errors.push(SkillSpecError::InvalidName {
+                    name: pipeline.name.clone(),
+                    span: pipeline.span,
+                });
+            }
+        }
+
         // Second pass: check each skill (with access to all skills/mixins for inheritance resolution)
         for skill in &file.skills {
-            self.check_skill(skill, &mixin_names, &skill_names, &file.skills, &file.mixins);
+            self.check_skill(
+                skill,
+                &mixin_names,
+                &skill_names,
+                &file.skills,
+                &file.mixins,
+            );
             self.check_use_calls(skill, &skill_sigs);
         }
 
@@ -202,15 +229,23 @@ impl Checker {
         );
     }
 
-    fn check_skill(&mut self, skill: &Skill, mixin_names: &HashSet<String>, skill_names: &HashSet<String>, all_skills: &[Skill], all_mixins: &[Mixin]) {
+    fn check_skill(
+        &mut self,
+        skill: &Skill,
+        mixin_names: &HashSet<String>,
+        skill_names: &HashSet<String>,
+        all_skills: &[Skill],
+        all_mixins: &[Mixin],
+    ) {
         // Validate extends references an existing skill
         if let Some(base_name) = &skill.extends
-            && !skill_names.contains(base_name) {
-                self.errors.push(SkillSpecError::UnresolvedExtends {
-                    name: base_name.clone(),
-                    span: skill.span,
-                });
-            }
+            && !skill_names.contains(base_name)
+        {
+            self.errors.push(SkillSpecError::UnresolvedExtends {
+                name: base_name.clone(),
+                span: skill.span,
+            });
+        }
 
         // Check input field types
         if let Some(input_fields) = &skill.input {
@@ -268,14 +303,15 @@ impl Checker {
             }
         }
 
-        let child_step_names: HashSet<&str> = skill.body.steps.iter()
-            .map(|s| s.name.as_str()).collect();
+        let child_step_names: HashSet<&str> =
+            skill.body.steps.iter().map(|s| s.name.as_str()).collect();
         let mut mixin_step_sources: HashMap<String, Vec<String>> = HashMap::new();
         for include_name in &skill.includes {
             if let Some(mixin) = all_mixins.iter().find(|m| &m.name == include_name) {
                 for step in &mixin.steps {
                     inherited_steps.insert(step.name.clone());
-                    mixin_step_sources.entry(step.name.clone())
+                    mixin_step_sources
+                        .entry(step.name.clone())
                         .or_default()
                         .push(mixin.name.clone());
                 }
@@ -292,17 +328,23 @@ impl Checker {
         }
 
         // Check for multiple unconditional emit across extends chain
-        let ancestor_unconditional_emits: Vec<&Step> = ancestors.iter()
+        let ancestor_unconditional_emits: Vec<&Step> = ancestors
+            .iter()
             .flat_map(|a| a.body.steps.iter())
             .filter(|s| s.emit && s.when.is_none())
             .filter(|s| !child_step_names.contains(s.name.as_str()))
             .collect();
-        let child_unconditional_emits: Vec<&Step> = skill.body.steps.iter()
+        let child_unconditional_emits: Vec<&Step> = skill
+            .body
+            .steps
+            .iter()
             .filter(|s| s.emit && s.when.is_none())
             .collect();
-        let total_unconditional = ancestor_unconditional_emits.len() + child_unconditional_emits.len();
+        let total_unconditional =
+            ancestor_unconditional_emits.len() + child_unconditional_emits.len();
         if total_unconditional >= 2 {
-            let span = child_unconditional_emits.last()
+            let span = child_unconditional_emits
+                .last()
                 .map(|s| s.span)
                 .unwrap_or(skill.span);
             self.errors.push(SkillSpecError::MultipleEmit { span });
@@ -312,7 +354,12 @@ impl Checker {
         self.check_tests(skill);
     }
 
-    fn check_body(&mut self, body: &Body, inherited_steps: &HashSet<String>, inherited_lazy: &HashSet<String>) {
+    fn check_body(
+        &mut self,
+        body: &Body,
+        inherited_steps: &HashSet<String>,
+        inherited_lazy: &HashSet<String>,
+    ) {
         // Collect lazy context names declared in this body
         let lazy_names: HashSet<String> = body
             .lazy_contexts
@@ -368,18 +415,20 @@ impl Checker {
             }
         }
 
-        let step_names: HashSet<&str> = body.steps.iter()
+        let step_names: HashSet<&str> = body
+            .steps
+            .iter()
             .map(|s| s.name.as_str())
             .chain(inherited_steps.iter().map(|s| s.as_str()))
             .collect();
         for ctx in &body.contexts {
-            if let Some(until) = &ctx.until {
-                if !step_names.contains(until.as_str()) {
-                    self.errors.push(SkillSpecError::UnknownStep {
-                        name: until.clone(),
-                        span: ctx.span,
-                    });
-                }
+            if let Some(until) = &ctx.until
+                && !step_names.contains(until.as_str())
+            {
+                self.errors.push(SkillSpecError::UnknownStep {
+                    name: until.clone(),
+                    span: ctx.span,
+                });
             }
         }
 
@@ -414,17 +463,19 @@ impl Checker {
             None => return, // not defined locally — could be external
         };
 
-        let expected: HashMap<&str, &Field> = target_fields.iter()
-            .map(|f| (f.name.as_str(), f))
-            .collect();
+        let expected: HashMap<&str, &Field> =
+            target_fields.iter().map(|f| (f.name.as_str(), f)).collect();
 
-        let provided: HashSet<&str> = use_call.args.iter()
+        let provided: HashSet<&str> = use_call
+            .args
+            .iter()
             .map(|(name, _)| name.as_str())
             .collect();
 
         // Check for missing required arguments (fields with defaults are effectively optional)
         for field in target_fields {
-            if !field.optional && field.default.is_none() && !provided.contains(field.name.as_str()) {
+            if !field.optional && field.default.is_none() && !provided.contains(field.name.as_str())
+            {
                 self.errors.push(SkillSpecError::MismatchedArg {
                     skill_name: use_call.skill_name.clone(),
                     message: format!("missing required argument '{}'", field.name),
@@ -633,12 +684,12 @@ impl Checker {
             if !visited.contains(&skill.name)
                 && let Some(cycle) =
                     Self::dfs_cycle(&skill.name, &adj, &mut visited, &mut in_stack, &mut stack)
-                {
-                    self.errors.push(SkillSpecError::DependencyCycle {
-                        cycle: cycle.join(" -> "),
-                    });
-                    return;
-                }
+            {
+                self.errors.push(SkillSpecError::DependencyCycle {
+                    cycle: cycle.join(" -> "),
+                });
+                return;
+            }
         }
     }
 
@@ -647,10 +698,7 @@ impl Checker {
     fn check_cycles_named(&mut self, nodes: &[(String, Option<Dependency>, Span)]) {
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
         for (name, dep, _) in nodes {
-            let deps = dep
-                .as_ref()
-                .map(dep_names)
-                .unwrap_or_default();
+            let deps = dep.as_ref().map(dep_names).unwrap_or_default();
             adj.insert(name.clone(), deps);
         }
 
@@ -662,12 +710,12 @@ impl Checker {
             if !visited.contains(name)
                 && let Some(cycle) =
                     Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack)
-                {
-                    self.errors.push(SkillSpecError::DependencyCycle {
-                        cycle: cycle.join(" -> "),
-                    });
-                    return;
-                }
+            {
+                self.errors.push(SkillSpecError::DependencyCycle {
+                    cycle: cycle.join(" -> "),
+                });
+                return;
+            }
         }
     }
 
@@ -675,11 +723,7 @@ impl Checker {
         // Build adjacency map: step name -> list of required step names
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
         for step in steps {
-            let deps = step
-                .requires
-                .as_ref()
-                .map(dep_names)
-                .unwrap_or_default();
+            let deps = step.requires.as_ref().map(dep_names).unwrap_or_default();
             adj.insert(step.name.clone(), deps);
         }
 
@@ -691,13 +735,15 @@ impl Checker {
 
         for name in &names {
             if !visited.contains(name)
-                && let Some(cycle) = Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack) {
-                    self.errors.push(SkillSpecError::DependencyCycle {
-                        cycle: cycle.join(" -> "),
-                    });
-                    // Only report the first cycle found
-                    return;
-                }
+                && let Some(cycle) =
+                    Self::dfs_cycle(name, &adj, &mut visited, &mut in_stack, &mut stack)
+            {
+                self.errors.push(SkillSpecError::DependencyCycle {
+                    cycle: cycle.join(" -> "),
+                });
+                // Only report the first cycle found
+                return;
+            }
         }
     }
 
@@ -724,11 +770,12 @@ impl Checker {
                     return Some(cycle);
                 }
                 if !visited.contains(neighbor)
-                    && let Some(cycle) = Self::dfs_cycle(neighbor, adj, visited, in_stack, stack) {
-                        stack.pop();
-                        in_stack.remove(node);
-                        return Some(cycle);
-                    }
+                    && let Some(cycle) = Self::dfs_cycle(neighbor, adj, visited, in_stack, stack)
+                {
+                    stack.pop();
+                    in_stack.remove(node);
+                    return Some(cycle);
+                }
             }
         }
 
@@ -784,7 +831,11 @@ impl Checker {
         let valid_tools: HashSet<String> = match &skill.tools {
             Some(tools_block) => {
                 let mut set = HashSet::new();
-                for decl in tools_block.required.iter().chain(tools_block.optional.iter()) {
+                for decl in tools_block
+                    .required
+                    .iter()
+                    .chain(tools_block.optional.iter())
+                {
                     match &decl.kind {
                         ToolKind::Mcp(_) => {
                             set.insert(decl.name.clone());
@@ -844,9 +895,10 @@ impl Checker {
     }
 
     fn check_test_given_keys(&mut self, test: &TestBlock, skill: &Skill) {
-        let input_names: Option<HashSet<&str>> = skill.input.as_ref().map(|fields| {
-            fields.iter().map(|f| f.name.as_str()).collect()
-        });
+        let input_names: Option<HashSet<&str>> = skill
+            .input
+            .as_ref()
+            .map(|fields| fields.iter().map(|f| f.name.as_str()).collect());
 
         for (key, _) in &test.given {
             match &input_names {
@@ -863,9 +915,10 @@ impl Checker {
     }
 
     fn check_test_expectations(&mut self, test: &TestBlock, skill: &Skill) {
-        let output_names: Option<HashSet<&str>> = skill.output.as_ref().map(|fields| {
-            fields.iter().map(|f| f.name.as_str()).collect()
-        });
+        let output_names: Option<HashSet<&str>> = skill
+            .output
+            .as_ref()
+            .map(|fields| fields.iter().map(|f| f.name.as_str()).collect());
 
         for expectation in &test.expectations {
             let segments: Vec<&str> = expectation.path.split('.').collect();
@@ -904,7 +957,6 @@ impl Checker {
                 .unwrap_or(ResolvedType::Unknown),
         }
     }
-
 }
 
 /// Extract all step name references from a Dependency.
@@ -929,7 +981,10 @@ mod tests {
         checker.check(&ast)
     }
 
-    fn check_with_base(input: &str, base: &std::path::Path) -> std::result::Result<(), Vec<SkillSpecError>> {
+    fn check_with_base(
+        input: &str,
+        base: &std::path::Path,
+    ) -> std::result::Result<(), Vec<SkillSpecError>> {
         let tokens = Lexer::new(input).tokenize().unwrap();
         let ast = Parser::new(tokens).parse().unwrap();
         let mut checker = Checker::with_base_dir(base.to_path_buf());
@@ -938,7 +993,8 @@ mod tests {
 
     #[test]
     fn valid_skill_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             type Finding {
                 file: string
                 severity: string
@@ -956,83 +1012,107 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn unknown_type_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "bad" {
                 input { files: UnknownType[] }
                 body { context { "x" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnknownType { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownType { .. }))
+        );
     }
 
     #[test]
     fn dependency_cycle_detected() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "cycle" {
                 body {
                     step a { requires b context { "a" } }
                     step b { requires a context { "b" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::DependencyCycle { .. }))
+        );
     }
 
     #[test]
     fn unknown_step_in_requires() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "bad" {
                 body {
                     step a { requires nonexistent context { "a" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnknownStep { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownStep { .. }))
+        );
     }
 
     #[test]
     fn multiple_emit_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "bad" {
                 body {
                     step a { emit output context { "a" } }
                     step b { emit output context { "b" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MultipleEmit { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::MultipleEmit { .. }))
+        );
     }
 
     #[test]
     fn duplicate_step_names() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "bad" {
                 body {
                     step a { context { "first" } }
                     step a { context { "second" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn lazy_context_load_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -1045,13 +1125,15 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn lazy_context_load_invalid_ref() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body {
                     step main {
@@ -1060,24 +1142,28 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn pipeline_stage_cycle() {
-        let result = check(r#"
+        let result = check(
+            r#"
             pipeline "bad" {
                 stage a { requires b use x(q: input.q) }
                 stage b { requires a use y(q: input.q) }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn valid_pipeline() {
-        let result = check(r#"
+        let result = check(
+            r#"
             pipeline "good" {
                 input { repo: string }
                 stage lint { use linter(repo: input.repo) }
@@ -1086,13 +1172,15 @@ mod tests {
                     use reviewer(results: lint.result)
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn mixin_include_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             mixin logging {
                 step log { context { "log." } }
             }
@@ -1100,32 +1188,38 @@ mod tests {
                 include logging
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn mixin_include_unknown() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 include nonexistent_mixin
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn extends_unknown_skill_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "child" extends "nonexistent" {
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedExtends { .. })),
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnresolvedExtends { .. })),
             "should report UnresolvedExtends: {:?}",
             errs
         );
@@ -1133,41 +1227,48 @@ mod tests {
 
     #[test]
     fn extends_valid_skill_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body { context { "base." } }
             }
             skill "child" extends "base" {
                 body { context { "child." } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn extends_self_cycle_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "ouroboros" extends "ouroboros" {
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn extends_mutual_cycle_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "a" extends "b" {
                 body { context { "a" } }
             }
             skill "b" extends "a" {
                 body { context { "b" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
             "should detect mutual extends cycle: {:?}",
             errs
         );
@@ -1175,7 +1276,8 @@ mod tests {
 
     #[test]
     fn extends_three_way_cycle_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "a" extends "b" {
                 body { context { "a" } }
             }
@@ -1185,11 +1287,13 @@ mod tests {
             skill "c" extends "a" {
                 body { context { "c" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::DependencyCycle { .. })),
             "should detect 3-way extends cycle: {:?}",
             errs
         );
@@ -1197,7 +1301,8 @@ mod tests {
 
     #[test]
     fn extends_chain_no_cycle_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "grandparent" {
                 body { context { "gp" } }
             }
@@ -1207,13 +1312,15 @@ mod tests {
             skill "child" extends "parent" {
                 body { context { "c" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn requires_inherited_step_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body {
                     step analyze { context { "Analyze." } }
@@ -1227,13 +1334,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "requires on inherited step should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "requires on inherited step should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn requires_deeply_inherited_step_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "grandparent" {
                 body {
                     step setup { context { "Setup." } }
@@ -1250,13 +1363,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "requires on grandparent step should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "requires on grandparent step should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn load_inherited_lazy_context_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -1274,13 +1393,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "load on inherited lazy context should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "load on inherited lazy context should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn requires_mixin_step_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             mixin logging {
                 step log_start { context { "Log start." } }
             }
@@ -1293,13 +1418,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "requires on mixin step should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "requires on mixin step should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn cross_mixin_step_collision_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             mixin a {
                 step setup { context { "A setup." } }
             }
@@ -1311,11 +1442,13 @@ mod tests {
                 include b
                 body { context { "Work." } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err(), "cross-mixin step collision should error");
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::DuplicateField { .. })),
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::DuplicateField { .. })),
             "should report DuplicateField for mixin collision: {:?}",
             errs
         );
@@ -1323,7 +1456,8 @@ mod tests {
 
     #[test]
     fn cross_mixin_collision_ok_if_child_overrides() {
-        let result = check(r#"
+        let result = check(
+            r#"
             mixin a {
                 step setup { context { "A setup." } }
             }
@@ -1337,13 +1471,19 @@ mod tests {
                     step setup { context { "Child setup." } }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "mixin collision should be ok if child overrides: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "mixin collision should be ok if child overrides: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn shadowed_import_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             import { Finding } from "@types/review"
             type Finding {
                 file: string
@@ -1353,11 +1493,13 @@ mod tests {
                 input { f: Finding }
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::ShadowedImport { .. })),
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::ShadowedImport { .. })),
             "should report ShadowedImport: {:?}",
             errs
         );
@@ -1365,7 +1507,8 @@ mod tests {
 
     #[test]
     fn import_without_shadow_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             import { OtherThing } from "@types/misc"
             type Finding {
                 file: string
@@ -1375,13 +1518,15 @@ mod tests {
                 input { f: Finding }
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn multiple_emit_across_extends_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body {
                     step produce { emit output context { "base output" } }
@@ -1392,15 +1537,20 @@ mod tests {
                     step also_produce { emit output context { "child output" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MultipleEmit { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::MultipleEmit { .. }))
+        );
     }
 
     #[test]
     fn single_emit_across_extends_ok() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body {
                     step analyse { context { "analyse" } }
@@ -1411,13 +1561,15 @@ mod tests {
                     step produce { emit output context { "child output" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn child_overrides_base_emit_ok() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "base" {
                 body {
                     step produce { emit output context { "base" } }
@@ -1428,14 +1580,16 @@ mod tests {
                     step produce { emit output context { "overridden" } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn unresolved_ref_errors() {
         let base = std::env::temp_dir();
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 body {
                     lazy context "ghost" (priority: supplementary) {
@@ -1448,16 +1602,22 @@ mod tests {
                     }
                 }
             }
-        "#, &base);
+        "#,
+            &base,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. }))
+        );
     }
 
     #[test]
     fn unresolved_index_ref_errors() {
         let base = std::env::temp_dir();
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 body {
                     lazy context "catalog" (priority: supplementary) {
@@ -1475,17 +1635,23 @@ mod tests {
                     }
                 }
             }
-        "#, &base);
+        "#,
+            &base,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. })));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnresolvedRef { .. }))
+        );
     }
 
     // ── Cross-skill use-call validation ─────────────────────────────
 
     #[test]
     fn use_call_known_skill_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "analyzer" {
                 input { files: string[] }
                 body { context { "Analyze." } }
@@ -1498,13 +1664,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "use call to known skill with matching args should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "use call to known skill with matching args should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn use_call_wrong_arg_name_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "analyzer" {
                 input { files: string[] }
                 body { context { "Analyze." } }
@@ -1517,16 +1689,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
-            "should report MismatchedArg: {:?}", errs);
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report MismatchedArg: {:?}",
+            errs
+        );
     }
 
     #[test]
     fn use_call_missing_required_arg_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "analyzer" {
                 input { files: string[] }
                 body { context { "Analyze." } }
@@ -1539,16 +1717,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
-            "should report missing required arg: {:?}", errs);
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report missing required arg: {:?}",
+            errs
+        );
     }
 
     #[test]
     fn use_call_extra_arg_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "analyzer" {
                 input { files: string[] }
                 body { context { "Analyze." } }
@@ -1561,16 +1745,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
-            "should report unknown arg: {:?}", errs);
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::MismatchedArg { .. })),
+            "should report unknown arg: {:?}",
+            errs
+        );
     }
 
     #[test]
     fn use_call_optional_arg_omitted_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "analyzer" {
                 input { files: string[] focus?: string }
                 body { context { "Analyze." } }
@@ -1583,13 +1773,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "omitting optional arg should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "omitting optional arg should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn use_call_external_skill_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "caller" {
                 body {
                     step s {
@@ -1598,13 +1794,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "external (unknown) skill should not error: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "external (unknown) skill should not error: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn ref_skipped_without_base_dir() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body {
                     lazy context "ghost" (priority: supplementary) {
@@ -1617,7 +1819,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
@@ -1625,7 +1828,8 @@ mod tests {
 
     #[test]
     fn mock_tool_path_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 tools {
                     require mcp("github") {
@@ -1639,13 +1843,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "valid mock tool path should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "valid mock tool path should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn mock_tool_path_unknown_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 tools { require Bash }
                 body { context { "ok" } }
@@ -1655,18 +1865,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
-            "should report UnknownMockTool: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
+            "should report UnknownMockTool: {:?}",
+            errs
         );
     }
 
     #[test]
     fn mock_without_tools_block_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -1675,18 +1889,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
-            "should report UnknownMockTool when no tools block: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownMockTool { .. })),
+            "should report UnknownMockTool when no tools block: {:?}",
+            errs
         );
     }
 
     #[test]
     fn mock_optional_tool_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 tools {
                     optional mcp("slack") {
@@ -1700,13 +1918,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "mock of optional tool should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "mock of optional tool should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn mock_builtin_tool_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 tools { require Bash }
                 body { context { "ok" } }
@@ -1716,13 +1940,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "mock of builtin tool should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "mock of builtin tool should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn mock_short_name_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 tools {
                     require mcp("github") {
@@ -1738,8 +1968,13 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "mock with short tool name should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "mock with short tool name should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     // ── Test block validation: fixture file paths (Gap 1) ───────────────────
@@ -1748,9 +1983,14 @@ mod tests {
     fn fixture_path_valid() {
         let dir = std::env::temp_dir().join("skillspec_test_fixture_valid");
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("good.agent"), r#"skill "s" { body { context { "ok" } } }"#).unwrap();
+        std::fs::write(
+            dir.join("good.agent"),
+            r#"skill "s" { body { context { "ok" } } }"#,
+        )
+        .unwrap();
 
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 input { src: string }
                 body { context { "ok" } }
@@ -1760,9 +2000,15 @@ mod tests {
                     }
                 }
             }
-        "#, &dir);
+        "#,
+            &dir,
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(result.is_ok(), "valid fixture path should pass: {:?}", result.unwrap_err());
+        assert!(
+            result.is_ok(),
+            "valid fixture path should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
@@ -1770,7 +2016,8 @@ mod tests {
         let dir = std::env::temp_dir().join("skillspec_test_fixture_missing");
         let _ = std::fs::create_dir_all(&dir);
 
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 input { src: string }
                 body { context { "ok" } }
@@ -1780,19 +2027,24 @@ mod tests {
                     }
                 }
             }
-        "#, &dir);
+        "#,
+            &dir,
+        );
         let _ = std::fs::remove_dir_all(&dir);
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnresolvedFixturePath { .. })),
-            "should report UnresolvedFixturePath: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnresolvedFixturePath { .. })),
+            "should report UnresolvedFixturePath: {:?}",
+            errs
         );
     }
 
     #[test]
     fn fixture_path_skipped_without_base_dir() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 input { src: string }
                 body { context { "ok" } }
@@ -1802,8 +2054,12 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "fixture path check should skip without base_dir");
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "fixture path check should skip without base_dir"
+        );
     }
 
     #[test]
@@ -1812,7 +2068,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("bad.agent"), "this is not valid agent syntax {{{").unwrap();
 
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 input { src: string }
                 body { context { "ok" } }
@@ -1822,13 +2079,17 @@ mod tests {
                     }
                 }
             }
-        "#, &dir);
+        "#,
+            &dir,
+        );
         let _ = std::fs::remove_dir_all(&dir);
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::FixtureParseError { .. })),
-            "should report FixtureParseError: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::FixtureParseError { .. })),
+            "should report FixtureParseError: {:?}",
+            errs
         );
     }
 
@@ -1838,7 +2099,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("readme.md"), "# Hello").unwrap();
 
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 input { doc: string }
                 body { context { "ok" } }
@@ -1848,9 +2110,15 @@ mod tests {
                     }
                 }
             }
-        "#, &dir);
+        "#,
+            &dir,
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(result.is_ok(), "existing .md fixture should pass: {:?}", result.unwrap_err());
+        assert!(
+            result.is_ok(),
+            "existing .md fixture should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
@@ -1858,7 +2126,8 @@ mod tests {
         let dir = std::env::temp_dir().join("skillspec_test_fixture_nonpath");
         let _ = std::fs::create_dir_all(&dir);
 
-        let result = check_with_base(r#"
+        let result = check_with_base(
+            r#"
             skill "x" {
                 input { query: string }
                 body { context { "ok" } }
@@ -1868,16 +2137,22 @@ mod tests {
                     }
                 }
             }
-        "#, &dir);
+        "#,
+            &dir,
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(result.is_ok(), "non-path string should not trigger fixture check");
+        assert!(
+            result.is_ok(),
+            "non-path string should not trigger fixture check"
+        );
     }
 
     // ── Test block validation: given key vs input contract (Gap 3) ──────────
 
     #[test]
     fn given_keys_match_input_contract() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 input {
                     files: string[]
@@ -1893,13 +2168,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "valid given keys should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "valid given keys should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn given_unknown_key_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 input { files: string[] }
                 body { context { "ok" } }
@@ -1912,7 +2193,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
@@ -1923,7 +2205,8 @@ mod tests {
 
     #[test]
     fn given_on_skill_without_input_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -1932,12 +2215,15 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownGivenKey { .. })),
-            "should report UnknownGivenKey when no input block: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownGivenKey { .. })),
+            "should report UnknownGivenKey when no input block: {:?}",
+            errs
         );
     }
 
@@ -1945,7 +2231,8 @@ mod tests {
 
     #[test]
     fn expect_output_field_valid() {
-        let result = check(r#"
+        let result = check(
+            r#"
             type Finding { file: string }
             skill "x" {
                 output {
@@ -1962,13 +2249,19 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "valid expect output fields should pass: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "valid expect output fields should pass: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
     fn expect_unknown_output_field_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 output { summary: string }
                 body { context { "ok" } }
@@ -1980,7 +2273,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
@@ -1991,7 +2285,8 @@ mod tests {
 
     #[test]
     fn expect_on_skill_without_output_errors() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2002,18 +2297,22 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(e, SkillSpecError::UnknownExpectField { .. })),
-            "should report UnknownExpectField when no output block: {:?}", errs
+            errs.iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownExpectField { .. })),
+            "should report UnknownExpectField when no output block: {:?}",
+            errs
         );
     }
 
     #[test]
     fn expect_nested_path_only_checks_first_segment() {
-        let result = check(r#"
+        let result = check(
+            r#"
             type TestResult { total: int }
             skill "x" {
                 output { result: TestResult }
@@ -2026,30 +2325,39 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(result.is_ok(), "deep path should only validate first segment: {:?}", result.unwrap_err());
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "deep path should only validate first segment: {:?}",
+            result.unwrap_err()
+        );
     }
 
     // ── Regression guards ───────────────────────────────────────────────────
 
     #[test]
     fn no_tests_block_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn empty_tests_block_passes() {
-        let result = check(r#"
+        let result = check(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests { }
             }
-        "#);
+        "#,
+        );
         assert!(result.is_ok());
     }
 }

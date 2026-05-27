@@ -16,7 +16,7 @@ The binary lands at `./target/release/skillspec`.
 cargo test
 ```
 
-All 89 tests must pass before a PR merges. Add tests for anything new.
+All tests must pass before a PR merges (`cargo test`). Add tests for anything new.
 
 ## Adding a CLI command
 

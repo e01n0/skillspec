@@ -36,7 +36,10 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
 
     // Parse frontmatter
     let (frontmatter, body, raw_fm) = parse_frontmatter(source);
-    let name = frontmatter.get("name").cloned().unwrap_or_else(|| "unnamed".to_string());
+    let name = frontmatter
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| "unnamed".to_string());
     let description = frontmatter.get("description").cloned();
     let parameters = parse_parameters_from_yaml(&raw_fm);
 
@@ -55,7 +58,10 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
             let opt = if param.optional { "?" } else { "" };
             let ty = &param.param_type;
             if let Some(default) = &param.default {
-                output.push_str(&format!("    {}{}: {} = \"{}\"\n", param.name, opt, ty, default));
+                output.push_str(&format!(
+                    "    {}{}: {} = \"{}\"\n",
+                    param.name, opt, ty, default
+                ));
             } else {
                 output.push_str(&format!("    {}{}: {}\n", param.name, opt, ty));
             }
@@ -109,7 +115,9 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
 
             // If this is the last step, suggest emit
             if i == sections.len() - 1 {
-                output.push_str("      // TODO: Add `emit output` if this step produces the final result\n");
+                output.push_str(
+                    "      // TODO: Add `emit output` if this step produces the final result\n",
+                );
             }
 
             output.push_str("    }\n");
@@ -127,7 +135,9 @@ pub fn migrate_skillmd(source: &str, source_path: &str) -> MigrateResult {
 
 // ── Frontmatter parsing ──────────────────────────────────────────────
 
-pub fn parse_frontmatter_pub(source: &str) -> (std::collections::HashMap<String, String>, String, String) {
+pub fn parse_frontmatter_pub(
+    source: &str,
+) -> (std::collections::HashMap<String, String>, String, String) {
     parse_frontmatter(source)
 }
 
@@ -207,11 +217,12 @@ fn parse_parameters_from_yaml(raw_frontmatter: &str) -> Vec<Parameter> {
                 current_fields.insert(key, value);
             }
         } else if !current_fields.is_empty()
-            && let Some(colon) = trimmed.find(':') {
-                let key = trimmed[..colon].trim().to_string();
-                let value = trimmed[colon + 1..].trim().trim_matches('"').to_string();
-                current_fields.insert(key, value);
-            }
+            && let Some(colon) = trimmed.find(':')
+        {
+            let key = trimmed[..colon].trim().to_string();
+            let value = trimmed[colon + 1..].trim().trim_matches('"').to_string();
+            current_fields.insert(key, value);
+        }
     }
 
     if let Some(p) = build_parameter(&current_fields) {
@@ -325,7 +336,10 @@ fn collect_md_files_recursive(base: &Path, current: &Path, files: &mut Vec<Colle
                         .collect::<Vec<_>>()
                         .join("\n");
                     (
-                        format!("{}\n// ... (truncated, full file at {})", preview, relative_str),
+                        format!(
+                            "{}\n// ... (truncated, full file at {})",
+                            preview, relative_str
+                        ),
                         true,
                     )
                 } else {
@@ -380,7 +394,10 @@ pub fn migrate_directory(dir: &Path) -> Result<MigrateDirectoryResult, String> {
         let insertion_point = output.rfind("  }\n}\n").unwrap_or(output.len());
         let mut context_section = String::new();
         context_section.push_str(&format!("\n    // source_dir: {}\n", dir.display()));
-        context_section.push_str(&format!("    // {} additional file(s) found — the migrate skill should read them directly:\n", other_files.len()));
+        context_section.push_str(&format!(
+            "    // {} additional file(s) found — the migrate skill should read them directly:\n",
+            other_files.len()
+        ));
         for file in &other_files {
             context_section.push_str(&format!(
                 "    //   {} ({} lines)\n",
@@ -413,12 +430,12 @@ fn find_frontmatter_file(dir: &Path) -> Result<(PathBuf, String), String> {
     for entry in std::fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {}", e))? {
         let entry = entry.map_err(|e| format!("Directory entry error: {}", e))?;
         let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if content.trim_start().starts_with("---") && content.contains("name:") {
-                    return Ok((path, content));
-                }
-            }
+        if path.extension().map(|e| e == "md").unwrap_or(false)
+            && let Ok(content) = std::fs::read_to_string(&path)
+            && content.trim_start().starts_with("---")
+            && content.contains("name:")
+        {
+            return Ok((path, content));
         }
     }
     Err(format!(
@@ -431,9 +448,17 @@ fn detect_conditional(content: &str) -> bool {
     let lower = content.to_lowercase();
     // Look for conditional language patterns
     let patterns = [
-        "if the ", "if this ", "when the ", "when this ",
-        "only if ", "unless ", "in case ", "depending on ",
-        "conditionally", "skip if", "skip when",
+        "if the ",
+        "if this ",
+        "when the ",
+        "when this ",
+        "only if ",
+        "unless ",
+        "in case ",
+        "depending on ",
+        "conditionally",
+        "skip if",
+        "skip when",
     ];
     patterns.iter().any(|p| lower.contains(p))
 }
@@ -608,7 +633,11 @@ Verify test coverage.
             "---\nname: test-skill\ndescription: \"A test\"\n---\n\n# test\n\n## Do Thing\n\nDo the thing.\n",
         ).unwrap();
         fs::create_dir_all(dir_path.join("refs")).unwrap();
-        fs::write(dir_path.join("refs/guide.md"), "# Style Guide\n\nUse consistent naming.\n").unwrap();
+        fs::write(
+            dir_path.join("refs/guide.md"),
+            "# Style Guide\n\nUse consistent naming.\n",
+        )
+        .unwrap();
 
         let result = migrate_directory(dir_path).unwrap();
         assert!(result.output.contains("skill \"test-skill\""));
@@ -623,12 +652,20 @@ Verify test coverage.
         let dir_path = dir.path();
 
         fs::create_dir_all(dir_path.join("refs")).unwrap();
-        fs::write(dir_path.join("refs/guide.md"), "# Just a guide\n\nNo frontmatter.\n").unwrap();
+        fs::write(
+            dir_path.join("refs/guide.md"),
+            "# Just a guide\n\nNo frontmatter.\n",
+        )
+        .unwrap();
 
         let result = migrate_directory(dir_path);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("SKILL.md"), "Error should mention SKILL.md: {}", err);
+        assert!(
+            err.contains("SKILL.md"),
+            "Error should mention SKILL.md: {}",
+            err
+        );
     }
 
     #[test]
@@ -639,10 +676,13 @@ Verify test coverage.
         fs::write(
             dir_path.join("SKILL.md"),
             "---\nname: big-skill\n---\n\n# big\n\n## Step\n\nDo stuff.\n",
-        ).unwrap();
+        )
+        .unwrap();
         fs::create_dir_all(dir_path.join("refs")).unwrap();
 
-        let huge_content: String = (0..1000).map(|i| format!("Line {} of the huge file\n", i)).collect();
+        let huge_content: String = (0..1000)
+            .map(|i| format!("Line {} of the huge file\n", i))
+            .collect();
         fs::write(dir_path.join("refs/huge.md"), &huge_content).unwrap();
 
         let result = migrate_directory(dir_path).unwrap();

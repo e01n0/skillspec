@@ -6,7 +6,11 @@ What's working, what's partially done, and where this goes next.
 
 ## Current state (v0.1.0)
 
-The full compile pipeline is complete: lex → parse → check → compile (SKILL.md and native IR). Developer tooling (fmt, budget, deps, migrate), package management (pack, install), and structural diff are all shipped. 89 tests pass.
+The full compile pipeline is complete: lex → parse → check → compile (SKILL.md and native IR). Developer tooling (fmt, budget, deps, migrate, lint), package management (pack, install), structural diff, and `optimize` (SkillOpt integration) are all shipped.
+
+Also shipped:
+- **Formal grammar (EBNF)** — `skillspec grammar` prints the full machine-readable spec
+- **Backport skill** — `skills/skillspec-backport.agent` maps SKILL.md edits back to `.agent` source
 
 ---
 
@@ -14,13 +18,11 @@ The full compile pipeline is complete: lex → parse → check → compile (SKIL
 
 - **Remote package registry** — `skillspec install <name>` pulling from a hosted registry rather than local `.skillpkg` directories
 - **LLM-powered test execution** (`skillspec-test` skill) — run the `tests {}` blocks against a live model and report pass/fail
-- **Backport skill** — LLM-assisted `SKILL.md` → `.agent` reconciliation for skills that pre-date the language
 - **Language server (LSP)** — IDE integration: go-to-definition, hover docs, inline diagnostics
 - **Syntax highlighting** — VS Code and JetBrains grammar definitions for `.agent` files
 
 ## Medium-term
 
-- **Formal grammar (EBNF)** — a machine-readable spec so third-party parsers and tools can target SkillSpec
 - **Token budget optimisation suggestions** — `skillspec budget` currently reports; make it suggest reductions
 - **Native runtime SDK** — a small library for runtimes that want to consume `.agentpkg` bundles directly without invoking the CLI
 

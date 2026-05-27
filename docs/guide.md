@@ -16,7 +16,7 @@ cargo install --path .
 skillspec init greeter
 ```
 
-```agent
+```skillspec
 skill "greeter" {
   input {
     query: string
@@ -70,7 +70,7 @@ skillspec build greeter.agent --to claude --watch
 
 Named types go at the top of the file:
 
-```agent
+```skillspec
 type Greeting {
   message: string
   language: string
@@ -105,7 +105,7 @@ Compounds:
 
 `?` makes a field optional. `= value` sets a default.
 
-```agent
+```skillspec
 import { Finding } from "@types/review"
 ```
 
@@ -113,7 +113,7 @@ import { Finding } from "@types/review"
 
 ## Steps and dependencies
 
-```agent
+```skillspec
 skill "greeter" {
   input {
     name: string
@@ -160,7 +160,7 @@ skillspec deps greeter.agent
 
 Every context block takes an optional `priority` flag (`critical`, `important`, `supplementary`, `optional`), `when` guard, `decay` rate, and `until` lifecycle. Higher priority survives trimming and gets annotated in compiled output.
 
-```agent
+```skillspec
 context(priority: critical) {
   """
   You are a multilingual greeting assistant.
@@ -187,7 +187,7 @@ context(priority: supplementary, decay: 0.1) {
 
 For large reference material. Stays on disk until a step pulls it in with `load`.
 
-```agent
+```skillspec
 lazy context "style-guide" (priority: supplementary) {
   summary "Tone and vocabulary conventions for greetings."
   ref "./references/style-guide.md"
@@ -208,7 +208,7 @@ lazy context "language-phrases" (priority: supplementary) {
 }
 ```
 
-```agent
+```skillspec
 step compose {
   requires detect_language
   load "language-phrases"
@@ -235,7 +235,7 @@ Don't mark everything `priority: critical`. It defeats the system — emphasis l
 
 ## Tests
 
-```agent
+```skillspec
 tests {
   test "basic english greeting" {
     given {
@@ -294,7 +294,7 @@ skillspec test greeter.agent   # lists tests, doesn't run them
 
 All optional. Go inside `body`.
 
-```agent
+```skillspec
 body {
   persona {
     """
@@ -343,7 +343,7 @@ body {
 
 ## Tools and permissions
 
-```agent
+```skillspec
 tools {
   require Read
   require Bash
@@ -373,7 +373,7 @@ permissions {
 
 ### Calling another skill
 
-```agent
+```skillspec
 step translate {
   use translation_skill(text: input.name, lang: input.language)
   context { "Use the translation result to compose the greeting." }
@@ -382,7 +382,7 @@ step translate {
 
 ### Mixins
 
-```agent
+```skillspec
 mixin audit_logging {
   step log_start {
     context { "Log that execution is beginning." }
@@ -411,7 +411,7 @@ skill "greeter" {
 
 ### Extending
 
-```agent
+```skillspec
 skill "formal-greeter" extends "greeter" {
   body {
     persona {
@@ -428,7 +428,7 @@ skill "formal-greeter" extends "greeter" {
 
 ## Pipelines
 
-```agent
+```skillspec
 pipeline "full-greeting-flow" {
   input {
     name: string
@@ -474,7 +474,7 @@ Same `&` / `|` dependency syntax as steps. Reference a stage's output as `stage_
 
 Orchestrations coordinate multiple agents across named phases. Where a pipeline chains skills sequentially, an orchestration lets several agents work in parallel with shared state and dependency-based ordering.
 
-```agent
+```skillspec
 orchestration "pr-review" {
     agents {
         reviewer: agent(skill: "code-review", model: "opus")
@@ -510,7 +510,7 @@ See the [Language Reference](language-reference.md) section 12 for the full orch
 
 ## Packaging
 
-```agent
+```skillspec
 package {
   name: "@my-org/greetings"
   version: "1.0.0"
@@ -537,7 +537,7 @@ skillspec install greetings.agent                    # from source
 
 Packages install to `.skillspec/packages/<name>@<version>/`. The `.skillpkg` contains `package.json`, compiled `SKILL.md` per skill, and `.types.json` for exported types.
 
-```agent
+```skillspec
 import { Greeting } from "@my-org/greetings"
 ```
 
@@ -545,7 +545,7 @@ import { Greeting } from "@my-org/greetings"
 
 ## Contracts
 
-```agent
+```skillspec
 pre {
   assert input.name != "" message "Name is required"
 }
@@ -583,7 +583,7 @@ This clones SkillOpt, creates a Python virtual environment (prefers `uv` if avai
 
 Your skill needs `tests` blocks — these define the evaluation criteria:
 
-```agent
+```skillspec
 skill "greeter" {
   input { name: string }
   output { greeting: string, length: int }

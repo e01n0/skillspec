@@ -1,0 +1,45 @@
+skill "writer" {
+  input { topic: string }
+  output { draft: string }
+  body {
+    context { "Write a first draft on the topic." }
+    step write {
+      emit output
+      context { "Produce a clear, concise draft." }
+    }
+  }
+}
+
+skill "editor" {
+  input { draft: string }
+  output { feedback: string }
+  body {
+    context { "Review the draft for clarity and correctness." }
+    step review {
+      emit output
+      context { "Provide specific, actionable feedback." }
+    }
+  }
+}
+
+orchestration "editorial-review" {
+  agents {
+    writer: agent(skill: "writer", model: "opus")
+    editor: agent(skill: "editor", model: "sonnet")
+  }
+  input {
+    topic: string
+  }
+  output {
+    final_draft: string
+  }
+  phase draft {
+    writer.run(topic: input.topic)
+  }
+  phase review {
+    requires draft
+    editor.run(draft: writer.result)
+    emit output from editor.result
+  }
+  timeout 30m
+}

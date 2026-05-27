@@ -1,0 +1,51 @@
+type Greeting {
+  message: string
+  formal: bool
+}
+
+skill "greeter" {
+  input {
+    name: string
+    formal?: bool = false
+  }
+  output {
+    greeting: Greeting
+  }
+  body {
+    context { "Generate a greeting for the given name." }
+    step greet {
+      emit output
+      context { "Produce a Greeting. Use formal register if requested." }
+    }
+  }
+  tests {
+    test "informal greeting" {
+      given {
+        name: "Alice"
+      }
+      expect {
+        output.greeting.formal: == false
+      }
+    }
+    test "formal greeting" {
+      given {
+        name: "Dr. Smith"
+        formal: true
+      }
+      expect {
+        output.greeting.formal: == true
+        output.greeting.message: contains("Dr. Smith")
+      }
+    }
+    test "greeting is consistent" {
+      given {
+        name: "Bob"
+      }
+      expect {
+        output.greeting.message: resembles("A friendly greeting for Bob")
+      }
+      confidence 0.8
+      runs 3
+    }
+  }
+}
