@@ -1,0 +1,238 @@
+diff --git a/skillopt/model/__init__.py b/skillopt/model/__init__.py
+index bd33aa1..aeb89f3 100644
+--- a/skillopt/model/__init__.py
++++ b/skillopt/model/__init__.py
+@@ -7,6 +7,7 @@ from typing import Any
+ from skillopt.model import azure_openai as _openai
+ from skillopt.model import claude_backend as _claude
+ from skillopt.model import qwen_backend as _qwen
++from skillopt.model import agent_proxy as _agent_proxy
+ from skillopt.model.backend_config import (  # noqa: F401
+     configure_claude_code_exec,
+     configure_codex_exec,
+@@ -50,6 +51,10 @@ def set_backend(name: str | None) -> str:
+         set_optimizer_backend("openai_chat")
+         set_target_backend("qwen_chat")
+         return "qwen_chat"
++    if normalized in {"agent_proxy", "proxy"}:
++        set_optimizer_backend("agent_proxy")
++        set_target_backend("agent_proxy")
++        return "agent_proxy"
+     raise ValueError(f"Unsupported legacy backend: {name!r}")
+ 
+ 
+@@ -77,6 +82,15 @@ def chat_optimizer(
+     reasoning_effort: str | None = None,
+     timeout: int | None = None,
+ ) -> tuple[str, dict]:
++    if get_optimizer_backend() == "agent_proxy":
++        return _agent_proxy.chat_optimizer(
++            system=system,
++            user=user,
++            max_completion_tokens=max_completion_tokens,
++            retries=retries,
++            stage=stage,
++            timeout=timeout,
++        )
+     if get_optimizer_backend() == "claude_chat":
+         return _claude.chat_optimizer(
+             system=system,
+@@ -106,6 +120,15 @@ def chat_target(
+     reasoning_effort: str | None = None,
+     timeout: int | None = None,
+ ) -> tuple[str, dict]:
++    if get_target_backend() == "agent_proxy":
++        return _agent_proxy.chat_target(
++            system=system,
++            user=user,
++            max_completion_tokens=max_completion_tokens,
++            retries=retries,
++            stage=stage,
++            timeout=timeout,
++        )
+     if get_target_backend() == "claude_chat":
+         return _claude.chat_target(
+             system=system,
+@@ -152,6 +175,17 @@ def chat_optimizer_messages(
+     return_message: bool = False,
+     timeout: int | None = None,
+ ) -> tuple[Any, dict]:
++    if get_optimizer_backend() == "agent_proxy":
++        return _agent_proxy.chat_optimizer_messages(
++            messages=messages,
++            max_completion_tokens=max_completion_tokens,
++            retries=retries,
++            stage=stage,
++            tools=tools,
++            tool_choice=tool_choice,
++            return_message=return_message,
++            timeout=timeout,
++        )
+     if get_optimizer_backend() == "claude_chat":
+         return _claude.chat_optimizer_messages(
+             messages=messages,
+@@ -188,6 +222,17 @@ def chat_target_messages(
+     return_message: bool = False,
+     timeout: int | None = None,
+ ) -> tuple[Any, dict]:
++    if get_target_backend() == "agent_proxy":
++        return _agent_proxy.chat_target_messages(
++            messages=messages,
++            max_completion_tokens=max_completion_tokens,
++            retries=retries,
++            stage=stage,
++            tools=tools,
++            tool_choice=tool_choice,
++            return_message=return_message,
++            timeout=timeout,
++        )
+     if get_target_backend() == "claude_chat":
+         return _claude.chat_target_messages(
+             messages=messages,
+@@ -279,6 +324,17 @@ def chat_with_deployment(
+ 
+ def get_token_summary() -> dict:
+     summary = _openai.get_token_summary()
++    proxy_summary = _agent_proxy.get_token_summary()
++    for stage, values in proxy_summary.items():
++        if stage == "_total":
++            continue
++        if stage not in summary:
++            summary[stage] = values
++            continue
++        summary[stage]["calls"] += values["calls"]
++        summary[stage]["prompt_tokens"] += values["prompt_tokens"]
++        summary[stage]["completion_tokens"] += values["completion_tokens"]
++        summary[stage]["total_tokens"] += values["total_tokens"]
+     claude_summary = _claude.get_token_summary()
+     for stage, values in claude_summary.items():
+         if stage == "_total":
+@@ -322,6 +378,7 @@ def reset_token_tracker() -> None:
+     _openai.reset_token_tracker()
+     _claude.reset_token_tracker()
+     _qwen.reset_token_tracker()
++    _agent_proxy.reset_token_tracker()
+ 
+ 
+ def configure_azure_openai(
+@@ -390,14 +447,17 @@ def set_reasoning_effort(effort: str | None) -> None:
+     _openai.set_reasoning_effort(effort)
+     _claude.set_reasoning_effort(effort)
+     _qwen.set_reasoning_effort(effort)
++    _agent_proxy.set_reasoning_effort(effort)
+ 
+ 
+ def set_target_deployment(deployment: str) -> None:
+     _openai.set_target_deployment(deployment)
+     _claude.set_target_deployment(deployment)
+     _qwen.set_target_deployment(deployment)
++    _agent_proxy.set_target_deployment(deployment)
+ 
+ 
+ def set_optimizer_deployment(deployment: str) -> None:
+     _openai.set_optimizer_deployment(deployment)
+     _claude.set_optimizer_deployment(deployment)
++    _agent_proxy.set_optimizer_deployment(deployment)
+diff --git a/skillopt/model/backend_config.py b/skillopt/model/backend_config.py
+index cf36b7e..e142277 100644
+--- a/skillopt/model/backend_config.py
++++ b/skillopt/model/backend_config.py
+@@ -49,10 +49,10 @@ CLAUDE_CODE_EXEC_MAX_THINKING_TOKENS = max(
+ def set_optimizer_backend(backend: str) -> None:
+     global OPTIMIZER_BACKEND
+     OPTIMIZER_BACKEND = normalize_backend_name(backend or "openai_chat")
+-    if OPTIMIZER_BACKEND not in {"openai_chat", "claude_chat"}:
++    if OPTIMIZER_BACKEND not in {"openai_chat", "claude_chat", "agent_proxy"}:
+         raise ValueError(
+             f"Unsupported optimizer backend: {OPTIMIZER_BACKEND!r}. "
+-            "Supported values are 'openai_chat' and 'claude_chat'."
++            "Supported values are 'openai_chat', 'claude_chat', and 'agent_proxy'."
+         )
+     os.environ["OPTIMIZER_BACKEND"] = OPTIMIZER_BACKEND
+ 
+@@ -64,10 +64,10 @@ def get_optimizer_backend() -> str:
+ def set_target_backend(backend: str) -> None:
+     global TARGET_BACKEND
+     TARGET_BACKEND = normalize_backend_name(backend or "openai_chat")
+-    if TARGET_BACKEND not in {"openai_chat", "claude_chat", "qwen_chat", "codex_exec", "claude_code_exec"}:
++    if TARGET_BACKEND not in {"openai_chat", "claude_chat", "qwen_chat", "codex_exec", "claude_code_exec", "agent_proxy"}:
+         raise ValueError(
+             f"Unsupported target backend: {TARGET_BACKEND!r}. "
+-            "Supported values are 'openai_chat', 'claude_chat', 'qwen_chat', 'codex_exec', and 'claude_code_exec'."
++            "Supported values are 'openai_chat', 'claude_chat', 'qwen_chat', 'codex_exec', 'claude_code_exec', and 'agent_proxy'."
+         )
+     os.environ["TARGET_BACKEND"] = TARGET_BACKEND
+ 
+@@ -81,11 +81,11 @@ def is_target_exec_backend() -> bool:
+ 
+ 
+ def is_optimizer_chat_backend() -> bool:
+-    return OPTIMIZER_BACKEND in {"openai_chat", "claude_chat"}
++    return OPTIMIZER_BACKEND in {"openai_chat", "claude_chat", "agent_proxy"}
+ 
+ 
+ def is_target_chat_backend() -> bool:
+-    return TARGET_BACKEND in {"openai_chat", "claude_chat", "qwen_chat"}
++    return TARGET_BACKEND in {"openai_chat", "claude_chat", "qwen_chat", "agent_proxy"}
+ 
+ 
+ def configure_codex_exec(
+diff --git a/skillopt/model/common.py b/skillopt/model/common.py
+index ee90e38..b7edd44 100644
+--- a/skillopt/model/common.py
++++ b/skillopt/model/common.py
+@@ -25,6 +25,7 @@ _BACKEND_DEFAULT_MODELS = {
+     "claude_chat": "claude-sonnet-4-6",
+     "claude_code_exec": "claude-sonnet-4-6",
+     "qwen_chat": "Qwen/Qwen3.5-4B",
++    "agent_proxy": "agent-proxy",
+ }
+ 
+ _BACKEND_ALIASES = {
+@@ -41,6 +42,8 @@ _BACKEND_ALIASES = {
+     "anthropic": "claude_chat",
+     "qwen": "qwen_chat",
+     "qwen_chat": "qwen_chat",
++    "agent_proxy": "agent_proxy",
++    "proxy": "agent_proxy",
+ }
+ 
+ 
+diff --git a/skillopt/model/router.py b/skillopt/model/router.py
+index 0863761..ecf71e9 100644
+--- a/skillopt/model/router.py
++++ b/skillopt/model/router.py
+@@ -4,7 +4,7 @@ from __future__ import annotations
+ import os
+ from typing import Any
+ 
+-from . import azure_openai, claude_backend, codex_backend
++from . import azure_openai, claude_backend, codex_backend, agent_proxy
+ from .common import normalize_backend_name
+ 
+ 
+@@ -20,19 +20,21 @@ def _backend_module(name: str):
+         return codex_backend
+     if name == "claude":
+         return claude_backend
++    if name == "agent_proxy":
++        return agent_proxy
+     raise ValueError(f"Unknown backend: {name!r}")
+ 
+ 
+ def _all_backend_modules() -> list[Any]:
+-    return [azure_openai, codex_backend, claude_backend]
++    return [azure_openai, codex_backend, claude_backend, agent_proxy]
+ 
+ 
+ def set_backend(name: str | None) -> str:
+     """Select the active model backend for subsequent calls."""
+     global _ACTIVE_BACKEND
+     normalized = normalize_backend_name(name)
+-    if normalized not in {"azure_openai", "codex", "claude"}:
+-        valid = ", ".join(sorted({"azure_openai", "codex", "claude"}))
++    if normalized not in {"azure_openai", "codex", "claude", "agent_proxy"}:
++        valid = ", ".join(sorted({"azure_openai", "codex", "claude", "agent_proxy"}))
+         raise ValueError(f"Unknown backend {name!r}. Expected one of: {valid}")
+     _ACTIVE_BACKEND = normalized
+     os.environ["REFLACT_MODEL_BACKEND"] = normalized

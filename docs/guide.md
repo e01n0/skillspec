@@ -562,3 +562,144 @@ post {
 skillspec diff v1.agent v2.agent
 skillspec diff greeter.agent greeter/SKILL.md --against-skillmd
 ```
+
+---
+
+## Optimization with SkillOpt
+
+SkillSpec integrates [Microsoft SkillOpt](https://github.com/microsoft/SkillOpt) to iteratively improve compiled skills using an LLM-driven training loop. The key insight: when you run `skillspec optimize` inside an agent session, the hosting agent **is** the LLM — all calls route through it at zero additional API cost.
+
+SkillOpt treats a skill document as a trainable artifact, applying a 6-stage pipeline per step: rollout → reflect → aggregate → rank → update → validate. It uses epochs, minibatches, learning rates, and validation gates — neural network training semantics for natural-language documents.
+
+### Setup
+
+```sh
+skillspec optimize --setup
+```
+
+This clones SkillOpt, creates a Python virtual environment (prefers `uv` if available), and installs dependencies. One-time operation.
+
+### Preparing a skill for optimization
+
+Your skill needs `tests` blocks — these define the evaluation criteria:
+
+```agent
+skill "greeter" {
+  input { name: string }
+  output { greeting: string, length: int }
+  body {
+    context(priority: 90) { "You generate greetings." }
+    step greet {
+      emit output
+      context { "Generate a greeting for the given name." }
+    }
+  }
+  tests {
+    test "basic greeting" {
+      given { name: "Alice" }
+      expect {
+        output.greeting: contains("Alice")
+        output.length: > 0
+      }
+    }
+    test "formal greeting" {
+      given { name: "Bob", formal: true }
+      expect {
+        output.greeting: contains("Bob")
+        output.greeting: resembles("a formal greeting")
+      }
+    }
+  }
+}
+```
+
+Then prepare the optimization data:
+
+```sh
+skillspec optimize greeter.agent --prepare
+```
+
+This compiles the initial SKILL.md, exports test cases as SkillOpt-compatible data splits (train/valid_seen/valid_unseen), and generates a training config. Output goes to `greeter.optimized/` by default.
+
+### Preview before running
+
+```sh
+skillspec optimize greeter.agent --dry-run
+```
+
+Shows the training configuration, data split sizes, estimated steps, and estimated LLM round-trips without starting the trainer.
+
+### Running the training loop
+
+```sh
+skillspec optimize greeter.agent --step
+```
+
+This starts the SkillOpt training loop. The process creates a named pipe (FIFO) and emits LLM requests as JSON on stdout. For each request, it blocks reading the FIFO until a response arrives.
+
+In an agent session, the agent reads each request, processes it (it IS the LLM), and writes the response to the FIFO:
+
+```sh
+echo '{"content":"Hello, Alice! Welcome!"}' > greeter.optimized/response_pipe
+```
+
+The self-hosted `skillspec-optimize` skill guides this loop automatically.
+
+### How requests work
+
+Each request has a `role` and `phase`:
+
+| Role | Phase | What the agent does |
+|------|-------|---------------------|
+| `target` | `rollout` | Execute the skill: follow the system prompt (the skill) and respond to the user message (the test input) |
+| `optimizer` | `evaluate` | Score the skill's output against test assertions. Return `{"hard": 0/1, "soft": 0.0-1.0, "fail_reason": "..."}` |
+| `optimizer` | `reflect` | Analyse failed and succeeded traces, propose edits to the skill document |
+| `optimizer` | `aggregate` | Merge patches from multiple analysts |
+| `optimizer` | `rank` | Rank candidate edits by importance, select the top-L |
+
+### Training parameters
+
+```sh
+skillspec optimize greeter.agent --step \
+  --epochs 5 \
+  --batch-size 8 \
+  --edit-budget 3 \
+  --scheduler cosine
+```
+
+| Flag | Default | SkillOpt analogy |
+|------|---------|------------------|
+| `--epochs` | 3 | Training epochs |
+| `--batch-size` | 4 | Minibatch size for reflection |
+| `--edit-budget` | 5 | Learning rate (max edits per step) |
+| `--scheduler` | `constant` | Edit budget scheduler: `constant`, `linear`, or `cosine` |
+
+### Output structure
+
+After optimization completes, the output directory contains:
+
+```
+greeter.optimized/
+├── initial_skill.md        # Original compiled skill
+├── best_skill.md           # Best validated skill
+├── config.yaml             # Training configuration
+├── runtime_state.json      # Checkpoint for resume
+├── history.json            # Per-step training history
+├── skills/                 # Skill snapshot per step
+│   ├── skill_v0000.md
+│   ├── skill_v0001.md
+│   └── ...
+├── steps/                  # Per-step artifacts
+│   ├── step_0001/
+│   └── ...
+└── splits/                 # Train/eval data
+    ├── train/items.json
+    ├── valid_seen/items.json
+    └── valid_unseen/items.json
+```
+
+### Cost
+
+When running inside an agent session (the default mode), all LLM calls are handled by the hosting agent. **No external API keys, no additional cost.** The only cost is the agent's own token usage.
+
+For a skill with 10 test cases, 3 epochs, batch size 4: expect ~50-80 LLM round-trips over ~3 minutes.
