@@ -237,6 +237,8 @@ skillspec build my-skill.agent --to                   # interactive menu
 
 `--to` auto-selects the right build target for each runtime. Combine with `--watch` to redeploy on every save.
 
+See `examples/` for more: [pipelines](examples/pipeline.agent), [orchestrations](examples/orchestration.agent), [tests](examples/tested-skill.agent), [composition](examples/composition.agent).
+
 [Quickstart guide](docs/quickstart.md) has more. [Language reference](docs/language-reference.md) has everything.
 
 ## Migrating an existing skill
