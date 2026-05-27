@@ -13,7 +13,7 @@ skill "inventory-check" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Check inventory levels. Iterate over the list of items,
             count how many are below the numeric threshold, and return
@@ -23,7 +23,7 @@ skill "inventory-check" {
         }
 
         step scan {
-            context(priority: 80) {
+            context(priority: important) {
                 """
                 Go through each item in the items array. For each one,
                 compare its stock count against the threshold number.

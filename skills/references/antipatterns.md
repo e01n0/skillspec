@@ -2,24 +2,24 @@
 
 ## 1. All-Same-Priority
 
-**Pattern:** Every context block has `priority: 100` (or no priority, defaulting
+**Pattern:** Every context block has `priority: critical` (or no priority, defaulting
 to the same value).
 
 ```agent
 // Bad: priorities are meaningless
-context(priority: 100) { "Review the code." }
-context(priority: 100) { "Focus on security." }
-context(priority: 100) { "Check performance." }
-context(priority: 100) { "Verify error handling." }
+context(priority: critical) { "Review the code." }
+context(priority: critical) { "Focus on security." }
+context(priority: critical) { "Check performance." }
+context(priority: critical) { "Verify error handling." }
 ```
 
 **Why it is bad:** The priority system exists so the runtime can make intelligent
-trim decisions under context pressure. When everything is 100, the runtime
-must fall back to arbitrary ordering. You lose control over what gets dropped
-first.
+trim decisions under context pressure. When everything is `critical`, the runtime
+cannot trim anything and the compiled output annotations lose meaning. You lose
+control over what gets dropped first and what the agent emphasises.
 
-**Fix:** Spread priorities across the 0-100 range. Core identity at 90-100.
-Step instructions at 70-85. Reference material at 40-60. Nice-to-haves below 40.
+**Fix:** Differentiate across the four priority flags. Core identity as `critical` (max 2).
+Key instructions as `important`. Reference material as `supplementary`. Nice-to-haves as `optional`.
 
 ## 2. Eager-Everything
 
@@ -27,7 +27,7 @@ Step instructions at 70-85. Reference material at 40-60. Nice-to-haves below 40.
 
 ```agent
 // Bad: 2000 tokens of patterns loaded on every run
-context(priority: 40) {
+context(priority: supplementary) {
   """
   [500 lines of error patterns, security checklists, and style rules
   that are only needed if specific issues are found]
@@ -150,12 +150,12 @@ test "checks quality" {
 
 ```agent
 // Bad: 6 blocks that should be 1-2
-context(priority: 90) { "Review the code." }
-context(priority: 89) { "Look for bugs." }
-context(priority: 88) { "Look for security issues." }
-context(priority: 87) { "Look for performance issues." }
-context(priority: 86) { "Explain each finding." }
-context(priority: 85) { "Suggest fixes." }
+context(priority: important) { "Review the code." }
+context(priority: important) { "Look for bugs." }
+context(priority: important) { "Look for security issues." }
+context(priority: important) { "Look for performance issues." }
+context(priority: important) { "Explain each finding." }
+context(priority: important) { "Suggest fixes." }
 ```
 
 **Why it is bad:** Destroys prose flow. Each context block adds overhead.
@@ -164,7 +164,7 @@ differentiate a 1-point difference). See the prose-first-class principle.
 
 **Fix:** Group related instructions into cohesive blocks:
 ```agent
-context(priority: 90) {
+context(priority: important) {
   """
   Review the code for bugs, security issues, and performance problems.
   For each finding, explain the risk and suggest a fix.
@@ -193,7 +193,7 @@ whose outputs it reads or whose side effects it depends on.
 **Pattern:** Declaring lazy contexts that no step ever loads.
 
 ```agent
-lazy context "security-patterns" (priority: 40) {
+lazy context "security-patterns" (priority: supplementary) {
   summary "Known security vulnerabilities."
   ref "./references/security.md"
 }
@@ -214,7 +214,7 @@ lazy context declaration.
 ```agent
 step do_everything {
   emit output
-  context(priority: 100) {
+  context(priority: critical) {
     """
     [300 lines of instructions covering parsing, analysis,
     validation, reporting, and output formatting]

@@ -22,11 +22,11 @@ skill "multi-target-test" {
     body {
         persona { "You are a senior DevOps engineer specialising in CI/CD pipelines." }
 
-        context(priority: 95) {
+        context(priority: critical) {
             "Review the repository for deployment readiness. Check configuration, dependencies, and security."
         }
 
-        context(priority: 70) {
+        context(priority: supplementary) {
             "Pay special attention to environment variable handling and secrets management."
         }
 

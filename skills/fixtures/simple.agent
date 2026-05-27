@@ -9,7 +9,7 @@ skill "formatter" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Format the input text according to the requested style.
             Default to markdown if no style is specified.

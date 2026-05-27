@@ -69,14 +69,14 @@ skill "code-helper" {
 
         reasoning standard
 
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Review the provided files for bugs, security issues,
             and correctness problems.
             """
         }
 
-        context(priority: 70, when: input.language) {
+        context(priority: supplementary, when: input.language) {
             """
             The code is written in the specified language.
             Apply language-specific best practices.
@@ -84,7 +84,7 @@ skill "code-helper" {
         }
 
         step analyse {
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Read each file carefully. Identify concrete issues
                 with line references. Do not flag style preferences.

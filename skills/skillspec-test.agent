@@ -97,7 +97,7 @@ skill "skillspec-test" {
         note: "8/10 = 0.8 which is below the 0.9 confidence requirement"
       }
     }
-    context(priority: 100) {
+    context(priority: critical) {
       """
       Execute test blocks from a SkillSpec .agent file. For each
       test case: set up the given inputs, apply mocks, simulate the
@@ -105,7 +105,7 @@ skill "skillspec-test" {
       block. Report structured results.
       """
     }
-    lazy context "assertion-reference" (priority: 80) {
+    lazy context "assertion-reference" (priority: important) {
       summary "How to evaluate each assertion type — deterministic vs LLM-judged."
       index {
         section "deterministic" {
@@ -122,12 +122,12 @@ skill "skillspec-test" {
         }
       }
     }
-    lazy context "mock-reference" (priority: 60) {
+    lazy context "mock-reference" (priority: supplementary) {
       summary "How to apply mock declarations — fake responses, unavailable tools, simulated failures."
       ref "./references/mock-application.md"
     }
     step parse_tests {
-      context(priority: 95) {
+      context(priority: critical) {
         """
         Read the source .agent file. Extract all test blocks.
         If a specific test_name is provided, filter to just that
@@ -147,7 +147,7 @@ skill "skillspec-test" {
       requires parse_tests
       load "assertion-reference"
       load "mock-reference"
-      context(priority: 90) {
+      context(priority: important) {
         """
         For each test case, execute it:
         
@@ -181,7 +181,7 @@ skill "skillspec-test" {
     step report_results {
       requires execute_tests
       emit output
-      context(priority: 85) {
+      context(priority: important) {
         """
         Produce the TestResult:
         - Aggregate pass/fail counts

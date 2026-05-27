@@ -25,10 +25,10 @@ Each step compiles to a `## Step: step_name` section.
 step analyze {
   requires parse
   load "style-guide"
-  context(priority: 80) {
+  context(priority: important) {
     "Run analysis on the parsed files."
   }
-  context(priority: 60) {
+  context(priority: supplementary) {
     "Cross-reference against the style guide."
   }
 }

@@ -143,9 +143,11 @@ body_item       = context_block
 
 context_block   = "context" , [ context_params ] , "{" , prose , "}" ;
 context_params  = "(" , context_param , { "," , context_param } , ")" ;
-context_param   = "priority" , ":" , int_lit
+context_param   = "priority" , ":" , priority_flag
                 | "when" , ":" , expr
-                | "decay" , ":" , float_lit ;
+                | "decay" , ":" , float_lit
+                | "until" , ":" , ident ;
+priority_flag   = "critical" | "important" | "supplementary" | "optional" ;
 
 
 (* ── 8. Lazy context ─────────────────────────────────────────────── *)
@@ -154,7 +156,7 @@ lazy_context    = "lazy" , "context" , string_lit ,
                   [ "(" , lazy_params , ")" ] ,
                   "{" , "summary" , string_lit , lazy_content , "}" ;
 
-lazy_params     = "priority" , ":" , int_lit , { "," , "priority" , ":" , int_lit } ;
+lazy_params     = "priority" , ":" , priority_flag , { "," , "priority" , ":" , priority_flag } ;
 
 lazy_content    = ref_content
                 | index_content

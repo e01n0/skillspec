@@ -17,7 +17,7 @@ skill "risk-assessment" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Perform a risk assessment on the provided codebase.
             Analyse the code, review the findings, and produce
@@ -27,7 +27,7 @@ skill "risk-assessment" {
 
         step analyse {
             // TODO: Determine dependencies
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Scan the codebase for potential risk factors.
                 Look for security vulnerabilities, deprecated APIs,
@@ -38,7 +38,7 @@ skill "risk-assessment" {
 
         step review {
             // TODO: Determine dependencies
-            context(priority: 80) {
+            context(priority: important) {
                 """
                 Based on the analysis results, classify each finding
                 by severity. Determine the overall risk level by
@@ -51,7 +51,7 @@ skill "risk-assessment" {
             // TODO: Determine dependencies
             emit output
 
-            context(priority: 70) {
+            context(priority: supplementary) {
                 """
                 Using the reviewed findings and their risk classifications,
                 produce a final recommendation. Reference the specific

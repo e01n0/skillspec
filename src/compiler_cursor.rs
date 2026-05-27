@@ -25,13 +25,20 @@ impl TargetCompiler for CursorCompiler {
         }
         all_contexts.extend(skill.body.contexts.iter());
         all_contexts.sort_by(|a, b| {
-            b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+            let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+            let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
+            pb.cmp(&pa)
         });
 
         if !all_contexts.is_empty() {
             out.push_str("## Rules\n\n");
             for ctx in &all_contexts {
-                out.push_str("- ");
+                match ctx.priority {
+                    Some(Priority::Critical) => out.push_str("- **CRITICAL:** "),
+                    Some(Priority::Important) => out.push_str("- **IMPORTANT:** "),
+                    Some(Priority::Optional) => out.push_str("- *(Optional)* "),
+                    _ => out.push_str("- "),
+                }
                 out.push_str(ctx.text.trim());
                 out.push('\n');
             }
@@ -83,7 +90,7 @@ mod tests {
         let out = compile(r#"
             skill "reviewer" {
                 body {
-                    context(priority: 90) { "Be thorough." }
+                    context(priority: important) { "Be thorough." }
                     step analyze { context { "Analyze code." } }
                     step report { requires analyze context { "Write report." } }
                 }

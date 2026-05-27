@@ -94,14 +94,14 @@ step step_name {
 
 ## Context Blocks
 
-Eager: `context(priority: 80, when: input.formal, decay: 0.1) { "prose" }`
+Eager: `context(priority: important, when: input.formal, decay: 0.1) { "prose" }`
 
-All parameters optional. Priority: 0-100, higher = retained under trimming.
+All parameters optional. Priority: `critical`, `important`, `supplementary`, or `optional` — higher survives trimming and gets annotated in compiled output. `until: step_name` marks context as active only until that step completes.
 
 Lazy (declared at body level, loaded via `load` in steps):
 
 ```agent
-lazy context "name" (priority: 40) {
+lazy context "name" (priority: supplementary) {
   summary "One-line description shown instead of full content."
   ref "./path/to/file.md"
 }
@@ -110,7 +110,7 @@ lazy context "name" (priority: 40) {
 Lazy with index (multiple sections):
 
 ```agent
-lazy context "catalog" (priority: 35) {
+lazy context "catalog" (priority: supplementary) {
   summary "Error pattern catalog."
   index {
     section "security" {

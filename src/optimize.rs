@@ -4,8 +4,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use miette::Result;
 
-use crate::ast::SourceFile;
+use crate::ast::{SourceFile, ContextBlock, Priority, SamplingDirective};
+use crate::checker::Checker;
 use crate::compiler_skillmd::SkillMdCompiler;
+use crate::formatter::Formatter;
 use crate::test_harness::prepare_split_data;
 
 // ── Proxy protocol types ────────────────────────────────────────────────────
@@ -143,6 +145,10 @@ pub fn cmd_optimize(config: OptimizeConfig, ast: &SourceFile) -> Result<()> {
         return cmd_setup();
     }
 
+    if config.writeback {
+        return cmd_writeback(&config, ast);
+    }
+
     if config.dry_run {
         return cmd_dry_run(&config, ast);
     }
@@ -156,7 +162,7 @@ pub fn cmd_optimize(config: OptimizeConfig, ast: &SourceFile) -> Result<()> {
     }
 
     Err(miette::miette!(
-        "Specify a mode: --setup, --prepare, --step, or --dry-run\n\n\
+        "Specify a mode: --setup, --prepare, --step, --writeback, or --dry-run\n\n\
          Typical workflow:\n  \
          1. skillspec optimize foo.agent --prepare\n  \
          2. skillspec optimize foo.agent --step          (repeat in agent loop)\n  \
@@ -536,6 +542,497 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── Writeback ───────────────────────────────────────────────────────────────
+
+fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
+    let out_dir = config.output.clone().unwrap_or_else(|| {
+        let stem = Path::new(&config.file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("skill");
+        format!("{}.optimized", stem)
+    });
+
+    let best_path = format!("{}/best_skill.md", out_dir);
+    let initial_path = format!("{}/initial_skill.md", out_dir);
+
+    if !Path::new(&best_path).exists() {
+        return Err(miette::miette!(
+            "No best_skill.md found at {}. Run optimization first.", best_path
+        ));
+    }
+
+    let best_text = fs::read_to_string(&best_path)
+        .map_err(|e| miette::miette!("read {}: {}", best_path, e))?;
+    let initial_text = fs::read_to_string(&initial_path)
+        .map_err(|e| miette::miette!("read {}: {}", initial_path, e))?;
+
+    if best_text.trim() == initial_text.trim() {
+        eprintln!("✓ No changes — best_skill.md is identical to initial_skill.md");
+        return Ok(());
+    }
+
+    let mut mutated_ast = ast.clone();
+
+    let best_sections = extract_skillmd_sections(&best_text);
+    let initial_sections = extract_skillmd_sections(&initial_text);
+
+    for skill in &mut mutated_ast.skills {
+        let compiler = SkillMdCompiler::new();
+        let compiled = compiler.compile(skill, ast);
+        if compiled.trim() != initial_text.trim() {
+            continue;
+        }
+
+        eprintln!("Applying writeback to skill '{}'...", skill.name);
+
+        let best_preamble = best_sections.iter()
+            .find(|s| s.step_name.is_none())
+            .map(|s| &s.lines);
+        let initial_preamble = initial_sections.iter()
+            .find(|s| s.step_name.is_none())
+            .map(|s| &s.lines);
+
+        // Apply preamble context changes
+        if let (Some(best_lines), Some(_initial_lines)) = (best_preamble, initial_preamble) {
+            let best_contexts = parse_contexts_from_lines(best_lines);
+            let prev_count = skill.body.contexts.len();
+            apply_context_mutations(&best_contexts, &mut skill.body.contexts);
+            // Add source_order entries for any new contexts
+            for i in prev_count..skill.body.contexts.len() {
+                skill.body.source_order.push(crate::ast::BodyItemRef::Context(i));
+            }
+        }
+
+        // Apply step context changes
+        for best_section in &best_sections {
+            if let Some(ref step_name) = best_section.step_name {
+                if let Some(step) = skill.body.steps.iter_mut().find(|s| s.name == *step_name) {
+                    let best_contexts = parse_contexts_from_lines(&best_section.lines);
+                    apply_context_mutations(&best_contexts, &mut step.contexts);
+                }
+            }
+        }
+
+        // Apply sampling directive changes
+        if let Some(sampling) = parse_sampling_from_sections(&best_sections) {
+            skill.body.directives.sampling = Some(sampling);
+            eprintln!("  ✓ updated sampling directive");
+        }
+
+        // Apply persona changes
+        if let Some(persona) = parse_persona_from_sections(&best_sections) {
+            if skill.body.directives.persona.as_deref() != Some(&persona) {
+                skill.body.directives.persona = Some(persona);
+                eprintln!("  ✓ updated persona");
+            }
+        }
+    }
+
+    // Validate the mutated AST
+    let base_dir = std::path::Path::new(&config.file)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    if let Err(errors) = checker.check(&mutated_ast) {
+        for err in &errors {
+            eprintln!("writeback validation error: {}", err);
+        }
+        return Err(miette::miette!(
+            "Writeback produced {} validation error(s). The .agent source was NOT modified.",
+            errors.len()
+        ));
+    }
+
+    let formatted = Formatter::format(&mutated_ast);
+
+    let out_path = if config.no_overwrite {
+        config.file.replace(".agent", ".agent.optimized")
+    } else {
+        config.file.clone()
+    };
+
+    fs::write(&out_path, &formatted)
+        .map_err(|e| miette::miette!("write {}: {}", out_path, e))?;
+
+    eprintln!("✓ Writeback applied → {}", out_path);
+    Ok(())
+}
+
+// ── Section parser ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SkillMdSection {
+    pub header: String,
+    pub step_name: Option<String>,
+    pub lines: Vec<String>,
+}
+
+pub fn extract_skillmd_sections(text: &str) -> Vec<SkillMdSection> {
+    let mut sections = Vec::new();
+    let mut current_step: Option<String> = None;
+    let mut preamble_lines: Vec<String> = Vec::new();
+    let mut step_lines: Vec<String> = Vec::new();
+
+    let mut past_frontmatter = false;
+    let mut in_frontmatter = false;
+    let mut in_structural = false;
+
+    let list_structural = ["## Output", "## Preconditions", "## Postconditions",
+        "## Tools", "## Permissions"];
+    let block_structural = ["## Tests", "## Observability"];
+
+    for line in text.lines() {
+        if line == "---" {
+            if !past_frontmatter {
+                in_frontmatter = !in_frontmatter;
+                if !in_frontmatter {
+                    past_frontmatter = true;
+                }
+                continue;
+            }
+        }
+        if in_frontmatter { continue; }
+
+        if line.starts_with("# ") && !line.starts_with("## ") {
+            continue;
+        }
+
+        if line.starts_with("## ") {
+            // Block-structural sections skip everything until the next ## header
+            if block_structural.iter().any(|h| line.starts_with(h)) {
+                in_structural = true;
+                continue;
+            }
+            // List-structural sections only skip their list items (- **field**: type)
+            if list_structural.iter().any(|h| line.starts_with(h)) {
+                in_structural = false; // Will be handled per-line below
+                continue;
+            }
+
+            in_structural = false;
+
+            if line.starts_with("## Step: ") {
+                // Save previous step
+                if let Some(ref name) = current_step {
+                    if !step_lines.is_empty() {
+                        sections.push(SkillMdSection {
+                            header: format!("## Step: {}", name),
+                            step_name: Some(name.clone()),
+                            lines: std::mem::take(&mut step_lines),
+                        });
+                    }
+                }
+                current_step = Some(line.trim_start_matches("## Step: ").trim().to_string());
+                step_lines.clear();
+            }
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+
+        if in_structural { continue; }
+
+        // Skip structural list items (## Output fields, etc.)
+        if trimmed.starts_with("- **") && trimmed.contains("**:") { continue; }
+        // Skip ### sub-headings (test names inside ## Tests that leaked)
+        if trimmed.starts_with("### ") { continue; }
+
+        if current_step.is_some() {
+            step_lines.push(line.to_string());
+        } else {
+            preamble_lines.push(line.to_string());
+        }
+    }
+
+    // Save final step
+    if let Some(ref name) = current_step {
+        if !step_lines.is_empty() {
+            sections.push(SkillMdSection {
+                header: format!("## Step: {}", name),
+                step_name: Some(name.clone()),
+                lines: step_lines,
+            });
+        }
+    }
+
+    // Preamble first
+    if !preamble_lines.is_empty() {
+        sections.insert(0, SkillMdSection {
+            header: "<preamble>".to_string(),
+            step_name: None,
+            lines: preamble_lines,
+        });
+    }
+
+    sections
+}
+
+// ── Context parser (from SKILL.md lines) ────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ParsedContext {
+    text: String,
+    priority: Option<Priority>,
+}
+
+fn parse_contexts_from_lines(lines: &[String]) -> Vec<ParsedContext> {
+    let mut contexts = Vec::new();
+    let mut current_text = String::new();
+    let mut current_priority: Option<Priority> = None;
+
+    let skip_prefixes = [
+        "*Produces final output.*",
+        "*Uses:",
+        "*Loads reference:",
+        "*Decay:",
+        "*Active until step",
+        "**Condition:**",
+        "**Reasoning mode:**",
+        "**Sampling:**",
+        "**Format:**",
+    ];
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        if skip_prefixes.iter().any(|p| trimmed.starts_with(p)) {
+            continue;
+        }
+
+        // Persona lines (blockquote not starting with priority markers)
+        if trimmed.starts_with("> ") && !trimmed.starts_with("> **CRITICAL:**") && !trimmed.starts_with("> **IMPORTANT:**") {
+            continue;
+        }
+
+        // Detect priority markers
+        if trimmed.starts_with("> **CRITICAL:** ") {
+            if !current_text.trim().is_empty() {
+                contexts.push(ParsedContext {
+                    text: current_text.trim().to_string(),
+                    priority: current_priority,
+                });
+            }
+            current_text = trimmed.trim_start_matches("> **CRITICAL:** ").to_string();
+            current_priority = Some(Priority::Critical);
+            continue;
+        }
+        if trimmed.starts_with("> **IMPORTANT:** ") {
+            if !current_text.trim().is_empty() {
+                contexts.push(ParsedContext {
+                    text: current_text.trim().to_string(),
+                    priority: current_priority,
+                });
+            }
+            current_text = trimmed.trim_start_matches("> **IMPORTANT:** ").to_string();
+            current_priority = Some(Priority::Important);
+            continue;
+        }
+        if trimmed.starts_with("*Optional context:* ") {
+            if !current_text.trim().is_empty() {
+                contexts.push(ParsedContext {
+                    text: current_text.trim().to_string(),
+                    priority: current_priority,
+                });
+            }
+            current_text = trimmed.trim_start_matches("*Optional context:* ").to_string();
+            current_priority = Some(Priority::Optional);
+            continue;
+        }
+
+        // Regular text — could be continuation or new supplementary context
+        if trimmed.is_empty() {
+            if !current_text.trim().is_empty() {
+                contexts.push(ParsedContext {
+                    text: current_text.trim().to_string(),
+                    priority: current_priority,
+                });
+                current_text.clear();
+                current_priority = None;
+            }
+        } else {
+            if !current_text.is_empty() {
+                current_text.push('\n');
+            }
+            current_text.push_str(trimmed);
+        }
+    }
+
+    if !current_text.trim().is_empty() {
+        contexts.push(ParsedContext {
+            text: current_text.trim().to_string(),
+            priority: current_priority,
+        });
+    }
+
+    contexts
+}
+
+// ── Context matching ────────────────────────────────────────────────────────
+
+fn longest_common_substring_len(a: &str, b: &str) -> usize {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let m = a_bytes.len();
+    let n = b_bytes.len();
+    if m == 0 || n == 0 {
+        return 0;
+    }
+    let mut prev = vec![0usize; n + 1];
+    let mut curr = vec![0usize; n + 1];
+    let mut max_len = 0;
+
+    for i in 1..=m {
+        for j in 1..=n {
+            if a_bytes[i - 1] == b_bytes[j - 1] {
+                curr[j] = prev[j - 1] + 1;
+                if curr[j] > max_len {
+                    max_len = curr[j];
+                }
+            } else {
+                curr[j] = 0;
+            }
+        }
+        std::mem::swap(&mut prev, &mut curr);
+        curr.iter_mut().for_each(|v| *v = 0);
+    }
+
+    max_len
+}
+
+fn similarity_score(a: &str, b: &str) -> f64 {
+    if a == b { return 1.0; }
+    let max_len = a.len().max(b.len());
+    if max_len == 0 { return 1.0; }
+
+    // Word-level overlap (handles expansions/rewrites that preserve key words)
+    let words_a: std::collections::HashSet<&str> = a.split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+    let words_b: std::collections::HashSet<&str> = b.split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+    let word_overlap = if !words_a.is_empty() && !words_b.is_empty() {
+        let intersection = words_a.intersection(&words_b).count();
+        let smaller = words_a.len().min(words_b.len());
+        intersection as f64 / smaller as f64
+    } else {
+        0.0
+    };
+
+    // Character-level LCS
+    let lcs = longest_common_substring_len(a, b);
+    let char_score = lcs as f64 / max_len as f64;
+
+    // Take the better of the two signals
+    char_score.max(word_overlap)
+}
+
+fn find_best_context_match(text: &str, candidates: &[ContextBlock]) -> Option<(usize, f64)> {
+    let mut best_idx = None;
+    let mut best_score = 0.0f64;
+
+    for (i, candidate) in candidates.iter().enumerate() {
+        let score = similarity_score(text, candidate.text.trim());
+        if score > best_score {
+            best_score = score;
+            best_idx = Some(i);
+        }
+    }
+
+    if best_score >= 0.3 {
+        best_idx.map(|i| (i, best_score))
+    } else {
+        None
+    }
+}
+
+// ── Mutation application ────────────────────────────────────────────────────
+
+fn apply_context_mutations(optimized: &[ParsedContext], source_contexts: &mut Vec<ContextBlock>) {
+    use crate::token::Span;
+
+    let mut matched = vec![false; source_contexts.len()];
+
+    for opt_ctx in optimized {
+        if let Some((idx, score)) = find_best_context_match(&opt_ctx.text, source_contexts) {
+            matched[idx] = true;
+            let source = &mut source_contexts[idx];
+
+            if source.text.trim() != opt_ctx.text {
+                eprintln!("  ✓ updated context (similarity {:.0}%): {:?}...",
+                    score * 100.0,
+                    &opt_ctx.text.chars().take(50).collect::<String>());
+                source.text = opt_ctx.text.clone();
+            }
+
+            if opt_ctx.priority.is_some() && opt_ctx.priority != source.priority {
+                eprintln!("  ✓ priority changed: {:?} → {:?}",
+                    source.priority.map(|p| p.label()),
+                    opt_ctx.priority.map(|p| p.label()));
+                source.priority = opt_ctx.priority;
+            }
+        } else {
+            eprintln!("  + new context from optimizer: {:?}...",
+                &opt_ctx.text.chars().take(50).collect::<String>());
+            let new_idx = source_contexts.len();
+            source_contexts.push(ContextBlock {
+                priority: opt_ctx.priority.or(Some(Priority::Supplementary)),
+                when: None,
+                decay: None,
+                until: None,
+                text: opt_ctx.text.clone(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            });
+            // Mark for source_order fixup (caller handles this)
+            let _ = new_idx;
+        }
+    }
+}
+
+// ── Directive parsers ───────────────────────────────────────────────────────
+
+fn parse_sampling_from_sections(sections: &[SkillMdSection]) -> Option<SamplingDirective> {
+    for section in sections {
+        for line in &section.lines {
+            if line.contains("**Sampling:**") {
+                let mut temp = None;
+                let mut top_p = None;
+                if let Some(t_start) = line.find("temperature=") {
+                    let rest = &line[t_start + 12..];
+                    let val_str: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+                    temp = val_str.parse::<f64>().ok();
+                }
+                if let Some(p_start) = line.find("top_p=") {
+                    let rest = &line[p_start + 6..];
+                    let val_str: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+                    top_p = val_str.parse::<f64>().ok();
+                }
+                if temp.is_some() || top_p.is_some() {
+                    return Some(SamplingDirective { temperature: temp, top_p });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_persona_from_sections(sections: &[SkillMdSection]) -> Option<String> {
+    for section in sections {
+        let persona_lines: Vec<&str> = section.lines.iter()
+            .filter(|l| l.trim().starts_with("> ") && !l.trim().starts_with("> **"))
+            .map(|l| l.trim().trim_start_matches("> "))
+            .collect();
+
+        if !persona_lines.is_empty() {
+            return Some(persona_lines.join("\n"));
+        }
+    }
+    None
 }
 
 // ── Config generation ───────────────────────────────────────────────────────
@@ -1037,5 +1534,266 @@ mod tests {
         assert!(yaml.contains("backend: agent_proxy"));
         assert!(yaml.contains("out_root: out"));
         assert!(yaml.contains("train_size: 10"));
+    }
+
+    // ── Section parser tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extract_sections_preamble_and_steps() {
+        let text = "\
+---
+name: greeter
+---
+
+# greeter
+
+## Output
+
+- **greeting**: string
+
+> **IMPORTANT:** You generate greetings.
+
+## Step: greet
+
+*Produces final output.*
+
+Answer warmly.
+";
+        let sections = extract_skillmd_sections(text);
+
+        let preamble = sections.iter().find(|s| s.step_name.is_none());
+        assert!(preamble.is_some(), "expected preamble section, got: {:?}", sections);
+        assert!(preamble.unwrap().lines.iter().any(|l| l.contains("IMPORTANT")));
+
+        let step = sections.iter().find(|s| s.step_name.as_deref() == Some("greet"));
+        assert!(step.is_some(), "expected step 'greet' section");
+        assert!(step.unwrap().lines.iter().any(|l| l.contains("warmly")));
+    }
+
+    #[test]
+    fn extract_sections_empty_input() {
+        let sections = extract_skillmd_sections("");
+        assert!(sections.is_empty());
+    }
+
+    // ── Context parser tests ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_contexts_detects_priority_markers() {
+        let lines = vec![
+            "> **CRITICAL:** Never forget the user's name.".to_string(),
+            "".to_string(),
+            "> **IMPORTANT:** Use formal language.".to_string(),
+            "".to_string(),
+            "Be concise.".to_string(),
+            "".to_string(),
+            "*Optional context:* Add emoji if requested.".to_string(),
+        ];
+        let contexts = parse_contexts_from_lines(&lines);
+        assert_eq!(contexts.len(), 4);
+        assert_eq!(contexts[0].priority, Some(Priority::Critical));
+        assert!(contexts[0].text.contains("Never forget"));
+        assert_eq!(contexts[1].priority, Some(Priority::Important));
+        assert_eq!(contexts[2].priority, None);
+        assert_eq!(contexts[3].priority, Some(Priority::Optional));
+    }
+
+    // ── Similarity tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn similarity_exact_match() {
+        assert!((similarity_score("hello world", "hello world") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn similarity_partial_match() {
+        let score = similarity_score(
+            "You generate greetings for users.",
+            "You generate warm greetings for users.",
+        );
+        assert!(score > 0.5);
+    }
+
+    #[test]
+    fn similarity_no_match() {
+        let score = similarity_score(
+            "Completely different text",
+            "Nothing in common here xyz",
+        );
+        assert!(score < 0.3);
+    }
+
+    // ── Context matching tests ──────────────────────────────────────────────
+
+    #[test]
+    fn find_match_exact() {
+        use crate::token::Span;
+        let contexts = vec![
+            ContextBlock {
+                priority: Some(Priority::Critical),
+                when: None, decay: None, until: None,
+                text: "You generate greetings.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let result = find_best_context_match("You generate greetings.", &contexts);
+        assert!(result.is_some());
+        let (idx, score) = result.unwrap();
+        assert_eq!(idx, 0);
+        assert!((score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn find_match_edited() {
+        use crate::token::Span;
+        let contexts = vec![
+            ContextBlock {
+                priority: Some(Priority::Important),
+                when: None, decay: None, until: None,
+                text: "Generate a greeting for the given name.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+            ContextBlock {
+                priority: Some(Priority::Critical),
+                when: None, decay: None, until: None,
+                text: "You are a greeting specialist.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let result = find_best_context_match(
+            "Generate a warm, personalized greeting for the given name.",
+            &contexts,
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().0, 0);
+    }
+
+    #[test]
+    fn find_match_no_match_returns_none() {
+        use crate::token::Span;
+        let contexts = vec![
+            ContextBlock {
+                priority: None,
+                when: None, decay: None, until: None,
+                text: "Short.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let result = find_best_context_match(
+            "This is a completely different and much longer text about something else entirely.",
+            &contexts,
+        );
+        assert!(result.is_none());
+    }
+
+    // ── Mutation tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_mutations_updates_text() {
+        use crate::token::Span;
+        let mut contexts = vec![
+            ContextBlock {
+                priority: Some(Priority::Critical),
+                when: None, decay: None, until: None,
+                text: "You generate greetings.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let optimized = vec![
+            ParsedContext {
+                text: "You generate warm, personalized greetings.".to_string(),
+                priority: Some(Priority::Critical),
+            },
+        ];
+        apply_context_mutations(&optimized, &mut contexts);
+        assert_eq!(contexts[0].text, "You generate warm, personalized greetings.");
+    }
+
+    #[test]
+    fn apply_mutations_inserts_new_context() {
+        use crate::token::Span;
+        let mut contexts = vec![
+            ContextBlock {
+                priority: Some(Priority::Critical),
+                when: None, decay: None, until: None,
+                text: "You generate greetings.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let optimized = vec![
+            ParsedContext {
+                text: "You generate greetings.".to_string(),
+                priority: Some(Priority::Critical),
+            },
+            ParsedContext {
+                text: "Always include the person's name in the greeting.".to_string(),
+                priority: Some(Priority::Important),
+            },
+        ];
+        apply_context_mutations(&optimized, &mut contexts);
+        assert_eq!(contexts.len(), 2);
+        assert!(contexts[1].text.contains("person's name"));
+        assert_eq!(contexts[1].priority, Some(Priority::Important));
+    }
+
+    #[test]
+    fn apply_mutations_changes_priority() {
+        use crate::token::Span;
+        let mut contexts = vec![
+            ContextBlock {
+                priority: Some(Priority::Supplementary),
+                when: None, decay: None, until: None,
+                text: "Be concise in your greetings.".to_string(),
+                span: Span { start: 0, end: 0, line: 0, col: 0 },
+            },
+        ];
+        let optimized = vec![
+            ParsedContext {
+                text: "Be concise in your greetings.".to_string(),
+                priority: Some(Priority::Critical),
+            },
+        ];
+        apply_context_mutations(&optimized, &mut contexts);
+        assert_eq!(contexts[0].priority, Some(Priority::Critical));
+    }
+
+    // ── Directive parser tests ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_sampling_extracts_values() {
+        let sections = vec![SkillMdSection {
+            header: "<preamble>".to_string(),
+            step_name: None,
+            lines: vec![
+                "**Sampling:** temperature=0.3, top_p=0.9".to_string(),
+            ],
+        }];
+        let sampling = parse_sampling_from_sections(&sections).unwrap();
+        assert!((sampling.temperature.unwrap() - 0.3).abs() < f64::EPSILON);
+        assert!((sampling.top_p.unwrap() - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parse_persona_extracts_blockquote() {
+        let sections = vec![SkillMdSection {
+            header: "<preamble>".to_string(),
+            step_name: None,
+            lines: vec![
+                "> You are a warm greeting specialist.".to_string(),
+                "> You take language and register seriously.".to_string(),
+                "> **CRITICAL:** Always greet.".to_string(),
+            ],
+        }];
+        let persona = parse_persona_from_sections(&sections).unwrap();
+        assert!(persona.contains("warm greeting specialist"));
+        assert!(persona.contains("register seriously"));
+        assert!(!persona.contains("CRITICAL"));
+    }
+
+    #[test]
+    fn no_changes_produces_no_mutations() {
+        let text = "Same text.";
+        let sections = extract_skillmd_sections(text);
+        assert!(sections.is_empty() || sections.iter().all(|s| s.lines.is_empty() || s.lines.iter().all(|l| l.trim() == text.trim())));
     }
 }

@@ -62,18 +62,21 @@ Rename a step and every broken `requires` is a compile error.
 
 ### Context management
 
-Every context block has a priority (0 to 100). Higher priorities survive when the token budget tightens. This is how you deal with the lost-in-the-middle problem: mark what matters, and when the window fills up, the low-priority stuff drops first instead of your core instructions getting buried.
+Every context block has a priority flag (`critical`, `important`, `supplementary`, `optional`). Higher priorities survive when the token budget tightens and appear first in compiled output with annotations the agent can act on. `critical` blocks are never trimmed. This is how you deal with the lost-in-the-middle problem: mark what matters, and when the window fills up, the optional stuff drops first instead of your core instructions getting buried.
 
-Conditional contexts load only when their guard is true. Lazy contexts stay on disk until a step pulls them in.
+Conditional contexts load only when their guard is true. Lazy contexts stay on disk until a step pulls them in. The `until` parameter lets body-level context expire after a named step completes.
 
 ```skillspec
-context(priority: 100) {
+context(priority: critical) {
   "Always included, always first."
 }
-context(priority: 60, when: input.verbose) {
+context(priority: supplementary, when: input.verbose) {
   "Only when verbose mode is on."
 }
-lazy context "reference-docs" (priority: 30) {
+context(priority: important, until: discover) {
+  "Ask clarifying questions before assuming."
+}
+lazy context "reference-docs" (priority: optional) {
   summary "API docs, loaded on demand."
   ref "./docs/api-reference.md"
 }
@@ -295,7 +298,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
 | `pack` / `install` | Bundle and install `.skillpkg` archives |
 | `test`    | List test blocks (doesn't run them) |
-| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). Routes LLM calls through the hosting agent |
+| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source |
 
 No LLM calls for core commands, no network. `optimize` uses SkillOpt and routes all LLM calls through the hosting agent session — zero external API cost.
 
@@ -305,7 +308,6 @@ Designed but not shipped.
 
 - **Runtime composition.** `use`, `pipeline`, `orchestration` currently compile to prose the LLM interprets. Real dispatch needs `.agentpkg` and runtimes that support it.
 - **Test execution.** Test blocks parse and type-check; `skillspec test --prepare` generates execution skills. Full LLM-driven execution available via `skillspec optimize`.
-- **Optimization writeback.** `skillspec optimize --writeback` to apply SkillOpt improvements back to `.agent` source (priorities, sampling, context text).
 - **Remote registry.** `publish` / `install` from a central registry.
 - **Language server.** LSP for highlighting, completion, diagnostics.
 

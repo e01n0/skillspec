@@ -39,7 +39,7 @@ priority descending. Takes the first sentence or the first line of prose.
 
 ```agent
 body {
-  context(priority: 100) {
+  context(priority: critical) {
     """
     Review code for bugs and security issues.
     Focus on the most critical findings first.

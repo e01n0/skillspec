@@ -12,11 +12,11 @@ any step sections in the compiled output.
 
 ```agent
 body {
-  context(priority: 100) { "Skill-level instruction." }      // appears first
-  context(priority: 80)  { "Secondary instruction." }         // appears second
+  context(priority: critical) { "Skill-level instruction." }      // appears first
+  context(priority: important)  { "Secondary instruction." }         // appears second
 
   step analyze {
-    context(priority: 95) { "Step-level instruction." }       // appears under ## Step: analyze
+    context(priority: critical) { "Step-level instruction." }       // appears under ## Step: analyze
   }
 }
 ```
@@ -31,9 +31,9 @@ Within a single step's contexts: highest priority first.
 
 ```agent
 body {
-  context(priority: 60) { "Lower priority." }
-  context(priority: 100) { "Highest priority." }
-  context(priority: 80) { "Medium priority." }
+  context(priority: supplementary) { "Lower priority." }
+  context(priority: critical) { "Highest priority." }
+  context(priority: important) { "Medium priority." }
 }
 ```
 
@@ -49,7 +49,7 @@ Source order does not matter. Priority is the sole ordering criterion.
 Contexts with a `when` guard are rendered with a condition prefix:
 
 ```agent
-context(priority: 75, when: input.formal) {
+context(priority: important, when: input.formal) {
   "Use formal register and honorifics."
 }
 ```
@@ -69,7 +69,7 @@ for transparency).
 ### Rule 4: Decay contexts get an annotation
 
 ```agent
-context(priority: 60, decay: 0.1) {
+context(priority: supplementary, decay: 0.1) {
   "Remember the user's name."
 }
 ```
@@ -91,7 +91,7 @@ Lazy contexts are NOT inlined at their declaration point. Instead:
 ### Simple ref
 
 ```agent
-lazy context "style-guide" (priority: 40) {
+lazy context "style-guide" (priority: supplementary) {
   summary "Team style guide and conventions."
   ref "./references/style-guide.md"
 }
@@ -106,7 +106,7 @@ Compiles to a summary line at the position determined by its priority:
 ### Indexed lazy context
 
 ```agent
-lazy context "catalog" (priority: 35) {
+lazy context "catalog" (priority: supplementary) {
   summary "Error pattern catalog."
   index {
     section "security" {
@@ -146,17 +146,17 @@ The runtime is responsible for loading and injecting it when the step executes.
 ## Priority Assignment Guidelines
 
 For backporting: if you need to assign a priority to new content, use these
-ranges as a guide:
+flags as a guide:
 
-| Priority Range | Typical Content |
+| Priority Flag | Typical Content |
 |---------------|-----------------|
-| 90-100 | Core task identity, primary instruction |
-| 70-89 | Important step instructions, key constraints |
-| 40-69 | Reference material, supplementary guidance |
-| 10-39 | Nice-to-have background, low-priority reminders |
+| `critical` | Core task identity, primary instruction (max 2 per skill) |
+| `important` | Key step instructions, constraints |
+| `supplementary` | Reference material, guidance (default when unspecified) |
+| `optional` | Nice-to-have background, low-priority reminders |
 
 The first context block (the skill's "what you do" statement) should always
-be the highest priority. Priorities should generally decrease as content
+be `critical`. Priorities should generally decrease as content
 becomes more specific or supplementary.
 
 ## Backporting Context Changes

@@ -11,7 +11,7 @@ skill "monitored-review" {
     }
 
     body {
-        context(priority: 90) { "You are a code reviewer with telemetry." }
+        context(priority: important) { "You are a code reviewer with telemetry." }
 
         observe {
             on step_complete { emit_event "step.done" }

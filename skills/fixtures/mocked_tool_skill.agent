@@ -16,7 +16,7 @@ skill "pr-summariser" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Fetch the diff for a pull request and produce a concise
             summary of the changes, including the number of files changed.
@@ -26,7 +26,7 @@ skill "pr-summariser" {
         step fetch {
             use pr_diff(repo: input.repo, pr: input.pr_number)
 
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Retrieve the PR diff using the github tool.
                 """

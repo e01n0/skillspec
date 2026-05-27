@@ -22,10 +22,20 @@ impl TargetCompiler for SystemPromptCompiler {
         }
         all_contexts.extend(skill.body.contexts.iter());
         all_contexts.sort_by(|a, b| {
-            b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+            let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+            let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
+            pb.cmp(&pa)
         });
 
         for ctx in &all_contexts {
+            if let Some(p) = ctx.priority {
+                match p {
+                    Priority::Critical => out.push_str("CRITICAL: "),
+                    Priority::Important => out.push_str("IMPORTANT: "),
+                    Priority::Optional => out.push_str("(Optional) "),
+                    Priority::Supplementary => {}
+                }
+            }
             out.push_str(ctx.text.trim());
             out.push_str("\n\n");
         }
@@ -68,7 +78,7 @@ mod tests {
             skill "x" {
                 body {
                     persona { "You are an expert." }
-                    context(priority: 90) { "Review carefully." }
+                    context(priority: important) { "Review carefully." }
                     step analyze { context { "Analyze." } }
                 }
             }

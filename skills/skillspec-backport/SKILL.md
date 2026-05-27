@@ -48,12 +48,12 @@ parameters:
 
 ## References (lazy-loaded)
 
-- **skillspec-compilation-rules** (priority: 85): How SkillSpec compiles .agent to SKILL.md — the mapping rules for reverse engineering changes.
+- **skillspec-compilation-rules** (priority: important): How SkillSpec compiles .agent to SKILL.md — the mapping rules for reverse engineering changes.
   - **frontmatter**: YAML frontmatter maps to skill name, input fields, and description extraction. → `./references/compilation-frontmatter.md`
   - **sections**: ## headers map to steps (topo-sorted), Output/Tools/Permissions/Tests map to skill blocks. → `./references/compilation-sections.md`
   - **context-ordering**: Context blocks are ordered by priority descending. Skill-level before step-level. → `./references/compilation-context.md`
 
-Reconcile changes from a modified SKILL.md back into the
+> **CRITICAL:** Reconcile changes from a modified SKILL.md back into the
 .agent source file. The SKILL.md was compiled from the .agent
 file and then edited downstream. Your job is to figure out
 WHERE each change belongs in the structured source.
@@ -80,7 +80,7 @@ WHERE each change belongs in the structured source.
 
 ## Step: generate_diff
 
-If a changeset file is provided, read it directly.
+> **CRITICAL:** If a changeset file is provided, read it directly.
 
 Otherwise, generate the diff by reading both files:
 1. Read the .agent source file
@@ -95,7 +95,7 @@ removed section, or modified frontmatter.
 
 *Loads reference: skillspec-compilation-rules*
 
-For each change in the diff, determine where it maps in
+> **IMPORTANT:** For each change in the diff, determine where it maps in
 the .agent source:
 
 Mapping rules:
@@ -116,7 +116,7 @@ For each mapping:
 
 ## Step: apply_changes
 
-Apply all non-conflicted changes to the .agent source:
+> **IMPORTANT:** Apply all non-conflicted changes to the .agent source:
 
 1. Read the current .agent file
 2. For each 'apply' change, make the modification at the

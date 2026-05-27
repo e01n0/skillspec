@@ -123,7 +123,7 @@ skill "skillspec-migrate" {
             }
         }
 
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Complete a .agent.partial file by resolving TODO markers.
             The partial file was mechanically extracted by 'skillspec migrate'
@@ -132,12 +132,12 @@ skill "skillspec-migrate" {
             """
         }
 
-        lazy context "skillspec-spec" (priority: 90) {
+        lazy context "skillspec-spec" (priority: important) {
             summary "SkillSpec language reference — syntax for types, steps, contexts, and all constructs."
             ref "./references/language-reference.md"
         }
 
-        lazy context "type-inference-patterns" (priority: 60) {
+        lazy context "type-inference-patterns" (priority: supplementary) {
             summary "Patterns for inferring types from prose descriptions and naming conventions."
             index {
                 section "naming" {
@@ -154,7 +154,7 @@ skill "skillspec-migrate" {
         step read_partial {
             load "skillspec-spec"
 
-            context(priority: 95) {
+            context(priority: critical) {
                 """
                 Two modes of operation:
 
@@ -192,7 +192,7 @@ skill "skillspec-migrate" {
             requires read_partial
             load "skillspec-spec"
 
-            context(priority: 92) {
+            context(priority: critical) {
                 """
                 If source_dir is provided, explore the directory:
 
@@ -235,7 +235,7 @@ skill "skillspec-migrate" {
             requires read_partial
             load "type-inference-patterns"
 
-            context(priority: 85) {
+            context(priority: important) {
                 """
                 For each type-inference TODO:
                 1. Read the field name — plural names suggest arrays,
@@ -256,7 +256,7 @@ skill "skillspec-migrate" {
         step infer_dependencies {
             requires read_partial
 
-            context(priority: 85) {
+            context(priority: important) {
                 """
                 For each step-dependency TODO:
                 1. Read the step's context prose — does it reference
@@ -277,14 +277,14 @@ skill "skillspec-migrate" {
         step assign_priorities {
             requires read_partial
 
-            context(priority: 80) {
+            context(priority: important) {
                 """
                 For each context-priority TODO:
-                - Core identity/purpose context: priority 90-100
-                - Step-specific instructions: priority 70-85
-                - Conditional/situational context: priority 60-75
-                - Reference material: priority 40-55
-                - Nice-to-have guidance: priority 20-39
+                - Core identity/purpose context: priority critical (max 2 per skill)
+                - Step-specific instructions: priority important
+                - Conditional/situational context: priority important or supplementary
+                - Reference material: priority supplementary
+                - Nice-to-have guidance: priority optional
 
                 The first context block (the skill's core purpose)
                 should always be the highest priority. Step contexts
@@ -298,7 +298,7 @@ skill "skillspec-migrate" {
             load "skillspec-spec"
             emit output
 
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Generate the completed .agent file(s) by resolving all TODOs.
 

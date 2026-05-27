@@ -9,7 +9,7 @@ skill "task-completer" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Mark the given task as complete. Set status to "complete"
             and provide a confirmation message.

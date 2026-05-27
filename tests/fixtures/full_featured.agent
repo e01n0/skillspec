@@ -61,20 +61,20 @@ skill "full-review" {
     reinforce every 3 steps {
       "Stay focused on the review. Do not get sidetracked."
     }
-    context(priority: 100) {
+    context(priority: critical) {
       """
       Review the provided files for bugs, security issues,
       and maintainability problems.
       """
     }
-    context(priority: 80, when: input.focus) {
+    context(priority: important, when: input.focus) {
       "Focus specifically on the area requested by the reviewer."
     }
-    lazy context "style-guide" (priority: 40) {
+    lazy context "style-guide" (priority: supplementary) {
       summary "Team style guide and conventions."
       ref "./references/style-guide.md"
     }
-    lazy context "error-catalog" (priority: 30) {
+    lazy context "error-catalog" (priority: optional) {
       summary "Known error patterns and fixes."
       index {
         section "security" {
@@ -90,14 +90,14 @@ skill "full-review" {
     step analyze {
       load "style-guide"
       use static_analysis(files: input.files)
-      context(priority: 70) {
+      context(priority: supplementary) {
         "Run static analysis and compare against the style guide."
       }
     }
     step deep_review {
       requires analyze
       load "error-catalog"
-      context(priority: 60) {
+      context(priority: supplementary) {
         """
         Perform deep review using the error catalog as reference.
         Check for security and performance issues.

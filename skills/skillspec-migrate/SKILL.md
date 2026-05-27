@@ -103,12 +103,12 @@ parameters:
 
 ## References (lazy-loaded)
 
-- **skillspec-spec** (priority: 90): SkillSpec language reference — syntax for types, steps, contexts, and all constructs. → `./references/language-reference.md`
-- **type-inference-patterns** (priority: 60): Patterns for inferring types from prose descriptions and naming conventions.
+- **skillspec-spec** (priority: important): SkillSpec language reference — syntax for types, steps, contexts, and all constructs. → `./references/language-reference.md`
+- **type-inference-patterns** (priority: supplementary): Patterns for inferring types from prose descriptions and naming conventions.
   - **naming**: Plural names suggest arrays. Count/total suggest int. Flag/is_ suggest bool. → `./references/type-naming-patterns.md`
   - **usage**: Iteration language suggests arrays. Comparison language suggests enums. → `./references/type-usage-patterns.md`
 
-Complete a .agent.partial file by resolving TODO markers.
+> **CRITICAL:** Complete a .agent.partial file by resolving TODO markers.
 The partial file was mechanically extracted by 'skillspec migrate'
 and contains the structure it could determine, with TODO comments
 where human reasoning is needed.
@@ -154,7 +154,7 @@ where human reasoning is needed.
 
 *Loads reference: skillspec-spec*
 
-Two modes of operation:
+> **CRITICAL:** Two modes of operation:
 
 **Mode A — single partial:** If partial_file is provided,
 read it and identify all TODO markers. Categorise them:
@@ -187,7 +187,7 @@ additional context about the author's intent.
 
 *Loads reference: skillspec-spec*
 
-If source_dir is provided, explore the directory:
+> **CRITICAL:** If source_dir is provided, explore the directory:
 
 1. Grep all SKILL.md files for `.md` references to build
    the cross-reference graph:
@@ -225,7 +225,7 @@ skip this step.
 
 *Loads reference: type-inference-patterns*
 
-For each type-inference TODO:
+> **IMPORTANT:** For each type-inference TODO:
 1. Read the field name — plural names suggest arrays,
    count/total suggest int, flag/is_ suggest bool
 2. Read the context that references this field —
@@ -240,7 +240,7 @@ best guess as a suggestion rather than committing to it.
 
 ## Step: infer_dependencies
 
-For each step-dependency TODO:
+> **IMPORTANT:** For each step-dependency TODO:
 1. Read the step's context prose — does it reference
    results, outputs, or findings from another step?
 2. Check for temporal language — "after analysis",
@@ -255,12 +255,12 @@ Map dependencies as: requires single, requires A & B
 
 ## Step: assign_priorities
 
-For each context-priority TODO:
-- Core identity/purpose context: priority 90-100
-- Step-specific instructions: priority 70-85
-- Conditional/situational context: priority 60-75
-- Reference material: priority 40-55
-- Nice-to-have guidance: priority 20-39
+> **IMPORTANT:** For each context-priority TODO:
+- Core identity/purpose context: priority critical (max 2 per skill)
+- Step-specific instructions: priority important
+- Conditional/situational context: priority important or supplementary
+- Reference material: priority supplementary
+- Nice-to-have guidance: priority optional
 
 The first context block (the skill's core purpose)
 should always be the highest priority. Step contexts
@@ -272,7 +272,7 @@ should decrease as steps get more specific.
 
 *Loads reference: skillspec-spec*
 
-Generate the completed .agent file(s) by resolving all TODOs.
+> **IMPORTANT:** Generate the completed .agent file(s) by resolving all TODOs.
 
 Rules:
 - If confidence >= 0.8 for an inference, apply it directly

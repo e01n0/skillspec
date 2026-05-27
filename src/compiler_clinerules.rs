@@ -23,7 +23,9 @@ impl TargetCompiler for ClineRulesCompiler {
         }
         all_contexts.extend(skill.body.contexts.iter());
         all_contexts.sort_by(|a, b| {
-            b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+            let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+            let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
+            pb.cmp(&pa)
         });
 
         if !all_contexts.is_empty() {

@@ -69,7 +69,7 @@ skill "skillspec-backport" {
             "Map changes to the most specific .agent location. A new paragraph in a step section maps to that step's context block, not to a skill-level context."
         }
 
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Reconcile changes from a modified SKILL.md back into the
             .agent source file. The SKILL.md was compiled from the .agent
@@ -78,7 +78,7 @@ skill "skillspec-backport" {
             """
         }
 
-        lazy context "skillspec-compilation-rules" (priority: 85) {
+        lazy context "skillspec-compilation-rules" (priority: important) {
             summary "How SkillSpec compiles .agent to SKILL.md — the mapping rules for reverse engineering changes."
             index {
                 section "frontmatter" {
@@ -97,7 +97,7 @@ skill "skillspec-backport" {
         }
 
         step generate_diff {
-            context(priority: 95) {
+            context(priority: critical) {
                 """
                 If a changeset file is provided, read it directly.
 
@@ -117,7 +117,7 @@ skill "skillspec-backport" {
             requires generate_diff
             load "skillspec-compilation-rules"
 
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 For each change in the diff, determine where it maps in
                 the .agent source:
@@ -144,7 +144,7 @@ skill "skillspec-backport" {
         step apply_changes {
             requires classify_changes
 
-            context(priority: 85) {
+            context(priority: important) {
                 """
                 Apply all non-conflicted changes to the .agent source:
 
