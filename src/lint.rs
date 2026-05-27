@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use crate::ast::*;
 use crate::token::Span;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct LintDiagnostic {
@@ -46,7 +46,10 @@ impl LintEngine {
     }
 
     pub fn run(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
-        self.rules.iter().flat_map(|rule| rule.check(file)).collect()
+        self.rules
+            .iter()
+            .flat_map(|rule| rule.check(file))
+            .collect()
     }
 }
 
@@ -70,12 +73,17 @@ impl std::fmt::Display for LintDiagnostic {
 pub struct UniformPriority;
 
 impl LintRule for UniformPriority {
-    fn name(&self) -> &str { "uniform-priority" }
+    fn name(&self) -> &str {
+        "uniform-priority"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
         for skill in &file.skills {
-            let priorities: Vec<Priority> = skill.body.contexts.iter()
+            let priorities: Vec<Priority> = skill
+                .body
+                .contexts
+                .iter()
                 .filter_map(|c| c.priority)
                 .collect();
             if priorities.len() >= 2 && priorities.iter().all(|p| *p == priorities[0]) {
@@ -89,7 +97,10 @@ impl LintRule for UniformPriority {
                     span: Some(skill.span),
                 });
             }
-            let critical_count = priorities.iter().filter(|p| **p == Priority::Critical).count();
+            let critical_count = priorities
+                .iter()
+                .filter(|p| **p == Priority::Critical)
+                .count();
             if critical_count > 2 {
                 out.push(LintDiagnostic {
                     rule: "critical-overuse".to_string(),
@@ -111,7 +122,9 @@ impl LintRule for UniformPriority {
 pub struct LargeContext;
 
 impl LintRule for LargeContext {
-    fn name(&self) -> &str { "context-too-large" }
+    fn name(&self) -> &str {
+        "context-too-large"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
@@ -126,7 +139,12 @@ impl LintRule for LargeContext {
 }
 
 impl LargeContext {
-    fn check_contexts(out: &mut Vec<LintDiagnostic>, skill: &str, step: Option<&str>, contexts: &[ContextBlock]) {
+    fn check_contexts(
+        out: &mut Vec<LintDiagnostic>,
+        skill: &str,
+        step: Option<&str>,
+        contexts: &[ContextBlock],
+    ) {
         for ctx in contexts {
             if ctx.text.len() > 2000 {
                 let tokens = ctx.text.len() / 4;
@@ -153,32 +171,41 @@ impl LargeContext {
 pub struct WhenGuardAlwaysTrue;
 
 impl LintRule for WhenGuardAlwaysTrue {
-    fn name(&self) -> &str { "when-guard-always-true" }
+    fn name(&self) -> &str {
+        "when-guard-always-true"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
         for skill in &file.skills {
-            let required: HashSet<String> = skill.input.as_ref()
-                .map(|fields| fields.iter()
-                    .filter(|f| !f.optional)
-                    .map(|f| f.name.clone())
-                    .collect())
+            let required: HashSet<String> = skill
+                .input
+                .as_ref()
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .filter(|f| !f.optional)
+                        .map(|f| f.name.clone())
+                        .collect()
+                })
                 .unwrap_or_default();
-            if required.is_empty() { continue; }
+            if required.is_empty() {
+                continue;
+            }
 
             for ctx in &skill.body.contexts {
-                if let Some(field) = ctx.when.as_ref().and_then(extract_input_field) {
-                    if required.contains(&field) {
-                        out.push(LintDiagnostic {
-                            rule: self.name().to_string(),
-                            severity: Severity::Warning,
-                            message: format!(
-                                "skill '{}': when guard references required field 'input.{}' — condition is always true",
-                                skill.name, field
-                            ),
-                            span: Some(ctx.span),
-                        });
-                    }
+                if let Some(field) = ctx.when.as_ref().and_then(extract_input_field)
+                    && required.contains(&field)
+                {
+                    out.push(LintDiagnostic {
+                        rule: self.name().to_string(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "skill '{}': when guard references required field 'input.{}' — condition is always true",
+                            skill.name, field
+                        ),
+                        span: Some(ctx.span),
+                    });
                 }
             }
         }
@@ -187,12 +214,11 @@ impl LintRule for WhenGuardAlwaysTrue {
 }
 
 fn extract_input_field(expr: &Expr) -> Option<String> {
-    if let Expr::FieldAccess(base, field) = expr {
-        if let Expr::Ident(name) = base.as_ref() {
-            if name == "input" {
-                return Some(field.clone());
-            }
-        }
+    if let Expr::FieldAccess(base, field) = expr
+        && let Expr::Ident(name) = base.as_ref()
+        && name == "input"
+    {
+        return Some(field.clone());
     }
     None
 }
@@ -202,7 +228,9 @@ fn extract_input_field(expr: &Expr) -> Option<String> {
 pub struct EmptyStep;
 
 impl LintRule for EmptyStep {
-    fn name(&self) -> &str { "empty-step" }
+    fn name(&self) -> &str {
+        "empty-step"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
@@ -230,24 +258,34 @@ impl LintRule for EmptyStep {
 pub struct UnreachableStep;
 
 impl LintRule for UnreachableStep {
-    fn name(&self) -> &str { "unreachable-step" }
+    fn name(&self) -> &str {
+        "unreachable-step"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
         for skill in &file.skills {
             let steps = &skill.body.steps;
-            if steps.len() <= 1 { continue; }
+            if steps.len() <= 1 {
+                continue;
+            }
 
             let mut referenced: HashSet<&str> = HashSet::new();
             for step in steps {
                 if let Some(dep) = &step.requires {
                     match dep {
-                        Dependency::Single(n) => { referenced.insert(n); }
+                        Dependency::Single(n) => {
+                            referenced.insert(n);
+                        }
                         Dependency::All(ns) | Dependency::Any(ns) => {
-                            for n in ns { referenced.insert(n); }
+                            for n in ns {
+                                referenced.insert(n);
+                            }
                         }
                         Dependency::AllSteps => {
-                            for s in steps { referenced.insert(&s.name); }
+                            for s in steps {
+                                referenced.insert(&s.name);
+                            }
                         }
                     }
                 }
@@ -280,12 +318,17 @@ impl LintRule for UnreachableStep {
 pub struct UnusedLazyContext;
 
 impl LintRule for UnusedLazyContext {
-    fn name(&self) -> &str { "unused-lazy-context" }
+    fn name(&self) -> &str {
+        "unused-lazy-context"
+    }
 
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
         for skill in &file.skills {
-            let loaded: HashSet<&str> = skill.body.steps.iter()
+            let loaded: HashSet<&str> = skill
+                .body
+                .steps
+                .iter()
                 .flat_map(|s| s.loads.iter().map(|l| l.as_str()))
                 .collect();
 
@@ -325,7 +368,8 @@ mod tests {
 
     #[test]
     fn lint_all_same_priority_warns() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 body {
                     context(priority: supplementary) { "A" }
@@ -333,9 +377,13 @@ mod tests {
                     context(priority: supplementary) { "C" }
                 }
             }
-        "#);
-        assert!(diags.iter().any(|d| d.rule == "uniform-priority"),
-            "expected uniform-priority warning, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags.iter().any(|d| d.rule == "uniform-priority"),
+            "expected uniform-priority warning, got: {:?}",
+            diags.iter().map(|d| &d.rule).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -343,57 +391,83 @@ mod tests {
         let big = "x".repeat(2500);
         let src = format!(r#"skill "x" {{ body {{ context {{ "{big}" }} }} }}"#);
         let diags = lint(&src);
-        assert!(diags.iter().any(|d| d.rule == "context-too-large"),
-            "expected context-too-large warning, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
-        let msg = &diags.iter().find(|d| d.rule == "context-too-large").unwrap().message;
-        assert!(msg.contains("token"), "message should mention estimated tokens: {msg}");
+        assert!(
+            diags.iter().any(|d| d.rule == "context-too-large"),
+            "expected context-too-large warning, got: {:?}",
+            diags.iter().map(|d| &d.rule).collect::<Vec<_>>()
+        );
+        let msg = &diags
+            .iter()
+            .find(|d| d.rule == "context-too-large")
+            .unwrap()
+            .message;
+        assert!(
+            msg.contains("token"),
+            "message should mention estimated tokens: {msg}"
+        );
     }
 
     #[test]
     fn lint_when_guard_on_required_field_warns() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 input { files: string[] }
                 body {
                     context(when: input.files) { "Only if files." }
                 }
             }
-        "#);
-        assert!(diags.iter().any(|d| d.rule == "when-guard-always-true"),
-            "expected when-guard-always-true warning, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags.iter().any(|d| d.rule == "when-guard-always-true"),
+            "expected when-guard-always-true warning, got: {:?}",
+            diags.iter().map(|d| &d.rule).collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn lint_when_guard_on_optional_field_ok() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 input { focus?: string }
                 body {
                     context(when: input.focus) { "Optional." }
                 }
             }
-        "#);
-        assert!(!diags.iter().any(|d| d.rule == "when-guard-always-true"),
-            "optional field should not trigger: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            !diags.iter().any(|d| d.rule == "when-guard-always-true"),
+            "optional field should not trigger: {:?}",
+            diags.iter().map(|d| &d.rule).collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn lint_step_without_context_warns() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 body {
                     context { "Base." }
                     step empty_one { emit output }
                 }
             }
-        "#);
-        assert!(diags.iter().any(|d| d.rule == "empty-step"),
-            "expected empty-step warning, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags.iter().any(|d| d.rule == "empty-step"),
+            "expected empty-step warning, got: {:?}",
+            diags.iter().map(|d| &d.rule).collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn lint_unreachable_step_warns() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 body {
                     step a { context { "A" } }
@@ -402,14 +476,24 @@ mod tests {
                     step d { context { "Isolated" } }
                 }
             }
-        "#);
-        assert!(diags.iter().any(|d| d.rule == "unreachable-step" && d.message.contains("'d'")),
-            "expected unreachable-step for 'd', got: {:?}", diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "unreachable-step" && d.message.contains("'d'")),
+            "expected unreachable-step for 'd', got: {:?}",
+            diags
+                .iter()
+                .map(|d| (&d.rule, &d.message))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn lint_lazy_context_never_loaded_warns() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "x" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -419,14 +503,24 @@ mod tests {
                     step main { context { "Go." } }
                 }
             }
-        "#);
-        assert!(diags.iter().any(|d| d.rule == "unused-lazy-context" && d.message.contains("docs")),
-            "expected unused-lazy-context for 'docs', got: {:?}", diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "unused-lazy-context" && d.message.contains("docs")),
+            "expected unused-lazy-context for 'docs', got: {:?}",
+            diags
+                .iter()
+                .map(|d| (&d.rule, &d.message))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn lint_clean_skill_no_warnings() {
-        let diags = lint(r#"
+        let diags = lint(
+            r#"
             skill "clean" {
                 input {
                     files: string[]
@@ -448,8 +542,15 @@ mod tests {
                     }
                 }
             }
-        "#);
-        assert!(diags.is_empty(), "clean skill should have no warnings, got: {:?}",
-            diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+        "#,
+        );
+        assert!(
+            diags.is_empty(),
+            "clean skill should have no warnings, got: {:?}",
+            diags
+                .iter()
+                .map(|d| (&d.rule, &d.message))
+                .collect::<Vec<_>>()
+        );
     }
 }

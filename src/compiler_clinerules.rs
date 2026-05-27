@@ -4,8 +4,12 @@ use crate::compiler::TargetCompiler;
 pub struct ClineRulesCompiler;
 
 impl TargetCompiler for ClineRulesCompiler {
-    fn name(&self) -> &str { "clinerules" }
-    fn file_extension(&self) -> &str { "clinerules" }
+    fn name(&self) -> &str {
+        "clinerules"
+    }
+    fn file_extension(&self) -> &str {
+        "clinerules"
+    }
 
     fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
         let mut out = String::new();
@@ -66,14 +70,16 @@ mod tests {
 
     #[test]
     fn clinerules_format() {
-        let out = compile(r#"
+        let out = compile(
+            r#"
             skill "x" {
                 body {
                     context { "Be helpful." }
                     step analyze { context { "Analyze." } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(out.contains("# Instructions"));
         assert!(out.contains("# Workflow"));
         assert!(out.contains("## analyze"));

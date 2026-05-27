@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::error::{SkillSpecError, Result};
+use crate::error::{Result, SkillSpecError};
 use crate::token::{Span, Token, TokenKind};
 
 pub struct Parser {
@@ -278,8 +278,9 @@ impl Parser {
                     let text = self.peek_text();
                     return Err(SkillSpecError::UnexpectedToken {
                         found: text,
-                        expected: "context, lazy context, step, observe, on_error, or prompt directive"
-                            .to_string(),
+                        expected:
+                            "context, lazy context, step, observe, on_error, or prompt directive"
+                                .to_string(),
                         span,
                     });
                 }
@@ -1309,7 +1310,11 @@ impl Parser {
                     self.expect(TokenKind::EmitEvent)?;
                     let event_name = self.expect_string_lit()?;
                     self.expect(TokenKind::RBrace)?;
-                    events.push(ObserveEvent { trigger, event_name, span });
+                    events.push(ObserveEvent {
+                        trigger,
+                        event_name,
+                        span,
+                    });
                 }
                 TokenKind::Metric => {
                     let span = self.peek_span();
@@ -2066,8 +2071,7 @@ impl Parser {
     // ── Utility methods ───────────────────────────────────────────────
 
     fn at_end(&self) -> bool {
-        self.pos >= self.tokens.len()
-            || matches!(self.tokens[self.pos].kind, TokenKind::Eof)
+        self.pos >= self.tokens.len() || matches!(self.tokens[self.pos].kind, TokenKind::Eof)
     }
 
     fn peek_kind(&self) -> TokenKind {
@@ -2239,10 +2243,11 @@ impl Parser {
 
     fn expect_specific_ident(&mut self, expected: &str) -> Result<()> {
         if let TokenKind::Ident(ref name) = self.peek_kind()
-            && name == expected {
-                self.advance();
-                return Ok(());
-            }
+            && name == expected
+        {
+            self.advance();
+            return Ok(());
+        }
         // Handle keyword tokens that match the expected string
         if expected == "output" && matches!(self.peek_kind(), TokenKind::Output) {
             self.advance();
@@ -2339,7 +2344,8 @@ fn expr_to_source(expr: &Expr) -> String {
         }
         Expr::Not(inner) => format!("!{}", expr_to_source(inner)),
         Expr::FnCall(name, args) => {
-            let parts: Vec<String> = args.iter()
+            let parts: Vec<String> = args
+                .iter()
                 .map(|(k, v)| format!("{}: {}", k, expr_to_source(v)))
                 .collect();
             format!("{}({})", name, parts.join(", "))
@@ -2370,7 +2376,8 @@ mod tests {
 
     #[test]
     fn skill_with_input_output() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "review" {
                 input {
                     files: string[]
@@ -2385,7 +2392,8 @@ mod tests {
                     context { "Review the code." }
                 }
             }
-        "#);
+        "#,
+        );
         let skill = &file.skills[0];
         let input = skill.input.as_ref().unwrap();
         assert_eq!(input.len(), 3);
@@ -2399,7 +2407,8 @@ mod tests {
 
     #[test]
     fn skill_with_steps() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "test" {
                 body {
                     step analyze {
@@ -2415,19 +2424,23 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let body = &file.skills[0].body;
         assert_eq!(body.steps.len(), 3);
         assert_eq!(body.steps[0].name, "analyze");
         assert!(body.steps[0].use_call.is_some());
         assert_eq!(body.steps[1].name, "review");
-        assert!(matches!(body.steps[1].requires, Some(Dependency::Single(ref s)) if s == "analyze"));
+        assert!(
+            matches!(body.steps[1].requires, Some(Dependency::Single(ref s)) if s == "analyze")
+        );
         assert!(body.steps[2].emit);
     }
 
     #[test]
     fn type_definition() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             type Finding {
                 file: string
                 line: int
@@ -2435,7 +2448,8 @@ mod tests {
                 suggestion?: string
             }
             skill "x" { context { "ok" } }
-        "#);
+        "#,
+        );
         assert_eq!(file.type_defs.len(), 1);
         assert_eq!(file.type_defs[0].name, "Finding");
         assert_eq!(file.type_defs[0].fields.len(), 4);
@@ -2444,10 +2458,12 @@ mod tests {
 
     #[test]
     fn import_statement() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             import { Finding, Severity } from "@types/review"
             skill "x" { context { "ok" } }
-        "#);
+        "#,
+        );
         assert_eq!(file.imports.len(), 1);
         assert_eq!(file.imports[0].symbols, vec!["Finding", "Severity"]);
         assert_eq!(file.imports[0].path, "@types/review");
@@ -2455,7 +2471,8 @@ mod tests {
 
     #[test]
     fn context_with_params() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     context(priority: important, decay: 0.5) {
@@ -2466,7 +2483,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let ctx = &file.skills[0].body.contexts[0];
         assert_eq!(ctx.priority, Some(Priority::Important));
         assert_eq!(ctx.decay, Some(0.5));
@@ -2474,7 +2492,8 @@ mod tests {
 
     #[test]
     fn any_dependency() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     step a { context { "a" } }
@@ -2485,14 +2504,16 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let step = &file.skills[0].body.steps[2];
         assert!(matches!(step.requires, Some(Dependency::Any(_))));
     }
 
     #[test]
     fn pre_post_contracts() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "deploy" {
                 input { branch: string }
                 pre {
@@ -2503,7 +2524,8 @@ mod tests {
                 }
                 body { context { "Deploy." } }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.skills[0].pre.len(), 1);
         assert_eq!(file.skills[0].post.len(), 1);
         assert_eq!(file.skills[0].pre[0].message, "Don't deploy main");
@@ -2513,7 +2535,8 @@ mod tests {
 
     #[test]
     fn lazy_context_with_ref() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     lazy context "docs" (priority: supplementary) {
@@ -2526,7 +2549,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.skills[0].body.lazy_contexts.len(), 1);
         assert_eq!(file.skills[0].body.lazy_contexts[0].name, "docs");
         assert_eq!(file.skills[0].body.steps[0].loads, vec!["docs"]);
@@ -2534,7 +2558,8 @@ mod tests {
 
     #[test]
     fn tools_block() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 tools {
                     require Bash
@@ -2547,7 +2572,8 @@ mod tests {
                 }
                 body { context { "ok" } }
             }
-        "#);
+        "#,
+        );
         let tools = file.skills[0].tools.as_ref().unwrap();
         assert_eq!(tools.required.len(), 2);
         assert_eq!(tools.optional.len(), 1);
@@ -2555,7 +2581,8 @@ mod tests {
 
     #[test]
     fn prompt_directives() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     reasoning extended
@@ -2566,7 +2593,8 @@ mod tests {
                     context { "Do stuff." }
                 }
             }
-        "#);
+        "#,
+        );
         let directives = &file.skills[0].body.directives;
         assert_eq!(directives.reasoning.as_deref(), Some("extended"));
         assert!(directives.persona.is_some());
@@ -2575,7 +2603,8 @@ mod tests {
 
     #[test]
     fn pipeline_construct() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             pipeline "review" {
                 input { repo: string }
                 output { report: string }
@@ -2586,7 +2615,8 @@ mod tests {
                 }
                 timeout 30m
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.pipelines.len(), 1);
         assert_eq!(file.pipelines[0].stages.len(), 2);
         assert_eq!(file.pipelines[0].timeout.as_deref(), Some("30m"));
@@ -2594,7 +2624,8 @@ mod tests {
 
     #[test]
     fn orchestration_construct() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             orchestration "collab" {
                 agents {
                     reviewer: agent(skill: "code-review", model: "opus")
@@ -2606,7 +2637,8 @@ mod tests {
                 }
                 timeout 1h
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.orchestrations.len(), 1);
         assert_eq!(file.orchestrations[0].agents.len(), 1);
         assert_eq!(file.orchestrations[0].phases.len(), 1);
@@ -2616,7 +2648,8 @@ mod tests {
 
     #[test]
     fn test_block_parsing() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2630,14 +2663,16 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.skills[0].tests.len(), 1);
         assert_eq!(file.skills[0].tests[0].name, "basic");
     }
 
     #[test]
     fn test_with_mocks_and_confidence() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2654,7 +2689,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let test = &file.skills[0].tests[0];
         assert_eq!(test.name, "complex");
         assert_eq!(test.mocks.len(), 1);
@@ -2664,7 +2700,8 @@ mod tests {
 
     #[test]
     fn test_with_mock_responses() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2678,7 +2715,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let test = &file.skills[0].tests[0];
         assert_eq!(test.mocks.len(), 1);
         assert_eq!(test.mocks[0].tool_path, "tools.mcp.github");
@@ -2687,7 +2725,8 @@ mod tests {
 
     #[test]
     fn test_multiple_expectations() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2700,7 +2739,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let test = &file.skills[0].tests[0];
         assert_eq!(test.expectations.len(), 3);
         assert_eq!(test.expectations[0].path, "output.count");
@@ -2710,7 +2750,8 @@ mod tests {
 
     #[test]
     fn test_multiple_test_blocks() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2722,7 +2763,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.skills[0].tests.len(), 2);
         assert_eq!(file.skills[0].tests[0].name, "first");
         assert_eq!(file.skills[0].tests[1].name, "second");
@@ -2730,7 +2772,8 @@ mod tests {
 
     #[test]
     fn logical_and_in_when() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     step a {
@@ -2739,7 +2782,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let step = &file.skills[0].body.steps[0];
         assert!(step.when.is_some());
         if let Some(Expr::BinOp(_, BinOp::And, _)) = &step.when {
@@ -2751,7 +2795,8 @@ mod tests {
 
     #[test]
     fn logical_or_in_when() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     step a {
@@ -2760,7 +2805,8 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let step = &file.skills[0].body.steps[0];
         assert!(step.when.is_some());
         if let Some(Expr::BinOp(_, BinOp::Or, _)) = &step.when {
@@ -2772,7 +2818,8 @@ mod tests {
 
     #[test]
     fn quantifier_assertions() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body { context { "ok" } }
                 tests {
@@ -2785,14 +2832,16 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         let test = &file.skills[0].tests[0];
         assert_eq!(test.expectations.len(), 2);
     }
 
     #[test]
     fn mixin_and_include() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             mixin logging {
                 step log_start {
                     context { "Starting." }
@@ -2804,7 +2853,8 @@ mod tests {
                     context { "Deploy." }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.mixins.len(), 1);
         assert_eq!(file.mixins[0].name, "logging");
         assert_eq!(file.skills[0].includes, vec!["logging"]);
@@ -2814,7 +2864,8 @@ mod tests {
 
     #[test]
     fn package_declaration() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             package "@tools/review" {
                 version = "1.0.0"
                 description = "Code review toolkit"
@@ -2830,7 +2881,8 @@ mod tests {
             skill "code-review" {
                 body { context { "Review code." } }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.packages.len(), 1);
         assert_eq!(file.packages[0].name, "@tools/review");
         assert_eq!(file.packages[0].version, "1.0.0");
@@ -2840,26 +2892,30 @@ mod tests {
 
     #[test]
     fn package_with_no_exports() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             package "@tools/minimal" {
                 version = "0.1.0"
                 description = "Minimal package"
                 exports {}
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.packages.len(), 1);
         assert_eq!(file.packages[0].exports.len(), 0);
     }
 
     #[test]
     fn package_minimal_fields() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             package "@test/pkg" {
                 version = "2.0.0"
                 description = "Test"
                 exports { my_skill }
             }
-        "#);
+        "#,
+        );
         let pkg = &file.packages[0];
         assert_eq!(pkg.name, "@test/pkg");
         assert_eq!(pkg.version, "2.0.0");
@@ -2868,7 +2924,8 @@ mod tests {
 
     #[test]
     fn multiple_packages() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             package "@tools/a" {
                 version = "1.0.0"
                 description = "Package A"
@@ -2879,7 +2936,8 @@ mod tests {
                 description = "Package B"
                 exports { skill_b }
             }
-        "#);
+        "#,
+        );
         assert_eq!(file.packages.len(), 2);
         assert_eq!(file.packages[0].name, "@tools/a");
         assert_eq!(file.packages[1].name, "@tools/b");
@@ -2938,7 +2996,8 @@ mod tests {
 
     #[test]
     fn parse_observe_block_with_event() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     context { "Base." }
@@ -2947,8 +3006,13 @@ mod tests {
                     }
                 }
             }
-        "#);
-        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        "#,
+        );
+        let observe = file.skills[0]
+            .body
+            .observe
+            .as_ref()
+            .expect("should have observe block");
         assert_eq!(observe.events.len(), 1);
         assert_eq!(observe.events[0].trigger, "step_complete");
         assert_eq!(observe.events[0].event_name, "step.done");
@@ -2956,7 +3020,8 @@ mod tests {
 
     #[test]
     fn parse_observe_block_with_metric() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     context { "Base." }
@@ -2965,15 +3030,21 @@ mod tests {
                     }
                 }
             }
-        "#);
-        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        "#,
+        );
+        let observe = file.skills[0]
+            .body
+            .observe
+            .as_ref()
+            .expect("should have observe block");
         assert_eq!(observe.metrics.len(), 1);
         assert_eq!(observe.metrics[0].name, "review.findings");
     }
 
     #[test]
     fn parse_observe_block_mixed() {
-        let file = parse(r#"
+        let file = parse(
+            r#"
             skill "x" {
                 body {
                     context { "Base." }
@@ -2984,8 +3055,13 @@ mod tests {
                     }
                 }
             }
-        "#);
-        let observe = file.skills[0].body.observe.as_ref().expect("should have observe block");
+        "#,
+        );
+        let observe = file.skills[0]
+            .body
+            .observe
+            .as_ref()
+            .expect("should have observe block");
         assert_eq!(observe.events.len(), 2);
         assert_eq!(observe.metrics.len(), 1);
     }

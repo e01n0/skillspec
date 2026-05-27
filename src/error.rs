@@ -1,11 +1,15 @@
+use crate::token::Span;
 use miette::Diagnostic;
 use thiserror::Error;
-use crate::token::Span;
 
 #[derive(Error, Diagnostic, Debug)]
 pub enum SkillSpecError {
     #[error("Unexpected token '{found}' at {span}, expected {expected}")]
-    UnexpectedToken { found: String, expected: String, span: Span },
+    UnexpectedToken {
+        found: String,
+        expected: String,
+        span: Span,
+    },
 
     #[error("Unknown type '{name}' at {span}")]
     UnknownType { name: String, span: Span },
@@ -41,34 +45,75 @@ pub enum SkillSpecError {
     UnresolvedImport { path: String, span: Span },
 
     #[error("Failed to parse imported file '{path}': {message} (at {span})")]
-    ImportParseError { path: String, message: String, span: Span },
+    ImportParseError {
+        path: String,
+        message: String,
+        span: Span,
+    },
 
     #[error("Symbol '{symbol}' not found in imported file '{path}' at {span}")]
-    ImportSymbolNotFound { symbol: String, path: String, span: Span },
+    ImportSymbolNotFound {
+        symbol: String,
+        path: String,
+        span: Span,
+    },
 
     #[error("Lazy context '{name}' references missing file '{path}' at {span}")]
-    UnresolvedRef { name: String, path: String, span: Span },
+    UnresolvedRef {
+        name: String,
+        path: String,
+        span: Span,
+    },
 
     #[error("Unknown skill '{name}' referenced in use call at {span}")]
     UnknownSkill { name: String, span: Span },
 
     #[error("Argument mismatch in use call to '{skill_name}': {message} (at {span})")]
-    MismatchedArg { skill_name: String, message: String, span: Span },
+    MismatchedArg {
+        skill_name: String,
+        message: String,
+        span: Span,
+    },
 
     #[error("Test '{test_name}' references missing fixture '{path}' at {span}")]
-    UnresolvedFixturePath { path: String, test_name: String, span: Span },
+    UnresolvedFixturePath {
+        path: String,
+        test_name: String,
+        span: Span,
+    },
 
     #[error("Test '{test_name}' fixture '{path}' failed to parse: {message} (at {span})")]
-    FixtureParseError { path: String, message: String, test_name: String, span: Span },
+    FixtureParseError {
+        path: String,
+        message: String,
+        test_name: String,
+        span: Span,
+    },
 
     #[error("Test '{test_name}' given key '{key}' is not a declared input field at {span}")]
-    UnknownGivenKey { key: String, test_name: String, span: Span },
+    UnknownGivenKey {
+        key: String,
+        test_name: String,
+        span: Span,
+    },
 
-    #[error("Test '{test_name}' expects 'output.{field}' but '{field}' is not a declared output field at {span}")]
-    UnknownExpectField { field: String, test_name: String, span: Span },
+    #[error(
+        "Test '{test_name}' expects 'output.{field}' but '{field}' is not a declared output field at {span}"
+    )]
+    UnknownExpectField {
+        field: String,
+        test_name: String,
+        span: Span,
+    },
 
-    #[error("Test '{test_name}' mocks tool '{tool_path}' which is not declared in tools block at {span}")]
-    UnknownMockTool { tool_path: String, test_name: String, span: Span },
+    #[error(
+        "Test '{test_name}' mocks tool '{tool_path}' which is not declared in tools block at {span}"
+    )]
+    UnknownMockTool {
+        tool_path: String,
+        test_name: String,
+        span: Span,
+    },
 
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },

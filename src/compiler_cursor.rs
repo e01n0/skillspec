@@ -4,8 +4,12 @@ use crate::compiler::TargetCompiler;
 pub struct CursorCompiler;
 
 impl TargetCompiler for CursorCompiler {
-    fn name(&self) -> &str { "cursor" }
-    fn file_extension(&self) -> &str { "cursorrules" }
+    fn name(&self) -> &str {
+        "cursor"
+    }
+    fn file_extension(&self) -> &str {
+        "cursorrules"
+    }
 
     fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
         let mut out = String::new();
@@ -87,7 +91,8 @@ mod tests {
 
     #[test]
     fn cursor_rules_format() {
-        let out = compile(r#"
+        let out = compile(
+            r#"
             skill "reviewer" {
                 body {
                     context(priority: important) { "Be thorough." }
@@ -95,7 +100,8 @@ mod tests {
                     step report { requires analyze context { "Write report." } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(out.contains("# reviewer"));
         assert!(out.contains("## Rules"));
         assert!(out.contains("## Steps"));
@@ -103,7 +109,8 @@ mod tests {
 
     #[test]
     fn cursor_includes_tools() {
-        let out = compile(r#"
+        let out = compile(
+            r#"
             skill "x" {
                 tools {
                     require Bash
@@ -114,7 +121,8 @@ mod tests {
                 }
                 body { context { "Work." } }
             }
-        "#);
+        "#,
+        );
         assert!(out.contains("## Tools"));
         assert!(out.contains("Bash"));
         assert!(out.contains("github"));

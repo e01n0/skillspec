@@ -81,7 +81,8 @@ mod tests {
 
     #[test]
     fn mermaid_linear_steps() {
-        let ast = parse(r#"
+        let ast = parse(
+            r#"
             skill "x" {
                 body {
                     step a { context { "a" } }
@@ -89,7 +90,8 @@ mod tests {
                     step c { requires b context { "c" } }
                 }
             }
-        "#);
+        "#,
+        );
         let out = emit_mermaid(&ast);
         assert!(out.contains("graph TD"));
         assert!(out.contains("a --> b"));
@@ -98,7 +100,8 @@ mod tests {
 
     #[test]
     fn mermaid_parallel_steps() {
-        let ast = parse(r#"
+        let ast = parse(
+            r#"
             skill "x" {
                 body {
                     step a { context { "a" } }
@@ -106,23 +109,29 @@ mod tests {
                     step c { requires a & b context { "c" } }
                 }
             }
-        "#);
+        "#,
+        );
         let out = emit_mermaid(&ast);
         assert!(out.contains("a --> c"));
         assert!(out.contains("b --> c"));
-        assert!(!out.contains("a --> b"), "a and b are parallel, no edge between them");
+        assert!(
+            !out.contains("a --> b"),
+            "a and b are parallel, no edge between them"
+        );
         assert!(!out.contains("b --> a"));
     }
 
     #[test]
     fn mermaid_pipeline_stages() {
-        let ast = parse(r#"
+        let ast = parse(
+            r#"
             pipeline "ci" {
                 stage lint { use linter(q: input.q) }
                 stage security { use scanner(q: input.q) }
                 stage review { requires lint & security use reviewer(q: input.q) }
             }
-        "#);
+        "#,
+        );
         let out = emit_mermaid(&ast);
         assert!(out.contains("lint --> review"));
         assert!(out.contains("security --> review"));
@@ -130,7 +139,8 @@ mod tests {
 
     #[test]
     fn mermaid_all_steps_dep() {
-        let ast = parse(r#"
+        let ast = parse(
+            r#"
             skill "x" {
                 body {
                     step a { context { "a" } }
@@ -138,16 +148,21 @@ mod tests {
                     step final { requires all_steps context { "final" } }
                 }
             }
-        "#);
+        "#,
+        );
         let out = emit_mermaid(&ast);
         assert!(out.contains("a --> final"));
         assert!(out.contains("b --> final"));
-        assert!(!out.contains("final --> final"), "should not self-reference");
+        assert!(
+            !out.contains("final --> final"),
+            "should not self-reference"
+        );
     }
 
     #[test]
     fn mermaid_any_dep() {
-        let ast = parse(r#"
+        let ast = parse(
+            r#"
             skill "x" {
                 body {
                     step a { context { "a" } }
@@ -155,9 +170,13 @@ mod tests {
                     step c { requires a | b context { "c" } }
                 }
             }
-        "#);
+        "#,
+        );
         let out = emit_mermaid(&ast);
-        assert!(out.contains("a -.-> c"), "any deps should use dashed arrows");
+        assert!(
+            out.contains("a -.-> c"),
+            "any deps should use dashed arrows"
+        );
         assert!(out.contains("b -.-> c"));
     }
 }

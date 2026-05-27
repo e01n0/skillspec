@@ -1,10 +1,10 @@
+use miette::Result;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use miette::Result;
 
-use crate::ast::{SourceFile, ContextBlock, Priority, SamplingDirective};
+use crate::ast::{ContextBlock, Priority, SamplingDirective, SourceFile};
 use crate::checker::Checker;
 use crate::compiler_skillmd::SkillMdCompiler;
 use crate::formatter::Formatter;
@@ -215,7 +215,8 @@ fn cmd_setup() -> Result<()> {
         let status = Command::new("git")
             .args([
                 "clone",
-                "--depth", "1",
+                "--depth",
+                "1",
                 "https://github.com/microsoft/SkillOpt.git",
                 &format!("{}/skillopt", opt_dir),
             ])
@@ -289,9 +290,10 @@ fn cmd_prepare(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
             continue;
         }
 
-        let out_dir = config.output.clone().unwrap_or_else(|| {
-            format!("{}.optimized", skill.name)
-        });
+        let out_dir = config
+            .output
+            .clone()
+            .unwrap_or_else(|| format!("{}.optimized", skill.name));
         fs::create_dir_all(&out_dir)
             .map_err(|e| miette::miette!("Failed to create {}: {}", out_dir, e))?;
 
@@ -313,8 +315,7 @@ fn cmd_prepare(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
 
         for (name, items) in &splits {
             let dir = format!("{}/splits/{}", out_dir, name);
-            fs::create_dir_all(&dir)
-                .map_err(|e| miette::miette!("mkdir {}: {}", dir, e))?;
+            fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir {}: {}", dir, e))?;
             let json = serde_json::to_string_pretty(items)
                 .map_err(|e| miette::miette!("JSON serialize: {}", e))?;
             fs::write(format!("{}/items.json", dir), &json)
@@ -328,13 +329,17 @@ fn cmd_prepare(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
         );
 
         // Write SkillOpt config
-        let skillopt_config = generate_config(config, &out_dir, &skill.name, split_data.train_items.len());
+        let skillopt_config =
+            generate_config(config, &out_dir, &skill.name, split_data.train_items.len());
         let config_path = format!("{}/config.yaml", out_dir);
         fs::write(&config_path, &skillopt_config)
             .map_err(|e| miette::miette!("write config: {}", e))?;
         eprintln!("  ✓ config → {}", config_path);
 
-        eprintln!("\n✓ Prepared '{}'. Next:\n  skillspec optimize {} --step", skill.name, config.file);
+        eprintln!(
+            "\n✓ Prepared '{}'. Next:\n  skillspec optimize {} --step",
+            skill.name, config.file
+        );
     }
 
     Ok(())
@@ -362,8 +367,8 @@ fn cmd_dry_run(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
         eprintln!("  Edit budget: {}", config.edit_budget);
         eprintln!("  Scheduler: {}", config.scheduler);
 
-        let total_steps = (split_data.train_items.len() as f64
-            / config.batch_size as f64).ceil() as u32
+        let total_steps = (split_data.train_items.len() as f64 / config.batch_size as f64).ceil()
+            as u32
             * config.epochs;
         let est_requests = total_steps * 5; // rollout + reflect + aggregate + rank + evaluate
         eprintln!("  Estimated steps: {}", total_steps);
@@ -452,7 +457,9 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
         .spawn()
         .map_err(|e| miette::miette!("Failed to start Python adapter: {}", e))?;
 
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or_else(|| miette::miette!("Failed to capture Python stdout"))?;
     let reader = BufReader::new(stdout);
 
@@ -473,7 +480,14 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
         };
 
         match msg {
-            ProxyMessage::LlmRequest { id, role, phase, messages, temperature, max_tokens } => {
+            ProxyMessage::LlmRequest {
+                id,
+                role,
+                phase,
+                messages,
+                temperature,
+                max_tokens,
+            } => {
                 request_count += 1;
                 let request = serde_json::json!({
                     "type": "llm_request",
@@ -494,7 +508,13 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
                 //   echo '{"content":"..."}' > <pipe_path>
                 // Then continue reading stdout for the next request.
             }
-            ProxyMessage::Status { phase, step, epoch, score, message } => {
+            ProxyMessage::Status {
+                phase,
+                step,
+                epoch,
+                score,
+                message,
+            } => {
                 if let Some(msg) = message {
                     eprintln!("[{}] {}", phase, msg);
                 } else {
@@ -507,7 +527,11 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
                     );
                 }
             }
-            ProxyMessage::Complete { best_skill, score, steps_run } => {
+            ProxyMessage::Complete {
+                best_skill,
+                score,
+                steps_run,
+            } => {
                 let result = serde_json::json!({
                     "type": "complete",
                     "best_skill": best_skill,
@@ -531,14 +555,18 @@ fn cmd_step(config: &OptimizeConfig) -> Result<()> {
         }
     }
 
-    let status = child.wait()
+    let status = child
+        .wait()
         .map_err(|e| miette::miette!("Wait failed: {}", e))?;
 
     // Clean up FIFO on exit
     let _ = fs::remove_file(&pipe_path);
 
     if !status.success() {
-        return Err(miette::miette!("Adapter exited with code {:?}", status.code()));
+        return Err(miette::miette!(
+            "Adapter exited with code {:?}",
+            status.code()
+        ));
     }
 
     Ok(())
@@ -560,12 +588,13 @@ fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
 
     if !Path::new(&best_path).exists() {
         return Err(miette::miette!(
-            "No best_skill.md found at {}. Run optimization first.", best_path
+            "No best_skill.md found at {}. Run optimization first.",
+            best_path
         ));
     }
 
-    let best_text = fs::read_to_string(&best_path)
-        .map_err(|e| miette::miette!("read {}: {}", best_path, e))?;
+    let best_text =
+        fs::read_to_string(&best_path).map_err(|e| miette::miette!("read {}: {}", best_path, e))?;
     let initial_text = fs::read_to_string(&initial_path)
         .map_err(|e| miette::miette!("read {}: {}", initial_path, e))?;
 
@@ -588,10 +617,12 @@ fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
 
         eprintln!("Applying writeback to skill '{}'...", skill.name);
 
-        let best_preamble = best_sections.iter()
+        let best_preamble = best_sections
+            .iter()
             .find(|s| s.step_name.is_none())
             .map(|s| &s.lines);
-        let initial_preamble = initial_sections.iter()
+        let initial_preamble = initial_sections
+            .iter()
             .find(|s| s.step_name.is_none())
             .map(|s| &s.lines);
 
@@ -602,17 +633,20 @@ fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
             apply_context_mutations(&best_contexts, &mut skill.body.contexts);
             // Add source_order entries for any new contexts
             for i in prev_count..skill.body.contexts.len() {
-                skill.body.source_order.push(crate::ast::BodyItemRef::Context(i));
+                skill
+                    .body
+                    .source_order
+                    .push(crate::ast::BodyItemRef::Context(i));
             }
         }
 
         // Apply step context changes
         for best_section in &best_sections {
-            if let Some(ref step_name) = best_section.step_name {
-                if let Some(step) = skill.body.steps.iter_mut().find(|s| s.name == *step_name) {
-                    let best_contexts = parse_contexts_from_lines(&best_section.lines);
-                    apply_context_mutations(&best_contexts, &mut step.contexts);
-                }
+            if let Some(ref step_name) = best_section.step_name
+                && let Some(step) = skill.body.steps.iter_mut().find(|s| s.name == *step_name)
+            {
+                let best_contexts = parse_contexts_from_lines(&best_section.lines);
+                apply_context_mutations(&best_contexts, &mut step.contexts);
             }
         }
 
@@ -623,11 +657,11 @@ fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
         }
 
         // Apply persona changes
-        if let Some(persona) = parse_persona_from_sections(&best_sections) {
-            if skill.body.directives.persona.as_deref() != Some(&persona) {
-                skill.body.directives.persona = Some(persona);
-                eprintln!("  ✓ updated persona");
-            }
+        if let Some(persona) = parse_persona_from_sections(&best_sections)
+            && skill.body.directives.persona.as_deref() != Some(&persona)
+        {
+            skill.body.directives.persona = Some(persona);
+            eprintln!("  ✓ updated persona");
         }
     }
 
@@ -655,8 +689,7 @@ fn cmd_writeback(config: &OptimizeConfig, ast: &SourceFile) -> Result<()> {
         config.file.clone()
     };
 
-    fs::write(&out_path, &formatted)
-        .map_err(|e| miette::miette!("write {}: {}", out_path, e))?;
+    fs::write(&out_path, &formatted).map_err(|e| miette::miette!("write {}: {}", out_path, e))?;
 
     eprintln!("✓ Writeback applied → {}", out_path);
     Ok(())
@@ -681,21 +714,26 @@ pub fn extract_skillmd_sections(text: &str) -> Vec<SkillMdSection> {
     let mut in_frontmatter = false;
     let mut in_structural = false;
 
-    let list_structural = ["## Output", "## Preconditions", "## Postconditions",
-        "## Tools", "## Permissions"];
+    let list_structural = [
+        "## Output",
+        "## Preconditions",
+        "## Postconditions",
+        "## Tools",
+        "## Permissions",
+    ];
     let block_structural = ["## Tests", "## Observability"];
 
     for line in text.lines() {
-        if line == "---" {
-            if !past_frontmatter {
-                in_frontmatter = !in_frontmatter;
-                if !in_frontmatter {
-                    past_frontmatter = true;
-                }
-                continue;
+        if line == "---" && !past_frontmatter {
+            in_frontmatter = !in_frontmatter;
+            if !in_frontmatter {
+                past_frontmatter = true;
             }
+            continue;
         }
-        if in_frontmatter { continue; }
+        if in_frontmatter {
+            continue;
+        }
 
         if line.starts_with("# ") && !line.starts_with("## ") {
             continue;
@@ -717,14 +755,14 @@ pub fn extract_skillmd_sections(text: &str) -> Vec<SkillMdSection> {
 
             if line.starts_with("## Step: ") {
                 // Save previous step
-                if let Some(ref name) = current_step {
-                    if !step_lines.is_empty() {
-                        sections.push(SkillMdSection {
-                            header: format!("## Step: {}", name),
-                            step_name: Some(name.clone()),
-                            lines: std::mem::take(&mut step_lines),
-                        });
-                    }
+                if let Some(ref name) = current_step
+                    && !step_lines.is_empty()
+                {
+                    sections.push(SkillMdSection {
+                        header: format!("## Step: {}", name),
+                        step_name: Some(name.clone()),
+                        lines: std::mem::take(&mut step_lines),
+                    });
                 }
                 current_step = Some(line.trim_start_matches("## Step: ").trim().to_string());
                 step_lines.clear();
@@ -733,14 +771,22 @@ pub fn extract_skillmd_sections(text: &str) -> Vec<SkillMdSection> {
         }
 
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
 
-        if in_structural { continue; }
+        if in_structural {
+            continue;
+        }
 
         // Skip structural list items (## Output fields, etc.)
-        if trimmed.starts_with("- **") && trimmed.contains("**:") { continue; }
+        if trimmed.starts_with("- **") && trimmed.contains("**:") {
+            continue;
+        }
         // Skip ### sub-headings (test names inside ## Tests that leaked)
-        if trimmed.starts_with("### ") { continue; }
+        if trimmed.starts_with("### ") {
+            continue;
+        }
 
         if current_step.is_some() {
             step_lines.push(line.to_string());
@@ -750,23 +796,26 @@ pub fn extract_skillmd_sections(text: &str) -> Vec<SkillMdSection> {
     }
 
     // Save final step
-    if let Some(ref name) = current_step {
-        if !step_lines.is_empty() {
-            sections.push(SkillMdSection {
-                header: format!("## Step: {}", name),
-                step_name: Some(name.clone()),
-                lines: step_lines,
-            });
-        }
+    if let Some(ref name) = current_step
+        && !step_lines.is_empty()
+    {
+        sections.push(SkillMdSection {
+            header: format!("## Step: {}", name),
+            step_name: Some(name.clone()),
+            lines: step_lines,
+        });
     }
 
     // Preamble first
     if !preamble_lines.is_empty() {
-        sections.insert(0, SkillMdSection {
-            header: "<preamble>".to_string(),
-            step_name: None,
-            lines: preamble_lines,
-        });
+        sections.insert(
+            0,
+            SkillMdSection {
+                header: "<preamble>".to_string(),
+                step_name: None,
+                lines: preamble_lines,
+            },
+        );
     }
 
     sections
@@ -805,7 +854,10 @@ fn parse_contexts_from_lines(lines: &[String]) -> Vec<ParsedContext> {
         }
 
         // Persona lines (blockquote not starting with priority markers)
-        if trimmed.starts_with("> ") && !trimmed.starts_with("> **CRITICAL:**") && !trimmed.starts_with("> **IMPORTANT:**") {
+        if trimmed.starts_with("> ")
+            && !trimmed.starts_with("> **CRITICAL:**")
+            && !trimmed.starts_with("> **IMPORTANT:**")
+        {
             continue;
         }
 
@@ -839,7 +891,9 @@ fn parse_contexts_from_lines(lines: &[String]) -> Vec<ParsedContext> {
                     priority: current_priority,
                 });
             }
-            current_text = trimmed.trim_start_matches("*Optional context:* ").to_string();
+            current_text = trimmed
+                .trim_start_matches("*Optional context:* ")
+                .to_string();
             current_priority = Some(Priority::Optional);
             continue;
         }
@@ -905,17 +959,19 @@ fn longest_common_substring_len(a: &str, b: &str) -> usize {
 }
 
 fn similarity_score(a: &str, b: &str) -> f64 {
-    if a == b { return 1.0; }
+    if a == b {
+        return 1.0;
+    }
     let max_len = a.len().max(b.len());
-    if max_len == 0 { return 1.0; }
+    if max_len == 0 {
+        return 1.0;
+    }
 
     // Word-level overlap (handles expansions/rewrites that preserve key words)
-    let words_a: std::collections::HashSet<&str> = a.split_whitespace()
-        .filter(|w| w.len() > 2)
-        .collect();
-    let words_b: std::collections::HashSet<&str> = b.split_whitespace()
-        .filter(|w| w.len() > 2)
-        .collect();
+    let words_a: std::collections::HashSet<&str> =
+        a.split_whitespace().filter(|w| w.len() > 2).collect();
+    let words_b: std::collections::HashSet<&str> =
+        b.split_whitespace().filter(|w| w.len() > 2).collect();
     let word_overlap = if !words_a.is_empty() && !words_b.is_empty() {
         let intersection = words_a.intersection(&words_b).count();
         let smaller = words_a.len().min(words_b.len());
@@ -964,21 +1020,27 @@ fn apply_context_mutations(optimized: &[ParsedContext], source_contexts: &mut Ve
             let source = &mut source_contexts[idx];
 
             if source.text.trim() != opt_ctx.text {
-                eprintln!("  ✓ updated context (similarity {:.0}%): {:?}...",
+                eprintln!(
+                    "  ✓ updated context (similarity {:.0}%): {:?}...",
                     score * 100.0,
-                    &opt_ctx.text.chars().take(50).collect::<String>());
+                    &opt_ctx.text.chars().take(50).collect::<String>()
+                );
                 source.text = opt_ctx.text.clone();
             }
 
             if opt_ctx.priority.is_some() && opt_ctx.priority != source.priority {
-                eprintln!("  ✓ priority changed: {:?} → {:?}",
+                eprintln!(
+                    "  ✓ priority changed: {:?} → {:?}",
                     source.priority.map(|p| p.label()),
-                    opt_ctx.priority.map(|p| p.label()));
+                    opt_ctx.priority.map(|p| p.label())
+                );
                 source.priority = opt_ctx.priority;
             }
         } else {
-            eprintln!("  + new context from optimizer: {:?}...",
-                &opt_ctx.text.chars().take(50).collect::<String>());
+            eprintln!(
+                "  + new context from optimizer: {:?}...",
+                &opt_ctx.text.chars().take(50).collect::<String>()
+            );
             let new_idx = source_contexts.len();
             source_contexts.push(ContextBlock {
                 priority: opt_ctx.priority.or(Some(Priority::Supplementary)),
@@ -986,7 +1048,12 @@ fn apply_context_mutations(optimized: &[ParsedContext], source_contexts: &mut Ve
                 decay: None,
                 until: None,
                 text: opt_ctx.text.clone(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+                span: Span {
+                    start: 0,
+                    end: 0,
+                    line: 0,
+                    col: 0,
+                },
             });
             // Mark for source_order fixup (caller handles this)
             let _ = new_idx;
@@ -1004,16 +1071,25 @@ fn parse_sampling_from_sections(sections: &[SkillMdSection]) -> Option<SamplingD
                 let mut top_p = None;
                 if let Some(t_start) = line.find("temperature=") {
                     let rest = &line[t_start + 12..];
-                    let val_str: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+                    let val_str: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
                     temp = val_str.parse::<f64>().ok();
                 }
                 if let Some(p_start) = line.find("top_p=") {
                     let rest = &line[p_start + 6..];
-                    let val_str: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+                    let val_str: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
                     top_p = val_str.parse::<f64>().ok();
                 }
                 if temp.is_some() || top_p.is_some() {
-                    return Some(SamplingDirective { temperature: temp, top_p });
+                    return Some(SamplingDirective {
+                        temperature: temp,
+                        top_p,
+                    });
                 }
             }
         }
@@ -1023,7 +1099,9 @@ fn parse_sampling_from_sections(sections: &[SkillMdSection]) -> Option<SamplingD
 
 fn parse_persona_from_sections(sections: &[SkillMdSection]) -> Option<String> {
     for section in sections {
-        let persona_lines: Vec<&str> = section.lines.iter()
+        let persona_lines: Vec<&str> = section
+            .lines
+            .iter()
             .filter(|l| l.trim().starts_with("> ") && !l.trim().starts_with("> **"))
             .map(|l| l.trim().trim_start_matches("> "))
             .collect();
@@ -1037,7 +1115,12 @@ fn parse_persona_from_sections(sections: &[SkillMdSection]) -> Option<String> {
 
 // ── Config generation ───────────────────────────────────────────────────────
 
-fn generate_config(config: &OptimizeConfig, out_dir: &str, skill_name: &str, train_size: usize) -> String {
+fn generate_config(
+    config: &OptimizeConfig,
+    out_dir: &str,
+    skill_name: &str,
+    train_size: usize,
+) -> String {
     format!(
         r#"# SkillOpt config for {skill_name}
 # Generated by: skillspec optimize --prepare
@@ -1122,8 +1205,11 @@ fn write_adapter_files(opt_dir: &str) -> Result<()> {
 
     let req_path = format!("{}/requirements.txt", opt_dir);
     if !Path::new(&req_path).exists() {
-        fs::write(&req_path, "# SkillOpt is installed from local clone via setup\npyyaml>=6.0\n")
-            .map_err(|e| miette::miette!("write requirements: {}", e))?;
+        fs::write(
+            &req_path,
+            "# SkillOpt is installed from local clone via setup\npyyaml>=6.0\n",
+        )
+        .map_err(|e| miette::miette!("write requirements: {}", e))?;
     }
 
     Ok(())
@@ -1131,8 +1217,7 @@ fn write_adapter_files(opt_dir: &str) -> Result<()> {
 
 fn write_default_config(opt_dir: &str) -> Result<()> {
     let config_dir = format!("{}/configs", opt_dir);
-    fs::create_dir_all(&config_dir)
-        .map_err(|e| miette::miette!("mkdir: {}", e))?;
+    fs::create_dir_all(&config_dir).map_err(|e| miette::miette!("mkdir: {}", e))?;
 
     let default_config = format!("{}/default.yaml", config_dir);
     if !Path::new(&default_config).exists() {
@@ -1433,8 +1518,14 @@ mod tests {
             role: "optimizer".to_string(),
             phase: "reflect".to_string(),
             messages: vec![
-                ChatMessage { role: "system".to_string(), content: "Analyse this.".to_string() },
-                ChatMessage { role: "user".to_string(), content: "trace data".to_string() },
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: "Analyse this.".to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: "trace data".to_string(),
+                },
             ],
             temperature: Some(0.7),
             max_tokens: Some(4096),
@@ -1442,7 +1533,13 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ProxyMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ProxyMessage::LlmRequest { id, role, phase, messages, .. } => {
+            ProxyMessage::LlmRequest {
+                id,
+                role,
+                phase,
+                messages,
+                ..
+            } => {
                 assert_eq!(id, "req-001");
                 assert_eq!(role, "optimizer");
                 assert_eq!(phase, "reflect");
@@ -1464,7 +1561,9 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ProxyMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ProxyMessage::Status { phase, step, score, .. } => {
+            ProxyMessage::Status {
+                phase, step, score, ..
+            } => {
                 assert_eq!(phase, "step");
                 assert_eq!(step, Some(3));
                 assert!((score.unwrap() - 0.72).abs() < f64::EPSILON);
@@ -1483,7 +1582,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ProxyMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ProxyMessage::Complete { best_skill, score, steps_run } => {
+            ProxyMessage::Complete {
+                best_skill,
+                score,
+                steps_run,
+            } => {
                 assert!(best_skill.contains("Optimized skill"));
                 assert!((score.unwrap() - 0.95).abs() < f64::EPSILON);
                 assert_eq!(steps_run, Some(12));
@@ -1562,10 +1665,22 @@ Answer warmly.
         let sections = extract_skillmd_sections(text);
 
         let preamble = sections.iter().find(|s| s.step_name.is_none());
-        assert!(preamble.is_some(), "expected preamble section, got: {:?}", sections);
-        assert!(preamble.unwrap().lines.iter().any(|l| l.contains("IMPORTANT")));
+        assert!(
+            preamble.is_some(),
+            "expected preamble section, got: {:?}",
+            sections
+        );
+        assert!(
+            preamble
+                .unwrap()
+                .lines
+                .iter()
+                .any(|l| l.contains("IMPORTANT"))
+        );
 
-        let step = sections.iter().find(|s| s.step_name.as_deref() == Some("greet"));
+        let step = sections
+            .iter()
+            .find(|s| s.step_name.as_deref() == Some("greet"));
         assert!(step.is_some(), "expected step 'greet' section");
         assert!(step.unwrap().lines.iter().any(|l| l.contains("warmly")));
     }
@@ -1616,10 +1731,7 @@ Answer warmly.
 
     #[test]
     fn similarity_no_match() {
-        let score = similarity_score(
-            "Completely different text",
-            "Nothing in common here xyz",
-        );
+        let score = similarity_score("Completely different text", "Nothing in common here xyz");
         assert!(score < 0.3);
     }
 
@@ -1628,14 +1740,19 @@ Answer warmly.
     #[test]
     fn find_match_exact() {
         use crate::token::Span;
-        let contexts = vec![
-            ContextBlock {
-                priority: Some(Priority::Critical),
-                when: None, decay: None, until: None,
-                text: "You generate greetings.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+        let contexts = vec![ContextBlock {
+            priority: Some(Priority::Critical),
+            when: None,
+            decay: None,
+            until: None,
+            text: "You generate greetings.".to_string(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
             },
-        ];
+        }];
         let result = find_best_context_match("You generate greetings.", &contexts);
         assert!(result.is_some());
         let (idx, score) = result.unwrap();
@@ -1649,15 +1766,29 @@ Answer warmly.
         let contexts = vec![
             ContextBlock {
                 priority: Some(Priority::Important),
-                when: None, decay: None, until: None,
+                when: None,
+                decay: None,
+                until: None,
                 text: "Generate a greeting for the given name.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+                span: Span {
+                    start: 0,
+                    end: 0,
+                    line: 0,
+                    col: 0,
+                },
             },
             ContextBlock {
                 priority: Some(Priority::Critical),
-                when: None, decay: None, until: None,
+                when: None,
+                decay: None,
+                until: None,
                 text: "You are a greeting specialist.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+                span: Span {
+                    start: 0,
+                    end: 0,
+                    line: 0,
+                    col: 0,
+                },
             },
         ];
         let result = find_best_context_match(
@@ -1671,14 +1802,19 @@ Answer warmly.
     #[test]
     fn find_match_no_match_returns_none() {
         use crate::token::Span;
-        let contexts = vec![
-            ContextBlock {
-                priority: None,
-                when: None, decay: None, until: None,
-                text: "Short.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+        let contexts = vec![ContextBlock {
+            priority: None,
+            when: None,
+            decay: None,
+            until: None,
+            text: "Short.".to_string(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
             },
-        ];
+        }];
         let result = find_best_context_match(
             "This is a completely different and much longer text about something else entirely.",
             &contexts,
@@ -1691,35 +1827,46 @@ Answer warmly.
     #[test]
     fn apply_mutations_updates_text() {
         use crate::token::Span;
-        let mut contexts = vec![
-            ContextBlock {
-                priority: Some(Priority::Critical),
-                when: None, decay: None, until: None,
-                text: "You generate greetings.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+        let mut contexts = vec![ContextBlock {
+            priority: Some(Priority::Critical),
+            when: None,
+            decay: None,
+            until: None,
+            text: "You generate greetings.".to_string(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
             },
-        ];
-        let optimized = vec![
-            ParsedContext {
-                text: "You generate warm, personalized greetings.".to_string(),
-                priority: Some(Priority::Critical),
-            },
-        ];
+        }];
+        let optimized = vec![ParsedContext {
+            text: "You generate warm, personalized greetings.".to_string(),
+            priority: Some(Priority::Critical),
+        }];
         apply_context_mutations(&optimized, &mut contexts);
-        assert_eq!(contexts[0].text, "You generate warm, personalized greetings.");
+        assert_eq!(
+            contexts[0].text,
+            "You generate warm, personalized greetings."
+        );
     }
 
     #[test]
     fn apply_mutations_inserts_new_context() {
         use crate::token::Span;
-        let mut contexts = vec![
-            ContextBlock {
-                priority: Some(Priority::Critical),
-                when: None, decay: None, until: None,
-                text: "You generate greetings.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+        let mut contexts = vec![ContextBlock {
+            priority: Some(Priority::Critical),
+            when: None,
+            decay: None,
+            until: None,
+            text: "You generate greetings.".to_string(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
             },
-        ];
+        }];
         let optimized = vec![
             ParsedContext {
                 text: "You generate greetings.".to_string(),
@@ -1739,20 +1886,23 @@ Answer warmly.
     #[test]
     fn apply_mutations_changes_priority() {
         use crate::token::Span;
-        let mut contexts = vec![
-            ContextBlock {
-                priority: Some(Priority::Supplementary),
-                when: None, decay: None, until: None,
-                text: "Be concise in your greetings.".to_string(),
-                span: Span { start: 0, end: 0, line: 0, col: 0 },
+        let mut contexts = vec![ContextBlock {
+            priority: Some(Priority::Supplementary),
+            when: None,
+            decay: None,
+            until: None,
+            text: "Be concise in your greetings.".to_string(),
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                col: 0,
             },
-        ];
-        let optimized = vec![
-            ParsedContext {
-                text: "Be concise in your greetings.".to_string(),
-                priority: Some(Priority::Critical),
-            },
-        ];
+        }];
+        let optimized = vec![ParsedContext {
+            text: "Be concise in your greetings.".to_string(),
+            priority: Some(Priority::Critical),
+        }];
         apply_context_mutations(&optimized, &mut contexts);
         assert_eq!(contexts[0].priority, Some(Priority::Critical));
     }
@@ -1764,9 +1914,7 @@ Answer warmly.
         let sections = vec![SkillMdSection {
             header: "<preamble>".to_string(),
             step_name: None,
-            lines: vec![
-                "**Sampling:** temperature=0.3, top_p=0.9".to_string(),
-            ],
+            lines: vec!["**Sampling:** temperature=0.3, top_p=0.9".to_string()],
         }];
         let sampling = parse_sampling_from_sections(&sections).unwrap();
         assert!((sampling.temperature.unwrap() - 0.3).abs() < f64::EPSILON);
@@ -1794,6 +1942,11 @@ Answer warmly.
     fn no_changes_produces_no_mutations() {
         let text = "Same text.";
         let sections = extract_skillmd_sections(text);
-        assert!(sections.is_empty() || sections.iter().all(|s| s.lines.is_empty() || s.lines.iter().all(|l| l.trim() == text.trim())));
+        assert!(
+            sections.is_empty()
+                || sections
+                    .iter()
+                    .all(|s| s.lines.is_empty() || s.lines.iter().all(|l| l.trim() == text.trim()))
+        );
     }
 }

@@ -4,8 +4,12 @@ use crate::compiler::TargetCompiler;
 pub struct SystemPromptCompiler;
 
 impl TargetCompiler for SystemPromptCompiler {
-    fn name(&self) -> &str { "system-prompt" }
-    fn file_extension(&self) -> &str { "txt" }
+    fn name(&self) -> &str {
+        "system-prompt"
+    }
+    fn file_extension(&self) -> &str {
+        "txt"
+    }
 
     fn compile_skill(&self, skill: &Skill, source: &SourceFile) -> String {
         let mut out = String::new();
@@ -68,13 +72,20 @@ mod tests {
     #[test]
     fn no_frontmatter() {
         let out = compile(r#"skill "x" { body { context { "You are helpful." } } }"#);
-        assert!(!out.contains("---"), "system-prompt should have no YAML frontmatter");
-        assert!(!out.contains("# "), "system-prompt should have no markdown headers");
+        assert!(
+            !out.contains("---"),
+            "system-prompt should have no YAML frontmatter"
+        );
+        assert!(
+            !out.contains("# "),
+            "system-prompt should have no markdown headers"
+        );
     }
 
     #[test]
     fn preserves_content() {
-        let out = compile(r#"
+        let out = compile(
+            r#"
             skill "x" {
                 body {
                     persona { "You are an expert." }
@@ -82,7 +93,8 @@ mod tests {
                     step analyze { context { "Analyze." } }
                 }
             }
-        "#);
+        "#,
+        );
         assert!(out.contains("You are an expert."));
         assert!(out.contains("Review carefully."));
         assert!(out.contains("analyze:"));

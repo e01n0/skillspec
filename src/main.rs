@@ -1,28 +1,32 @@
-use std::fs;
-use std::io::{self, BufRead, Write as IoWrite};
-use std::path::Path;
 use clap::Parser;
 use miette::Result;
 use skillspec_core::ast::{Dependency, SourceFile};
-use skillspec_core::checker::Checker;
-use skillspec_core::compiler_skillmd::SkillMdCompiler;
-use skillspec_core::compiler_ir::IrCompiler;
-use skillspec_core::formatter::Formatter;
 use skillspec_core::budget;
-use skillspec_core::diff::{structural_diff, skillmd_diff, classify_semver};
-use skillspec_core::lint::LintEngine;
-use skillspec_core::deps::emit_mermaid;
+use skillspec_core::checker::Checker;
 use skillspec_core::compiler::TargetCompiler;
-use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
-use skillspec_core::compiler_cursor::CursorCompiler;
 use skillspec_core::compiler_clinerules::ClineRulesCompiler;
+use skillspec_core::compiler_cursor::CursorCompiler;
+use skillspec_core::compiler_ir::IrCompiler;
+use skillspec_core::compiler_skillmd::SkillMdCompiler;
+use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
+use skillspec_core::deps::emit_mermaid;
+use skillspec_core::diff::{classify_semver, skillmd_diff, structural_diff};
+use skillspec_core::formatter::Formatter;
+use skillspec_core::lexer::Lexer;
+use skillspec_core::lint::LintEngine;
 use skillspec_core::migrate;
 use skillspec_core::optimize;
-use skillspec_core::lexer::Lexer;
 use skillspec_core::parser;
+use std::fs;
+use std::io::{self, BufRead, Write as IoWrite};
+use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "skillspec", about = "A typed, composable language for AI agent skills and workflows", version)]
+#[command(
+    name = "skillspec",
+    about = "A typed, composable language for AI agent skills and workflows",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -153,9 +157,19 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { file } => cmd_check(&file),
-        Commands::Build { file, target, output, to, watch, budget, emit_telemetry_schema } => {
+        Commands::Build {
+            file,
+            target,
+            output,
+            to,
+            watch,
+            budget,
+            emit_telemetry_schema,
+        } => {
             if output.is_some() && to.is_some() {
-                return Err(miette::miette!("--to and --output cannot both be specified"));
+                return Err(miette::miette!(
+                    "--to and --output cannot both be specified"
+                ));
             }
 
             let (effective_target, effective_output) = if let Some(to_value) = to {
@@ -171,7 +185,12 @@ fn main() -> Result<()> {
             } else if emit_telemetry_schema {
                 cmd_emit_telemetry(&file)
             } else {
-                cmd_build(&file, &effective_target, effective_output.as_deref(), budget)
+                cmd_build(
+                    &file,
+                    &effective_target,
+                    effective_output.as_deref(),
+                    budget,
+                )
             }
         }
         Commands::Init { name } => cmd_init(&name),
@@ -181,13 +200,35 @@ fn main() -> Result<()> {
         Commands::Migrate { path } => cmd_migrate(&path),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
-        Commands::Test { file, prepare, evaluate } => cmd_test(&file, prepare, evaluate.as_deref()),
+        Commands::Test {
+            file,
+            prepare,
+            evaluate,
+        } => cmd_test(&file, prepare, evaluate.as_deref()),
         Commands::Grammar => cmd_grammar(),
         Commands::Lint { file } => cmd_lint(&file),
-        Commands::Diff { file_a, file_b, against_skillmd, semver } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
-        Commands::Optimize { file, setup, dry_run, prepare, step, resume, response,
-                             epochs, batch_size, edit_budget, scheduler, output,
-                             writeback, no_overwrite } => {
+        Commands::Diff {
+            file_a,
+            file_b,
+            against_skillmd,
+            semver,
+        } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
+        Commands::Optimize {
+            file,
+            setup,
+            dry_run,
+            prepare,
+            step,
+            resume,
+            response,
+            epochs,
+            batch_size,
+            edit_budget,
+            scheduler,
+            output,
+            writeback,
+            no_overwrite,
+        } => {
             let config = optimize::OptimizeConfig {
                 file: file.clone(),
                 setup,
@@ -205,11 +246,18 @@ fn main() -> Result<()> {
                 no_overwrite,
             };
             if setup {
-                return optimize::cmd_optimize(config, &SourceFile {
-                    imports: vec![], type_defs: vec![], skills: vec![],
-                    pipelines: vec![], orchestrations: vec![], mixins: vec![],
-                    packages: vec![],
-                });
+                return optimize::cmd_optimize(
+                    config,
+                    &SourceFile {
+                        imports: vec![],
+                        type_defs: vec![],
+                        skills: vec![],
+                        pipelines: vec![],
+                        orchestrations: vec![],
+                        mixins: vec![],
+                        packages: vec![],
+                    },
+                );
             }
             let ast = read_and_parse(&file)?;
             let base_dir = std::path::Path::new(&file)
@@ -361,10 +409,14 @@ fn show_deploy_menu() -> Result<DeployTarget> {
     eprintln!("  5) Codex                  → .codex/");
     eprintln!("  6) Custom path");
     eprint!("Pick a target [1-6]: ");
-    io::stderr().flush().map_err(|e| miette::miette!("flush: {e}"))?;
+    io::stderr()
+        .flush()
+        .map_err(|e| miette::miette!("flush: {e}"))?;
 
     let mut input = String::new();
-    io::stdin().lock().read_line(&mut input)
+    io::stdin()
+        .lock()
+        .read_line(&mut input)
         .map_err(|e| miette::miette!("Failed to read input: {e}"))?;
 
     match input.trim() {
@@ -375,9 +427,13 @@ fn show_deploy_menu() -> Result<DeployTarget> {
         "5" => resolve_deploy_target("codex"),
         "6" => {
             eprint!("Path: ");
-            io::stderr().flush().map_err(|e| miette::miette!("flush: {e}"))?;
+            io::stderr()
+                .flush()
+                .map_err(|e| miette::miette!("flush: {e}"))?;
             let mut path_input = String::new();
-            io::stdin().lock().read_line(&mut path_input)
+            io::stdin()
+                .lock()
+                .read_line(&mut path_input)
                 .map_err(|e| miette::miette!("Failed to read input: {e}"))?;
             let trimmed = path_input.trim();
             if trimmed.is_empty() {
@@ -392,7 +448,12 @@ fn show_deploy_menu() -> Result<DeployTarget> {
     }
 }
 
-fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Option<usize>) -> Result<()> {
+fn cmd_build(
+    path: &str,
+    target: &str,
+    output: Option<&str>,
+    token_budget: Option<usize>,
+) -> Result<()> {
     match target {
         "skillmd" => {
             let mut ast = read_and_parse(path)?;
@@ -440,11 +501,7 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
                 let out_path = skill_dir.join("SKILL.md");
                 let content = compiler.compile(skill, &ast);
                 fs::write(&out_path, &content).map_err(|e| {
-                    miette::miette!(
-                        "Failed to write '{}': {}",
-                        out_path.display(),
-                        e
-                    )
+                    miette::miette!("Failed to write '{}': {}", out_path.display(), e)
                 })?;
 
                 let display_path = out_path.canonicalize().unwrap_or(out_path.clone());
@@ -465,7 +522,8 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
                 .unwrap_or(path)
                 .replace(".agent", "");
             let pkg_dir = Path::new(out_dir).join(format!("{stem}.agentpkg"));
-            compiler.write_to_dir(&pkg, &pkg_dir)
+            compiler
+                .write_to_dir(&pkg, &pkg_dir)
                 .map_err(|e| miette::miette!("Failed to write native package: {e}"))?;
             let display_path = pkg_dir.canonicalize().unwrap_or(pkg_dir.clone());
             eprintln!("✓ {path} → {}", display_path.display());
@@ -507,10 +565,14 @@ fn cmd_emit_telemetry(path: &str) -> Result<()> {
     let mut schema = serde_json::json!({ "skills": {} });
     for skill in &ast.skills {
         if let Some(observe) = &skill.body.observe {
-            let events: Vec<serde_json::Value> = observe.events.iter()
+            let events: Vec<serde_json::Value> = observe
+                .events
+                .iter()
                 .map(|e| serde_json::json!({ "trigger": e.trigger, "event_name": e.event_name }))
                 .collect();
-            let metrics: Vec<serde_json::Value> = observe.metrics.iter()
+            let metrics: Vec<serde_json::Value> = observe
+                .metrics
+                .iter()
                 .map(|m| serde_json::json!({ "name": m.name }))
                 .collect();
             schema["skills"][&skill.name] = serde_json::json!({
@@ -524,7 +586,7 @@ fn cmd_emit_telemetry(path: &str) -> Result<()> {
 }
 
 fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()> {
-    use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+    use notify_debouncer_mini::{DebouncedEventKind, new_debouncer};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -537,11 +599,14 @@ fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()>
     let mut debouncer = new_debouncer(Duration::from_millis(500), tx)
         .map_err(|e| miette::miette!("Failed to start file watcher: {e}"))?;
 
-    let watch_path = Path::new(path).canonicalize()
+    let watch_path = Path::new(path)
+        .canonicalize()
         .map_err(|e| miette::miette!("Failed to resolve path '{}': {e}", path))?;
     let watch_dir = watch_path.parent().unwrap_or(Path::new("."));
 
-    debouncer.watcher().watch(watch_dir, notify::RecursiveMode::Recursive)
+    debouncer
+        .watcher()
+        .watch(watch_dir, notify::RecursiveMode::Recursive)
         .map_err(|e| miette::miette!("Failed to watch '{}': {e}", watch_dir.display()))?;
 
     loop {
@@ -552,8 +617,7 @@ fn cmd_build_watch(path: &str, target: &str, output: Option<&str>) -> Result<()>
                         && e.path.extension().is_some_and(|ext| ext == "agent")
                 });
                 if dominated {
-                    eprintln!("\n[{}] Change detected, rebuilding...",
-                        chrono_now());
+                    eprintln!("\n[{}] Change detected, rebuilding...", chrono_now());
                     if let Err(e) = cmd_build(path, target, output, None) {
                         eprintln!("{}", e);
                     }
@@ -575,16 +639,18 @@ fn chrono_now() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = d.as_secs() % 86400;
-    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
 }
 
 fn cmd_init(name: &str) -> Result<()> {
     let filename = format!("{}.agent", name);
     if Path::new(&filename).exists() {
-        return Err(miette::miette!(
-            "File '{}' already exists",
-            filename
-        ));
+        return Err(miette::miette!("File '{}' already exists", filename));
     }
 
     let template = format!(
@@ -607,9 +673,8 @@ fn cmd_init(name: &str) -> Result<()> {
         name = name
     );
 
-    fs::write(&filename, &template).map_err(|e| {
-        miette::miette!("Failed to write '{}': {}", filename, e)
-    })?;
+    fs::write(&filename, &template)
+        .map_err(|e| miette::miette!("Failed to write '{}': {}", filename, e))?;
 
     println!("✓ created {}", filename);
     Ok(())
@@ -618,9 +683,8 @@ fn cmd_init(name: &str) -> Result<()> {
 fn cmd_fmt(path: &str) -> Result<()> {
     let ast = read_and_parse(path)?;
     let formatted = Formatter::format(&ast);
-    fs::write(path, &formatted).map_err(|e| {
-        miette::miette!("Failed to write '{}': {}", path, e)
-    })?;
+    fs::write(path, &formatted)
+        .map_err(|e| miette::miette!("Failed to write '{}': {}", path, e))?;
     println!("✓ formatted {}", path);
     Ok(())
 }
@@ -682,7 +746,10 @@ fn cmd_deps(path: &str, format: &str) -> Result<()> {
 
             Ok(())
         }
-        other => Err(miette::miette!("unknown format '{}'; supported: text, mermaid", other)),
+        other => Err(miette::miette!(
+            "unknown format '{}'; supported: text, mermaid",
+            other
+        )),
     }
 }
 
@@ -714,9 +781,8 @@ fn cmd_migrate(path: &str) -> Result<()> {
         format!("{}.agent.partial", path)
     };
 
-    fs::write(&out_path, &result.output).map_err(|e| {
-        miette::miette!("Failed to write '{}': {}", out_path, e)
-    })?;
+    fs::write(&out_path, &result.output)
+        .map_err(|e| miette::miette!("Failed to write '{}': {}", out_path, e))?;
 
     println!("✓ migrated {} → {}", path, out_path);
     println!("\nPreview:");
@@ -742,9 +808,8 @@ fn cmd_migrate_directory(dir: &Path) -> Result<()> {
 
     let out_path = dir.join(format!("{}.agent.partial", dir_name));
 
-    fs::write(&out_path, &result.output).map_err(|e| {
-        miette::miette!("Failed to write '{}': {}", out_path.display(), e)
-    })?;
+    fs::write(&out_path, &result.output)
+        .map_err(|e| miette::miette!("Failed to write '{}': {}", out_path.display(), e))?;
 
     for warning in &result.warnings {
         eprintln!("⚠ {}", warning);
@@ -760,8 +825,11 @@ fn cmd_migrate_directory(dir: &Path) -> Result<()> {
     println!("\nPreview:");
     println!("{}", result.output);
     println!("\nNext: run the skillspec-migrate skill to complete the .agent.partial:");
-    println!("  Use an LLM agent with partial_file=\"{}\" source_dir=\"{}\"",
-        out_path.display(), dir.display());
+    println!(
+        "  Use an LLM agent with partial_file=\"{}\" source_dir=\"{}\"",
+        out_path.display(),
+        dir.display()
+    );
     Ok(())
 }
 
@@ -775,11 +843,13 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
 
     subdirs.sort();
 
-    let skill_dirs: Vec<&Path> = subdirs.iter()
+    let skill_dirs: Vec<&Path> = subdirs
+        .iter()
         .filter(|p| p.join("SKILL.md").exists())
         .map(|p| p.as_path())
         .collect();
-    let non_skill_dirs: Vec<&Path> = subdirs.iter()
+    let non_skill_dirs: Vec<&Path> = subdirs
+        .iter()
         .filter(|p| !p.join("SKILL.md").exists())
         .map(|p| p.as_path())
         .collect();
@@ -792,7 +862,8 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
     }
 
     // Build sibling skill summaries (name + description from each SKILL.md frontmatter)
-    let sibling_summaries: Vec<(String, String, String)> = skill_dirs.iter()
+    let sibling_summaries: Vec<(String, String, String)> = skill_dirs
+        .iter()
         .filter_map(|d| {
             let skill_md = d.join("SKILL.md");
             let content = fs::read_to_string(&skill_md).ok()?;
@@ -805,7 +876,8 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         .collect();
 
     // Count shared files in non-skill sibling dirs (skill reads them directly)
-    let shared_file_count: usize = non_skill_dirs.iter()
+    let shared_file_count: usize = non_skill_dirs
+        .iter()
         .map(|d| migrate::collect_directory_files(d).len())
         .sum();
 
@@ -816,9 +888,11 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         skill_dirs.len(),
         dir.display(),
         if has_shared {
-            format!(" (+{} shared file(s) from {} non-skill dir(s))",
+            format!(
+                " (+{} shared file(s) from {} non-skill dir(s))",
                 shared_file_count,
-                non_skill_dirs.len())
+                non_skill_dirs.len()
+            )
         } else {
             String::new()
         }
@@ -829,19 +903,26 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
     let mut failed = 0;
 
     for subdir in &skill_dirs {
-        let current_dir_name = subdir.file_name()
+        let current_dir_name = subdir
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
         match migrate::migrate_directory(subdir) {
             Ok(mut result) => {
                 // Append lightweight pointers — the skill reads files itself via source_dir
-                let insertion_point = result.output.rfind("  }\n}\n").unwrap_or(result.output.len());
+                let insertion_point = result
+                    .output
+                    .rfind("  }\n}\n")
+                    .unwrap_or(result.output.len());
                 let mut pointers = String::new();
 
                 if sibling_summaries.len() > 1 {
                     pointers.push_str(&format!("    // parent_dir: {}\n", dir.display()));
-                    pointers.push_str(&format!("    // {} sibling skill(s):\n", sibling_summaries.len() - 1));
+                    pointers.push_str(&format!(
+                        "    // {} sibling skill(s):\n",
+                        sibling_summaries.len() - 1
+                    ));
                     for (dir_name, name, _) in &sibling_summaries {
                         if dir_name == &current_dir_name {
                             continue;
@@ -851,8 +932,10 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
                 }
 
                 if has_shared {
-                    pointers.push_str(&format!("    // {} shared file(s) in non-skill sibling dir(s)\n",
-                        shared_file_count));
+                    pointers.push_str(&format!(
+                        "    // {} shared file(s) in non-skill sibling dir(s)\n",
+                        shared_file_count
+                    ));
                 }
 
                 if !pointers.is_empty() {
@@ -882,7 +965,11 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
                     subdir.file_name().unwrap_or_default().to_string_lossy(),
                     out_path.file_name().unwrap_or_default().to_string_lossy(),
                     result.files_found,
-                    if has_shared { format!(", +{} shared", shared_file_count) } else { String::new() },
+                    if has_shared {
+                        format!(", +{} shared", shared_file_count)
+                    } else {
+                        String::new()
+                    },
                 );
                 succeeded += 1;
             }
@@ -905,8 +992,13 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
             .unwrap_or_else(|| "orchestration".to_string());
 
         let mut orch = String::new();
-        orch.push_str(&format!("// Auto-generated orchestration scaffold for: {}\n", dir.display()));
-        orch.push_str("// TODO: The skillspec-migrate skill should determine the orchestration structure.\n");
+        orch.push_str(&format!(
+            "// Auto-generated orchestration scaffold for: {}\n",
+            dir.display()
+        ));
+        orch.push_str(
+            "// TODO: The skillspec-migrate skill should determine the orchestration structure.\n",
+        );
         orch.push_str("//   - Which skills form a pipeline (sequential validation flow)?\n");
         orch.push_str("//   - Which skill is the router/orchestrator (e.g., playbook)?\n");
         orch.push_str("//   - What are the conditional routing rules?\n");
@@ -924,8 +1016,11 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         for skill_dir in &skill_dirs {
             let skill_md = skill_dir.join("SKILL.md");
             if let Ok(content) = fs::read_to_string(&skill_md) {
-                let skill_name = skill_dir.file_name()
-                    .unwrap_or_default().to_string_lossy().to_string();
+                let skill_name = skill_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let mut refs_found = Vec::new();
                 for (other_dir, other_name, _) in &sibling_summaries {
                     if other_dir == &skill_name {
@@ -952,8 +1047,11 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
         for skill_dir in &skill_dirs {
             let skill_md = skill_dir.join("SKILL.md");
             if let Ok(content) = fs::read_to_string(&skill_md) {
-                let skill_name = skill_dir.file_name()
-                    .unwrap_or_default().to_string_lossy().to_string();
+                let skill_name = skill_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 if content.contains("->") || content.contains("→") {
                     for line in content.lines() {
                         let trimmed = line.trim();
@@ -967,7 +1065,10 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
                         }
                     }
                 }
-                if content.contains("routing") || content.contains("Routing") || content.contains("triage") {
+                if content.contains("routing")
+                    || content.contains("Routing")
+                    || content.contains("triage")
+                {
                     orch.push_str(&format!(
                         "// [{}] appears to be a router/orchestrator (contains routing/triage language)\n",
                         skill_name
@@ -976,16 +1077,17 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
             }
         }
 
-        orch.push_str("\n// TODO: Based on the above signals, the skillspec-migrate skill should produce:\n");
+        orch.push_str(
+            "\n// TODO: Based on the above signals, the skillspec-migrate skill should produce:\n",
+        );
         orch.push_str("//   - A pipeline construct for any sequential skill chains\n");
         orch.push_str("//   - An orchestration construct if there's a router skill dispatching to specialists\n");
         orch.push_str("//   - import statements for each skill\n");
         orch.push('\n');
 
         let orch_path = dir.join(format!("{}.orchestration.agent.partial", parent_name));
-        fs::write(&orch_path, &orch).map_err(|e| {
-            miette::miette!("Failed to write orchestration partial: {}", e)
-        })?;
+        fs::write(&orch_path, &orch)
+            .map_err(|e| miette::miette!("Failed to write orchestration partial: {}", e))?;
         println!(
             "  ✓ {} (orchestration scaffold)",
             orch_path.file_name().unwrap_or_default().to_string_lossy()
@@ -998,7 +1100,9 @@ fn cmd_migrate_batch(dir: &Path) -> Result<()> {
     );
 
     if succeeded > 0 {
-        println!("\nNext: run the skillspec-migrate skill on each .agent.partial to complete the migration.");
+        println!(
+            "\nNext: run the skillspec-migrate skill on each .agent.partial to complete the migration."
+        );
         println!("For each skill, use an LLM agent with:");
         println!("  partial_file=\"<skill>/<skill>.agent.partial\" source_dir=\"<skill>/\"");
     }
@@ -1055,7 +1159,11 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
     let pkg_dir = Path::new(out_base).join(&pkg_dir_name);
 
     fs::create_dir_all(&pkg_dir).map_err(|e| {
-        miette::miette!("Failed to create package directory '{}': {}", pkg_dir.display(), e)
+        miette::miette!(
+            "Failed to create package directory '{}': {}",
+            pkg_dir.display(),
+            e
+        )
     })?;
 
     // Write package.json metadata
@@ -1066,9 +1174,11 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
         "exports": pkg.exports,
     });
     let pkg_json_path = pkg_dir.join("package.json");
-    fs::write(&pkg_json_path, serde_json::to_string_pretty(&metadata).unwrap()).map_err(|e| {
-        miette::miette!("Failed to write '{}': {}", pkg_json_path.display(), e)
-    })?;
+    fs::write(
+        &pkg_json_path,
+        serde_json::to_string_pretty(&metadata).unwrap(),
+    )
+    .map_err(|e| miette::miette!("Failed to write '{}': {}", pkg_json_path.display(), e))?;
     println!("  ✓ {}", pkg_json_path.display());
 
     // Compile each exported skill and write its SKILL.md
@@ -1078,7 +1188,11 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
         if pkg.exports.contains(&normalised_name) {
             let skill_dir = pkg_dir.join(&skill.name);
             fs::create_dir_all(&skill_dir).map_err(|e| {
-                miette::miette!("Failed to create skill dir '{}': {}", skill_dir.display(), e)
+                miette::miette!(
+                    "Failed to create skill dir '{}': {}",
+                    skill_dir.display(),
+                    e
+                )
             })?;
             let skill_md_path = skill_dir.join("SKILL.md");
             let content = compiler.compile(skill, &ast);
@@ -1114,9 +1228,11 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
 
     if !exported_types.is_empty() {
         let types_path = pkg_dir.join(".types.json");
-        fs::write(&types_path, serde_json::to_string_pretty(&exported_types).unwrap()).map_err(
-            |e| miette::miette!("Failed to write '{}': {}", types_path.display(), e),
-        )?;
+        fs::write(
+            &types_path,
+            serde_json::to_string_pretty(&exported_types).unwrap(),
+        )
+        .map_err(|e| miette::miette!("Failed to write '{}': {}", types_path.display(), e))?;
         println!("  ✓ {}", types_path.display());
     }
 
@@ -1132,12 +1248,10 @@ fn cmd_install(path: &str) -> Result<()> {
         if pkg_source.is_dir() {
             // It's already a .skillpkg directory — read metadata from package.json
             let pkg_json = pkg_source.join("package.json");
-            let content = fs::read_to_string(&pkg_json).map_err(|e| {
-                miette::miette!("Failed to read '{}': {}", pkg_json.display(), e)
-            })?;
-            let meta: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-                miette::miette!("Failed to parse '{}': {}", pkg_json.display(), e)
-            })?;
+            let content = fs::read_to_string(&pkg_json)
+                .map_err(|e| miette::miette!("Failed to read '{}': {}", pkg_json.display(), e))?;
+            let meta: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| miette::miette!("Failed to parse '{}': {}", pkg_json.display(), e))?;
             let name = meta["name"]
                 .as_str()
                 .ok_or_else(|| miette::miette!("'name' missing from package.json"))?
@@ -1157,10 +1271,8 @@ fn cmd_install(path: &str) -> Result<()> {
                 ));
             }
             let pkg = &ast.packages[0];
-            let temp_dir = std::env::temp_dir().join(format!(
-                "skillspec_pack_{}",
-                std::process::id()
-            ));
+            let temp_dir =
+                std::env::temp_dir().join(format!("skillspec_pack_{}", std::process::id()));
             cmd_pack(path, Some(temp_dir.to_str().unwrap()))?;
 
             let pkg_dir_name = format!(
@@ -1201,9 +1313,9 @@ fn cmd_install(path: &str) -> Result<()> {
 
 /// Recursively copy directory contents from `src` to `dst`.
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src).map_err(|e| {
-        miette::miette!("Failed to read directory '{}': {}", src.display(), e)
-    })? {
+    for entry in fs::read_dir(src)
+        .map_err(|e| miette::miette!("Failed to read directory '{}': {}", src.display(), e))?
+    {
         let entry = entry.map_err(|e| miette::miette!("Directory entry error: {}", e))?;
         let entry_path = entry.path();
         let dest_path = dst.join(entry.file_name());
@@ -1233,7 +1345,9 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
     if prepare {
         use skillspec_core::test_harness::prepare_test_skill;
         for skill in &ast.skills {
-            if skill.tests.is_empty() { continue; }
+            if skill.tests.is_empty() {
+                continue;
+            }
             let test_skill = prepare_test_skill(skill, &ast);
             let out_dir = format!("{}.test", skill.name);
             fs::create_dir_all(&out_dir).map_err(|e| miette::miette!("mkdir: {e}"))?;
@@ -1251,7 +1365,8 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
         let results: serde_json::Value = serde_json::from_str(&results_text)
             .map_err(|e| miette::miette!("Failed to parse results JSON: {}", e))?;
 
-        let test_cases = results["test_cases"].as_array()
+        let test_cases = results["test_cases"]
+            .as_array()
             .ok_or_else(|| miette::miette!("results JSON missing 'test_cases' array"))?;
 
         let mut total_pass = 0;
@@ -1259,7 +1374,8 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
 
         for skill in &ast.skills {
             for test in &skill.tests {
-                let case = test_cases.iter()
+                let case = test_cases
+                    .iter()
                     .find(|tc| tc["name"].as_str() == Some(&test.name));
                 let case = match case {
                     Some(c) => c,
@@ -1277,20 +1393,18 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
                     let mut all_pass = true;
                     for exp in &test.expectations {
                         let actual = match &exp.assertion {
-                            skillspec_core::ast::AssertionExpr::Resembles(_) => {
-                                run.get("resembles_verdicts")
-                                    .and_then(|v| v.get(&exp.path))
-                                    .cloned()
-                                    .map(|v| serde_json::json!({"resembles_verdict": v}))
-                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
-                            }
-                            skillspec_core::ast::AssertionExpr::Satisfies(_) => {
-                                run.get("satisfies_verdicts")
-                                    .and_then(|v| v.get(&exp.path))
-                                    .cloned()
-                                    .map(|v| serde_json::json!({"satisfies_verdict": v}))
-                                    .unwrap_or_else(|| navigate_json(run, &exp.path))
-                            }
+                            skillspec_core::ast::AssertionExpr::Resembles(_) => run
+                                .get("resembles_verdicts")
+                                .and_then(|v| v.get(&exp.path))
+                                .cloned()
+                                .map(|v| serde_json::json!({"resembles_verdict": v}))
+                                .unwrap_or_else(|| navigate_json(run, &exp.path)),
+                            skillspec_core::ast::AssertionExpr::Satisfies(_) => run
+                                .get("satisfies_verdicts")
+                                .and_then(|v| v.get(&exp.path))
+                                .cloned()
+                                .map(|v| serde_json::json!({"satisfies_verdict": v}))
+                                .unwrap_or_else(|| navigate_json(run, &exp.path)),
                             _ => navigate_json(run, &exp.path),
                         };
                         let r = evaluate_assertion(&exp.assertion, &actual);
@@ -1308,8 +1422,14 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
                         eprintln!("  ✓ {} (confidence {:.0}% met)", test.name, conf * 100.0);
                         total_pass += 1;
                     } else {
-                        let pass_rate = run_results.iter().filter(|&&r| r).count() as f64 / run_results.len().max(1) as f64;
-                        eprintln!("  ✗ {} (confidence {:.0}% needed, got {:.0}%)", test.name, conf * 100.0, pass_rate * 100.0);
+                        let pass_rate = run_results.iter().filter(|&&r| r).count() as f64
+                            / run_results.len().max(1) as f64;
+                        eprintln!(
+                            "  ✗ {} (confidence {:.0}% needed, got {:.0}%)",
+                            test.name,
+                            conf * 100.0,
+                            pass_rate * 100.0
+                        );
                         total_fail += 1;
                     }
                 } else if run_results.iter().all(|&r| r) {
@@ -1330,7 +1450,9 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
 
     let mut total = 0;
     for skill in &ast.skills {
-        if skill.tests.is_empty() { continue; }
+        if skill.tests.is_empty() {
+            continue;
+        }
         eprintln!("Skill: {} ({} tests)", skill.name, skill.tests.len());
         for test in &skill.tests {
             eprintln!("  - {}", test.name);
@@ -1340,18 +1462,25 @@ fn cmd_test(path: &str, prepare: bool, evaluate: Option<&str>) -> Result<()> {
     }
 
     if total == 0 {
-        eprintln!("No tests found in '{path}'.\n\nHint: add a tests {{ }} block to your skill — see docs/guide.md#tests");
+        eprintln!(
+            "No tests found in '{path}'.\n\nHint: add a tests {{ }} block to your skill — see docs/guide.md#tests"
+        );
     } else {
-        eprintln!("To execute tests:\n  skillspec test {path} --prepare\n  <run the test skill in your agent runtime>\n  skillspec test {path} --evaluate results.json");
+        eprintln!(
+            "To execute tests:\n  skillspec test {path} --prepare\n  <run the test skill in your agent runtime>\n  skillspec test {path} --evaluate results.json"
+        );
     }
 
     Ok(())
 }
 
-fn navigate_json<'a>(value: &'a serde_json::Value, path: &str) -> serde_json::Value {
+fn navigate_json(value: &serde_json::Value, path: &str) -> serde_json::Value {
     let mut current = value.clone();
     for part in path.split('.') {
-        current = current.get(part).cloned().unwrap_or(serde_json::Value::Null);
+        current = current
+            .get(part)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
     }
     current
 }
@@ -1367,7 +1496,10 @@ fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool, semver: bool) -> 
             let compiled = compiler.compile(skill, &ast);
             let report = skillmd_diff(&compiled, &actual);
             if report.is_empty() {
-                eprintln!("✓ No differences between compiled '{}' and '{path_b}'", skill.name);
+                eprintln!(
+                    "✓ No differences between compiled '{}' and '{path_b}'",
+                    skill.name
+                );
             } else {
                 eprint!("{}", report.display());
             }

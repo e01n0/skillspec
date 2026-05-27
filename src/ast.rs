@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::token::Span;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SourceFile {
@@ -93,7 +93,9 @@ pub struct Body {
     pub source_order: Vec<BodyItemRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Priority {
     Optional,
     Supplementary,

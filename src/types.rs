@@ -67,10 +67,13 @@ mod tests {
     #[test]
     fn register_and_resolve() {
         let mut reg = TypeRegistry::new();
-        reg.register("Finding".into(), ResolvedType::Struct(
+        reg.register(
             "Finding".into(),
-            vec![("file".into(), ResolvedType::String, false)],
-        ));
+            ResolvedType::Struct(
+                "Finding".into(),
+                vec![("file".into(), ResolvedType::String, false)],
+            ),
+        );
         assert!(reg.resolve("Finding").is_some());
         assert!(reg.resolve("Nonexistent").is_none());
     }
@@ -78,9 +81,15 @@ mod tests {
     #[test]
     fn resolved_type_display() {
         assert_eq!(format!("{}", ResolvedType::String), "string");
-        assert_eq!(format!("{}", ResolvedType::Array(Box::new(ResolvedType::Int))), "int[]");
         assert_eq!(
-            format!("{}", ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int))),
+            format!("{}", ResolvedType::Array(Box::new(ResolvedType::Int))),
+            "int[]"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int))
+            ),
             "map<string, int>"
         );
         assert_eq!(

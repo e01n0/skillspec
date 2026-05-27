@@ -24,57 +24,160 @@ pub struct Token {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Keywords
-    Skill, Input, Output, Body, Context, Step, Requires, When, Use, Let, Emit,
-    Import, From, Type, Pre, Post, Assert, Message, OnError, AllSteps, Extends,
+    Skill,
+    Input,
+    Output,
+    Body,
+    Context,
+    Step,
+    Requires,
+    When,
+    Use,
+    Let,
+    Emit,
+    Import,
+    From,
+    Type,
+    Pre,
+    Post,
+    Assert,
+    Message,
+    OnError,
+    AllSteps,
+    Extends,
 
     // Lazy context
-    Lazy, Ref, Summary, Index, Section, Load,
+    Lazy,
+    Ref,
+    Summary,
+    Index,
+    Section,
+    Load,
 
     // Pipeline / Orchestration
-    Pipeline, Stage, Orchestration, Agents, Phase, Shared, Rules, Cancel, Timeout,
+    Pipeline,
+    Stage,
+    Orchestration,
+    Agents,
+    Phase,
+    Shared,
+    Rules,
+    Cancel,
+    Timeout,
 
     // Mixin / composition
-    Mixin, Include,
+    Mixin,
+    Include,
 
     // Package management
-    Package, Version, Description, Exports,
+    Package,
+    Version,
+    Description,
+    Exports,
 
     // Prompt directives
-    Reasoning, Examples, Example, Note, Format, Reinforce, Every, On, Sampling, Persona,
+    Reasoning,
+    Examples,
+    Example,
+    Note,
+    Format,
+    Reinforce,
+    Every,
+    On,
+    Sampling,
+    Persona,
 
     // Tools / permissions
-    Tools, Require, Optional, Mcp, Tool, Allow, Deny, Permissions,
+    Tools,
+    Require,
+    Optional,
+    Mcp,
+    Tool,
+    Allow,
+    Deny,
+    Permissions,
 
     // Test framework
-    Tests, Test, Given, Mock, Expect, Confidence, Runs, Snapshot, Compare,
-    Equals, Contains, Matches, Resembles, Satisfies, Between,
-    Unavailable, Failing, Slow,
+    Tests,
+    Test,
+    Given,
+    Mock,
+    Expect,
+    Confidence,
+    Runs,
+    Snapshot,
+    Compare,
+    Equals,
+    Contains,
+    Matches,
+    Resembles,
+    Satisfies,
+    Between,
+    Unavailable,
+    Failing,
+    Slow,
 
     // Observability
-    Observe, EmitEvent, Metric,
+    Observe,
+    EmitEvent,
+    Metric,
 
     // Control flow
-    If, Retry, Backoff,
+    If,
+    Retry,
+    Backoff,
 
     // Primitives
-    StringType, IntType, FloatType, BoolType, Enum, Map,
+    StringType,
+    IntType,
+    FloatType,
+    BoolType,
+    Enum,
+    Map,
 
     // Literals
-    StringLit(String), IntLit(i64), FloatLit(f64), BoolLit(bool), TripleString(String),
+    StringLit(String),
+    IntLit(i64),
+    FloatLit(f64),
+    BoolLit(bool),
+    TripleString(String),
 
     // Identifiers
     Ident(String),
 
     // Punctuation
-    LBrace, RBrace, LParen, RParen, LBracket, RBracket,
-    Colon, Comma, Dot, Question, Eq, EqEq, NotEq,
-    Lt, Gt, LtEq, GtEq, Amp, AmpAmp, Pipe, PipePipe, Bang, Arrow,
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    Colon,
+    Comma,
+    Dot,
+    Question,
+    Eq,
+    EqEq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    Amp,
+    AmpAmp,
+    Pipe,
+    PipePipe,
+    Bang,
+    Arrow,
 
     // Special
-    Priority, Decay, Interpolation(String),
+    Priority,
+    Decay,
+    Interpolation(String),
 
     // Meta
-    Comment(String), Eof,
+    Comment(String),
+    Eof,
 }
 
 #[cfg(test)]
@@ -83,7 +186,12 @@ mod tests {
 
     #[test]
     fn span_display() {
-        let span = Span { start: 0, end: 5, line: 1, col: 1 };
+        let span = Span {
+            start: 0,
+            end: 5,
+            line: 1,
+            col: 1,
+        };
         assert_eq!(format!("{span}"), "1:1");
     }
 

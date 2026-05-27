@@ -1,4 +1,4 @@
-use crate::error::{SkillSpecError, Result};
+use crate::error::{Result, SkillSpecError};
 use crate::token::{Span, Token, TokenKind};
 
 pub struct Lexer {
@@ -51,7 +51,11 @@ impl Lexer {
             Some(c) => c,
             None => {
                 let span = self.current_span(start_pos);
-                return Ok(Token { kind: TokenKind::Eof, span, text: String::new() });
+                return Ok(Token {
+                    kind: TokenKind::Eof,
+                    span,
+                    text: String::new(),
+                });
             }
         };
 
@@ -66,7 +70,8 @@ impl Lexer {
         }
 
         // Numbers: digit or '-' followed by digit
-        if ch.is_ascii_digit() || (ch == '-' && self.peek_at(1).is_some_and(|c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit() || (ch == '-' && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()))
+        {
             return self.lex_number(start_pos, start_line, start_col);
         }
 
@@ -77,7 +82,12 @@ impl Lexer {
 
         // Operators and punctuation
         self.advance();
-        let span = Span { start: start_pos, end: self.pos, line: start_line, col: start_col };
+        let span = Span {
+            start: start_pos,
+            end: self.pos,
+            line: start_line,
+            col: start_col,
+        };
         let kind = match ch {
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
@@ -158,17 +168,36 @@ impl Lexer {
 
         let end_pos = self.pos;
         let text = self.chars[start_pos..end_pos].iter().collect::<String>();
-        Ok(Token { kind, span: Span { start: start_pos, end: end_pos, line: start_line, col: start_col }, text })
+        Ok(Token {
+            kind,
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+                line: start_line,
+                col: start_col,
+            },
+            text,
+        })
     }
 
-    fn lex_string(&mut self, start_pos: usize, start_line: usize, start_col: usize) -> Result<Token> {
+    fn lex_string(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token> {
         // consume opening '"'
         self.advance();
         let mut s = String::new();
         loop {
             match self.peek() {
                 None | Some('\n') => {
-                    let span = Span { start: start_pos, end: self.pos, line: start_line, col: start_col };
+                    let span = Span {
+                        start: start_pos,
+                        end: self.pos,
+                        line: start_line,
+                        col: start_col,
+                    };
                     return Err(SkillSpecError::LexerError {
                         message: "Unterminated string literal".to_string(),
                         span,
@@ -181,14 +210,38 @@ impl Lexer {
                 Some('\\') => {
                     self.advance();
                     match self.peek() {
-                        Some('n') => { self.advance(); s.push('\n'); }
-                        Some('t') => { self.advance(); s.push('\t'); }
-                        Some('r') => { self.advance(); s.push('\r'); }
-                        Some('"') => { self.advance(); s.push('"'); }
-                        Some('\\') => { self.advance(); s.push('\\'); }
-                        Some(c) => { self.advance(); s.push('\\'); s.push(c); }
+                        Some('n') => {
+                            self.advance();
+                            s.push('\n');
+                        }
+                        Some('t') => {
+                            self.advance();
+                            s.push('\t');
+                        }
+                        Some('r') => {
+                            self.advance();
+                            s.push('\r');
+                        }
+                        Some('"') => {
+                            self.advance();
+                            s.push('"');
+                        }
+                        Some('\\') => {
+                            self.advance();
+                            s.push('\\');
+                        }
+                        Some(c) => {
+                            self.advance();
+                            s.push('\\');
+                            s.push(c);
+                        }
                         None => {
-                            let span = Span { start: start_pos, end: self.pos, line: start_line, col: start_col };
+                            let span = Span {
+                                start: start_pos,
+                                end: self.pos,
+                                line: start_line,
+                                col: start_col,
+                            };
                             return Err(SkillSpecError::LexerError {
                                 message: "Unterminated string escape".to_string(),
                                 span,
@@ -206,14 +259,26 @@ impl Lexer {
         let text = self.chars[start_pos..end_pos].iter().collect::<String>();
         Ok(Token {
             kind: TokenKind::StringLit(s),
-            span: Span { start: start_pos, end: end_pos, line: start_line, col: start_col },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+                line: start_line,
+                col: start_col,
+            },
             text,
         })
     }
 
-    fn lex_triple_string(&mut self, start_pos: usize, start_line: usize, start_col: usize) -> Result<Token> {
+    fn lex_triple_string(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token> {
         // consume opening '"""'
-        self.advance(); self.advance(); self.advance();
+        self.advance();
+        self.advance();
+        self.advance();
 
         let mut s = String::new();
 
@@ -224,13 +289,23 @@ impl Lexer {
 
         loop {
             // Check for closing """
-            if self.peek() == Some('"') && self.peek_at(1) == Some('"') && self.peek_at(2) == Some('"') {
-                self.advance(); self.advance(); self.advance();
+            if self.peek() == Some('"')
+                && self.peek_at(1) == Some('"')
+                && self.peek_at(2) == Some('"')
+            {
+                self.advance();
+                self.advance();
+                self.advance();
                 break;
             }
             match self.peek() {
                 None => {
-                    let span = Span { start: start_pos, end: self.pos, line: start_line, col: start_col };
+                    let span = Span {
+                        start: start_pos,
+                        end: self.pos,
+                        line: start_line,
+                        col: start_col,
+                    };
                     return Err(SkillSpecError::LexerError {
                         message: "Unterminated triple-quoted string".to_string(),
                         span,
@@ -250,12 +325,22 @@ impl Lexer {
         let text = self.chars[start_pos..end_pos].iter().collect::<String>();
         Ok(Token {
             kind: TokenKind::TripleString(trimmed),
-            span: Span { start: start_pos, end: end_pos, line: start_line, col: start_col },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+                line: start_line,
+                col: start_col,
+            },
             text,
         })
     }
 
-    fn lex_number(&mut self, start_pos: usize, start_line: usize, start_col: usize) -> Result<Token> {
+    fn lex_number(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token> {
         let mut s = String::new();
 
         // Optional leading minus
@@ -275,7 +360,8 @@ impl Lexer {
         }
 
         // Optional fractional part
-        let is_float = self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit());
+        let is_float =
+            self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit());
         if is_float {
             s.push('.');
             self.advance(); // consume '.'
@@ -291,22 +377,46 @@ impl Lexer {
 
         let end_pos = self.pos;
         let text = self.chars[start_pos..end_pos].iter().collect::<String>();
-        let span = Span { start: start_pos, end: end_pos, line: start_line, col: start_col };
+        let span = Span {
+            start: start_pos,
+            end: end_pos,
+            line: start_line,
+            col: start_col,
+        };
 
         if is_float {
             match s.parse::<f64>() {
-                Ok(f) => Ok(Token { kind: TokenKind::FloatLit(f), span, text }),
-                Err(_) => Err(SkillSpecError::LexerError { message: format!("Invalid float '{}'", s), span }),
+                Ok(f) => Ok(Token {
+                    kind: TokenKind::FloatLit(f),
+                    span,
+                    text,
+                }),
+                Err(_) => Err(SkillSpecError::LexerError {
+                    message: format!("Invalid float '{}'", s),
+                    span,
+                }),
             }
         } else {
             match s.parse::<i64>() {
-                Ok(i) => Ok(Token { kind: TokenKind::IntLit(i), span, text }),
-                Err(_) => Err(SkillSpecError::LexerError { message: format!("Invalid integer '{}'", s), span }),
+                Ok(i) => Ok(Token {
+                    kind: TokenKind::IntLit(i),
+                    span,
+                    text,
+                }),
+                Err(_) => Err(SkillSpecError::LexerError {
+                    message: format!("Invalid integer '{}'", s),
+                    span,
+                }),
             }
         }
     }
 
-    fn lex_ident_or_keyword(&mut self, start_pos: usize, start_line: usize, start_col: usize) -> Result<Token> {
+    fn lex_ident_or_keyword(
+        &mut self,
+        start_pos: usize,
+        start_line: usize,
+        start_col: usize,
+    ) -> Result<Token> {
         let mut s = String::new();
 
         // Allow '@' as first char
@@ -326,113 +436,118 @@ impl Lexer {
 
         let end_pos = self.pos;
         let text = self.chars[start_pos..end_pos].iter().collect::<String>();
-        let span = Span { start: start_pos, end: end_pos, line: start_line, col: start_col };
+        let span = Span {
+            start: start_pos,
+            end: end_pos,
+            line: start_line,
+            col: start_col,
+        };
 
         let kind = match s.as_str() {
-            "skill"         => TokenKind::Skill,
-            "input"         => TokenKind::Input,
-            "output"        => TokenKind::Output,
-            "body"          => TokenKind::Body,
-            "context"       => TokenKind::Context,
-            "step"          => TokenKind::Step,
-            "requires"      => TokenKind::Requires,
-            "when"          => TokenKind::When,
-            "use"           => TokenKind::Use,
-            "let"           => TokenKind::Let,
-            "emit"          => TokenKind::Emit,
-            "import"        => TokenKind::Import,
-            "from"          => TokenKind::From,
-            "type"          => TokenKind::Type,
-            "pre"           => TokenKind::Pre,
-            "post"          => TokenKind::Post,
-            "assert"        => TokenKind::Assert,
-            "message"       => TokenKind::Message,
-            "on_error"      => TokenKind::OnError,
-            "all_steps"     => TokenKind::AllSteps,
-            "extends"       => TokenKind::Extends,
+            "skill" => TokenKind::Skill,
+            "input" => TokenKind::Input,
+            "output" => TokenKind::Output,
+            "body" => TokenKind::Body,
+            "context" => TokenKind::Context,
+            "step" => TokenKind::Step,
+            "requires" => TokenKind::Requires,
+            "when" => TokenKind::When,
+            "use" => TokenKind::Use,
+            "let" => TokenKind::Let,
+            "emit" => TokenKind::Emit,
+            "import" => TokenKind::Import,
+            "from" => TokenKind::From,
+            "type" => TokenKind::Type,
+            "pre" => TokenKind::Pre,
+            "post" => TokenKind::Post,
+            "assert" => TokenKind::Assert,
+            "message" => TokenKind::Message,
+            "on_error" => TokenKind::OnError,
+            "all_steps" => TokenKind::AllSteps,
+            "extends" => TokenKind::Extends,
             // Lazy context
-            "lazy"          => TokenKind::Lazy,
-            "ref"           => TokenKind::Ref,
-            "summary"       => TokenKind::Summary,
-            "index"         => TokenKind::Index,
-            "section"       => TokenKind::Section,
-            "load"          => TokenKind::Load,
+            "lazy" => TokenKind::Lazy,
+            "ref" => TokenKind::Ref,
+            "summary" => TokenKind::Summary,
+            "index" => TokenKind::Index,
+            "section" => TokenKind::Section,
+            "load" => TokenKind::Load,
             // Pipeline / Orchestration
-            "pipeline"      => TokenKind::Pipeline,
-            "stage"         => TokenKind::Stage,
+            "pipeline" => TokenKind::Pipeline,
+            "stage" => TokenKind::Stage,
             "orchestration" => TokenKind::Orchestration,
-            "agents"        => TokenKind::Agents,
-            "phase"         => TokenKind::Phase,
-            "shared"        => TokenKind::Shared,
-            "rules"         => TokenKind::Rules,
-            "cancel"        => TokenKind::Cancel,
-            "timeout"       => TokenKind::Timeout,
+            "agents" => TokenKind::Agents,
+            "phase" => TokenKind::Phase,
+            "shared" => TokenKind::Shared,
+            "rules" => TokenKind::Rules,
+            "cancel" => TokenKind::Cancel,
+            "timeout" => TokenKind::Timeout,
             // Mixin / composition
-            "mixin"         => TokenKind::Mixin,
-            "include"       => TokenKind::Include,
+            "mixin" => TokenKind::Mixin,
+            "include" => TokenKind::Include,
             // Package management
-            "package"       => TokenKind::Package,
-            "version"       => TokenKind::Version,
-            "description"   => TokenKind::Description,
-            "exports"       => TokenKind::Exports,
+            "package" => TokenKind::Package,
+            "version" => TokenKind::Version,
+            "description" => TokenKind::Description,
+            "exports" => TokenKind::Exports,
             // Prompt directives
-            "reasoning"     => TokenKind::Reasoning,
-            "examples"      => TokenKind::Examples,
-            "example"       => TokenKind::Example,
-            "note"          => TokenKind::Note,
-            "format"        => TokenKind::Format,
-            "reinforce"     => TokenKind::Reinforce,
-            "every"         => TokenKind::Every,
-            "on"            => TokenKind::On,
-            "sampling"      => TokenKind::Sampling,
-            "persona"       => TokenKind::Persona,
+            "reasoning" => TokenKind::Reasoning,
+            "examples" => TokenKind::Examples,
+            "example" => TokenKind::Example,
+            "note" => TokenKind::Note,
+            "format" => TokenKind::Format,
+            "reinforce" => TokenKind::Reinforce,
+            "every" => TokenKind::Every,
+            "on" => TokenKind::On,
+            "sampling" => TokenKind::Sampling,
+            "persona" => TokenKind::Persona,
             // Tools / permissions
-            "tools"         => TokenKind::Tools,
-            "require"       => TokenKind::Require,
-            "optional"      => TokenKind::Optional,
-            "mcp"           => TokenKind::Mcp,
-            "tool"          => TokenKind::Tool,
-            "allow"         => TokenKind::Allow,
-            "deny"          => TokenKind::Deny,
-            "permissions"   => TokenKind::Permissions,
+            "tools" => TokenKind::Tools,
+            "require" => TokenKind::Require,
+            "optional" => TokenKind::Optional,
+            "mcp" => TokenKind::Mcp,
+            "tool" => TokenKind::Tool,
+            "allow" => TokenKind::Allow,
+            "deny" => TokenKind::Deny,
+            "permissions" => TokenKind::Permissions,
             // Test framework
-            "tests"         => TokenKind::Tests,
-            "test"          => TokenKind::Test,
-            "given"         => TokenKind::Given,
-            "mock"          => TokenKind::Mock,
-            "expect"        => TokenKind::Expect,
-            "confidence"    => TokenKind::Confidence,
-            "runs"          => TokenKind::Runs,
-            "snapshot"      => TokenKind::Snapshot,
-            "compare"       => TokenKind::Compare,
-            "equals"        => TokenKind::Equals,
-            "contains"      => TokenKind::Contains,
-            "matches"       => TokenKind::Matches,
-            "resembles"     => TokenKind::Resembles,
-            "satisfies"     => TokenKind::Satisfies,
-            "between"       => TokenKind::Between,
-            "unavailable"   => TokenKind::Unavailable,
-            "failing"       => TokenKind::Failing,
-            "slow"          => TokenKind::Slow,
+            "tests" => TokenKind::Tests,
+            "test" => TokenKind::Test,
+            "given" => TokenKind::Given,
+            "mock" => TokenKind::Mock,
+            "expect" => TokenKind::Expect,
+            "confidence" => TokenKind::Confidence,
+            "runs" => TokenKind::Runs,
+            "snapshot" => TokenKind::Snapshot,
+            "compare" => TokenKind::Compare,
+            "equals" => TokenKind::Equals,
+            "contains" => TokenKind::Contains,
+            "matches" => TokenKind::Matches,
+            "resembles" => TokenKind::Resembles,
+            "satisfies" => TokenKind::Satisfies,
+            "between" => TokenKind::Between,
+            "unavailable" => TokenKind::Unavailable,
+            "failing" => TokenKind::Failing,
+            "slow" => TokenKind::Slow,
             // Observability
-            "observe"       => TokenKind::Observe,
-            "emit_event"    => TokenKind::EmitEvent,
-            "metric"        => TokenKind::Metric,
+            "observe" => TokenKind::Observe,
+            "emit_event" => TokenKind::EmitEvent,
+            "metric" => TokenKind::Metric,
             // Control flow
-            "if"            => TokenKind::If,
-            "retry"         => TokenKind::Retry,
-            "backoff"       => TokenKind::Backoff,
+            "if" => TokenKind::If,
+            "retry" => TokenKind::Retry,
+            "backoff" => TokenKind::Backoff,
             // Primitives
-            "string"        => TokenKind::StringType,
-            "int"           => TokenKind::IntType,
-            "float"         => TokenKind::FloatType,
-            "bool"          => TokenKind::BoolType,
-            "enum"          => TokenKind::Enum,
-            "map"           => TokenKind::Map,
-            "true"          => TokenKind::BoolLit(true),
-            "false"         => TokenKind::BoolLit(false),
-            "in"            => TokenKind::Ident("in".into()),
-            _               => TokenKind::Ident(s),
+            "string" => TokenKind::StringType,
+            "int" => TokenKind::IntType,
+            "float" => TokenKind::FloatType,
+            "bool" => TokenKind::BoolType,
+            "enum" => TokenKind::Enum,
+            "map" => TokenKind::Map,
+            "true" => TokenKind::BoolLit(true),
+            "false" => TokenKind::BoolLit(false),
+            "in" => TokenKind::Ident("in".into()),
+            _ => TokenKind::Ident(s),
         };
 
         Ok(Token { kind, span, text })
@@ -483,7 +598,12 @@ impl Lexer {
     }
 
     fn current_span(&self, start: usize) -> Span {
-        Span { start, end: self.pos, line: self.line, col: self.col }
+        Span {
+            start,
+            end: self.pos,
+            line: self.line,
+            col: self.col,
+        }
     }
 }
 
@@ -493,7 +613,12 @@ mod tests {
 
     fn lex(input: &str) -> Vec<TokenKind> {
         let lexer = Lexer::new(input);
-        lexer.tokenize().unwrap().into_iter().map(|t| t.kind).collect()
+        lexer
+            .tokenize()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
     }
 
     #[test]
