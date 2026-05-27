@@ -298,7 +298,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
 | `pack` / `install` | Bundle and install `.skillpkg` archives |
 | `test`    | List test blocks (doesn't run them) |
-| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source |
+| `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source. [Guide](docs/optimize-guide.md) |
 
 No LLM calls for core commands, no network. `optimize` uses SkillOpt and routes all LLM calls through the hosting agent session — zero external API cost.
 
