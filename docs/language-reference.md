@@ -43,7 +43,7 @@ Multiple skills, pipelines, and orchestrations may coexist in a single file.
 
 ### Named types
 
-```agent
+```skillspec
 type Finding {
   file: string
   line: int
@@ -56,7 +56,7 @@ A named type is a record with named fields. Fields are required by default.
 
 ### Optionality and defaults
 
-```agent
+```skillspec
 field_name?: Type               // optional, no default
 field_name?: Type = value       // optional with default
 ```
@@ -71,7 +71,7 @@ Types are not inferred. All fields must be explicitly typed.
 
 Import named types from packages or local files:
 
-```agent
+```skillspec
 import { Finding, ReviewReport } from "@types/review"
 import { Config } from "./shared/config"
 ```
@@ -84,7 +84,7 @@ Registry packages use `@scope/name` paths. Local imports use relative paths.
 
 Full syntax:
 
-```agent
+```skillspec
 skill "name" {
   input { ... }            // optional
   output { ... }           // optional
@@ -100,7 +100,7 @@ skill "name" {
 
 `extends` for inheritance:
 
-```agent
+```skillspec
 skill "derived" extends "base" {
   body { ... }
 }
@@ -108,7 +108,7 @@ skill "derived" extends "base" {
 
 ### input / output
 
-```agent
+```skillspec
 input {
   query: string
   files: string[]
@@ -126,7 +126,7 @@ Fields follow the same rules as type definitions.
 
 ### pre / post
 
-```agent
+```skillspec
 pre {
   assert input.files != [] message "No files provided"
   assert when input.focus input.focus != "" message "Focus must not be empty"
@@ -148,7 +148,7 @@ assert [when <guard-expr>] <condition-expr> message "<string>"
 
 A minimal skill may use `context` directly without a `body` wrapper:
 
-```agent
+```skillspec
 skill "hello" {
   context { "Greet the user warmly." }
 }
@@ -160,7 +160,7 @@ skill "hello" {
 
 ### Eager context
 
-```agent
+```skillspec
 context { "prose" }
 context(priority: critical) { "prose" }
 context(priority: important, when: input.formal) { "prose" }
@@ -197,7 +197,7 @@ string `"""..."""`.
 
 Declared at the body level. Loaded on demand via `load` inside a step.
 
-```agent
+```skillspec
 lazy context "name" (priority: supplementary) {
   summary "One-line description shown to the model instead of the full content."
   ref "./path/to/file.md"
@@ -207,7 +207,7 @@ lazy context "name" (priority: supplementary) {
 Content variants:
 
 **ref** loads a file path:
-```agent
+```skillspec
 lazy context "patterns" (priority: supplementary) {
   summary "Design patterns reference."
   ref "./references/patterns.md"
@@ -215,7 +215,7 @@ lazy context "patterns" (priority: supplementary) {
 ```
 
 **index** loads one of several named sections:
-```agent
+```skillspec
 lazy context "catalog" (priority: supplementary) {
   summary "Error pattern catalog."
   index {
@@ -234,7 +234,7 @@ lazy context "catalog" (priority: supplementary) {
 **Path validation:** `skillspec check` validates that `ref` paths point to existing files when the source file's directory is known. Missing files produce an `UnresolvedRef` error. This applies to both top-level `ref` and `ref` inside `index` sections. The check is skipped when running without a base directory (e.g. checking source from stdin).
 
 **inline** embeds prose directly:
-```agent
+```skillspec
 lazy context "note" (priority: optional) {
   summary "A reminder."
   "Only activate when the user seems confused."
@@ -245,7 +245,7 @@ lazy context "note" (priority: optional) {
 
 ## 5. Steps
 
-```agent
+```skillspec
 step step_name {
   requires <dependency>     // optional
   when <expr>               // optional, skip step if false
@@ -268,7 +268,7 @@ step step_name {
 
 ### when
 
-```agent
+```skillspec
 step review_focus {
   when input.focus == "all" || input.focus == "types"
   context { "Review type usage." }
@@ -277,7 +277,7 @@ step review_focus {
 
 ### use
 
-```agent
+```skillspec
 step analyse {
   use static_analysis(files: input.files, mode: "strict")
 }
@@ -287,7 +287,7 @@ Calls another skill or tool with named arguments.
 
 ### let
 
-```agent
+```skillspec
 step normalise {
   let clean_name = input.name
   context { "Use the normalised name." }
@@ -298,7 +298,7 @@ Binds a name to an expression for use in contexts or downstream steps.
 
 ### load
 
-```agent
+```skillspec
 step deep_review {
   requires analyse
   load "style-guide"
@@ -371,7 +371,7 @@ input and output.
 Inside quantifier assertions, `.field` is shorthand for the current array
 element's field:
 
-```agent
+```skillspec
 output.findings: contains(where: .severity == "critical")
 ```
 
@@ -383,7 +383,7 @@ Prompt directives appear inside `body`. All are optional.
 
 ### persona
 
-```agent
+```skillspec
 persona {
   """
   You are a senior code reviewer focused on security and correctness.
@@ -395,7 +395,7 @@ Sets the model's role. Rendered as a blockquote in compiled output.
 
 ### reasoning
 
-```agent
+```skillspec
 reasoning extended
 reasoning standard
 reasoning none
@@ -405,7 +405,7 @@ Controls chain-of-thought depth.
 
 ### sampling
 
-```agent
+```skillspec
 sampling {
   temperature: 0.3
   top_p: 0.9
@@ -416,7 +416,7 @@ Both fields are optional floats.
 
 ### format
 
-```agent
+```skillspec
 format {
   style: json
   structure: output
@@ -428,7 +428,7 @@ format {
 
 ### reinforce
 
-```agent
+```skillspec
 reinforce every 3 steps {
   "Stay focused on the review task."
 }
@@ -452,7 +452,7 @@ Triggers:
 
 ### examples
 
-```agent
+```skillspec
 examples {
   example "simple case" {
     input: "a short description"
@@ -468,7 +468,7 @@ examples {
 
 ## 8. Tools
 
-```agent
+```skillspec
 tools {
   require Read
   require Bash
@@ -491,14 +491,14 @@ tools {
 
 Referenced by identifier: `Read`, `Bash`, `Edit`, `Write`, etc.
 
-```agent
+```skillspec
 require Read
 require Bash
 ```
 
 ### MCP tools
 
-```agent
+```skillspec
 require mcp("server-name") {
   method_name(param: type, ...) -> return_type
 }
@@ -515,7 +515,7 @@ Not currently surfaced in `.agent` syntax. Reserved for future use.
 
 ## 9. Permissions
 
-```agent
+```skillspec
 permissions {
   filesystem: read_write("src/**", "tests/**")
   network: outbound("api.github.com")
@@ -525,7 +525,7 @@ permissions {
 
 ### filesystem
 
-```agent
+```skillspec
 filesystem: <mode>("<pattern>", ...)
 ```
 
@@ -533,7 +533,7 @@ Modes: `read_only`, `read_write`, `write_only`. Patterns are glob strings.
 
 ### network
 
-```agent
+```skillspec
 network: outbound("api.example.com")
 ```
 
@@ -541,7 +541,7 @@ Modes: `outbound`, `inbound`, `none`.
 
 ### secrets
 
-```agent
+```skillspec
 secrets: ["ENV_VAR_NAME", ...]
 ```
 
@@ -551,7 +551,7 @@ Lists environment variables the skill is permitted to read.
 
 ## 10. Tests
 
-```agent
+```skillspec
 tests {
   test "test name" {
     given { field: value, ... }
@@ -568,7 +568,7 @@ tests {
 
 Named input fields passed to the skill:
 
-```agent
+```skillspec
 given {
   source_file: "fixtures/minimal.agent"
   review_focus: "types"
@@ -579,7 +579,7 @@ given {
 
 Mock a tool's responses:
 
-```agent
+```skillspec
 mock github {
   pr_diff(repo: "my/repo", pr: 42) -> "diff content"
 }
@@ -587,7 +587,7 @@ mock github {
 
 Special mock types:
 
-```agent
+```skillspec
 mock slack { unavailable }
 mock database { failing "connection refused" }
 mock slow_api { slow "5s" }
@@ -595,7 +595,7 @@ mock slow_api { slow "5s" }
 
 ### expect
 
-```agent
+```skillspec
 expect {
   output.score: >= 70
   output.issues: none(where: .severity == "critical")
@@ -623,7 +623,7 @@ In `where` expressions, `.field` refers to the current element's field
 
 ### confidence and runs
 
-```agent
+```skillspec
 confidence 0.85
 runs 5
 ```
@@ -634,7 +634,7 @@ to be considered passing. `runs` defaults to 1. Applies to `resembles` and
 
 ### snapshot
 
-```agent
+```skillspec
 snapshot "snapshots/my-test.snap"
 ```
 
@@ -645,7 +645,7 @@ compares output against the stored snapshot.
 
 ## 11. Pipelines
 
-```agent
+```skillspec
 pipeline "name" {
   input { ... }          // optional
   output { ... }         // optional
@@ -657,7 +657,7 @@ pipeline "name" {
 
 ### stages
 
-```agent
+```skillspec
 stage lint {
   use linter(repo: input.repo)
 }
@@ -681,7 +681,7 @@ Stages without `requires` run concurrently (subject to runtime support).
 
 ### on_error
 
-```agent
+```skillspec
 on_error {
   use notify(channel: "alerts", message: "Pipeline failed")
 }
@@ -691,7 +691,7 @@ Called with the last error context if any stage fails.
 
 ### timeout
 
-```agent
+```skillspec
 timeout 30m
 timeout 1h
 timeout 300s
@@ -703,7 +703,7 @@ timeout 300s
 
 Orchestrations coordinate multiple agents across named phases.
 
-```agent
+```skillspec
 orchestration "name" {
   agents { ... }
   input { ... }
@@ -716,7 +716,7 @@ orchestration "name" {
 
 ### agents
 
-```agent
+```skillspec
 agents {
   reviewer: agent(skill: "code-review", model: "opus")
   security: agent(skill: "security-audit", model: "sonnet")
@@ -729,7 +729,7 @@ identifier.
 
 ### phases
 
-```agent
+```skillspec
 phase review {
   reviewer.run(files: input.pr_url)
   security.run(files: input.pr_url)
@@ -751,7 +751,7 @@ phase decide {
 
 Declares shared state and event handlers across agents (advanced use):
 
-```agent
+```skillspec
 shared {
   findings: Finding[]
   on reviewer.finding_found {
@@ -764,7 +764,7 @@ shared {
 
 Declarative rules that fire when conditions are met:
 
-```agent
+```skillspec
 rules {
   when security.result.critical_count > 0 {
     // trigger action
@@ -776,7 +776,7 @@ rules {
 
 ## 13. Mixins
 
-```agent
+```skillspec
 mixin mixin_name {
   step step_a {
     context { "First step." }
@@ -793,7 +793,7 @@ Mixins may contain `step` and `context` blocks. They cannot contain `input`,
 
 Include a mixin in a skill:
 
-```agent
+```skillspec
 skill "my-skill" {
   include mixin_name
   // ...
@@ -806,7 +806,7 @@ All mixin steps are injected into the skill as if they were declared inline.
 
 ## 14. Packages
 
-```agent
+```skillspec
 package {
   name: "@scope/package-name"
   version: "1.2.3"
@@ -831,7 +831,7 @@ Installed packages live at `.skillspec/packages/<name>@<version>/`.
 
 ## 15. Imports
 
-```agent
+```skillspec
 import { Symbol } from "path"
 import { A, B, C } from "path"
 ```
