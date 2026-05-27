@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use crate::ast::*;
 use crate::token::Span;
 
@@ -21,8 +22,14 @@ pub trait LintRule {
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic>;
 }
 
+pub trait FsLintRule {
+    fn name(&self) -> &str;
+    fn check(&self, file: &SourceFile, source_path: &Path) -> Vec<LintDiagnostic>;
+}
+
 pub struct LintEngine {
     rules: Vec<Box<dyn LintRule>>,
+    fs_rules: Vec<Box<dyn FsLintRule>>,
 }
 
 impl Default for LintEngine {
@@ -42,11 +49,23 @@ impl LintEngine {
                 Box::new(UnreachableStep),
                 Box::new(UnusedLazyContext),
             ],
+            fs_rules: vec![
+                Box::new(OptimizationCandidate),
+                Box::new(StaleOptimization),
+            ],
         }
     }
 
     pub fn run(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         self.rules.iter().flat_map(|rule| rule.check(file)).collect()
+    }
+
+    pub fn run_with_path(&self, file: &SourceFile, source_path: &Path) -> Vec<LintDiagnostic> {
+        let mut out: Vec<LintDiagnostic> = self.rules.iter()
+            .flat_map(|rule| rule.check(file))
+            .collect();
+        out.extend(self.fs_rules.iter().flat_map(|rule| rule.check(file, source_path)));
+        out
     }
 }
 
@@ -307,6 +326,79 @@ impl LintRule for UnusedLazyContext {
     }
 }
 
+// ── Rule: optimization-candidate ───────────────────────────────────────────
+
+pub struct OptimizationCandidate;
+
+impl FsLintRule for OptimizationCandidate {
+    fn name(&self) -> &str { "optimization-candidate" }
+
+    fn check(&self, file: &SourceFile, source_path: &Path) -> Vec<LintDiagnostic> {
+        let mut out = Vec::new();
+        let parent = source_path.parent().unwrap_or(Path::new("."));
+
+        for skill in &file.skills {
+            if skill.tests.is_empty() { continue; }
+
+            let optimized_dir = parent.join(format!("{}.optimized", skill.name));
+            let best_skill = optimized_dir.join("best_skill.md");
+
+            if !best_skill.exists() {
+                out.push(LintDiagnostic {
+                    rule: self.name().to_string(),
+                    severity: Severity::Info,
+                    message: format!(
+                        "skill '{}' has {} test(s) but has never been optimized; run `skillspec optimize {}` to improve it",
+                        skill.name, skill.tests.len(), source_path.display()
+                    ),
+                    span: Some(skill.span),
+                });
+            }
+        }
+        out
+    }
+}
+
+// ── Rule: stale-optimization ──────────────────────────────────────────────
+
+pub struct StaleOptimization;
+
+impl FsLintRule for StaleOptimization {
+    fn name(&self) -> &str { "stale-optimization" }
+
+    fn check(&self, file: &SourceFile, source_path: &Path) -> Vec<LintDiagnostic> {
+        let mut out = Vec::new();
+        let parent = source_path.parent().unwrap_or(Path::new("."));
+
+        let source_mtime = match std::fs::metadata(source_path).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => return out,
+        };
+
+        for skill in &file.skills {
+            let best_skill = parent.join(format!("{}.optimized/best_skill.md", skill.name));
+
+            let opt_mtime = match std::fs::metadata(&best_skill).and_then(|m| m.modified()) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+
+            if source_mtime > opt_mtime {
+                out.push(LintDiagnostic {
+                    rule: self.name().to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "skill '{}': source has been modified since last optimization; re-run `skillspec optimize {}`",
+                        skill.name, source_path.display()
+                    ),
+                    span: Some(skill.span),
+                });
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +543,103 @@ mod tests {
         "#);
         assert!(diags.is_empty(), "clean skill should have no warnings, got: {:?}",
             diags.iter().map(|d| (&d.rule, &d.message)).collect::<Vec<_>>());
+    }
+
+    // ── Filesystem-aware lint rule tests ────────────────────────────────────
+
+    fn parse_and_lint_fs(input: &str, source_path: &Path) -> Vec<LintDiagnostic> {
+        let file = parse(input);
+        let engine = LintEngine::new();
+        engine.run_with_path(&file, source_path)
+    }
+
+    const SKILL_WITH_TESTS: &str = r#"
+        skill "greeter" {
+            input { name: string }
+            body { context { "You greet people." } }
+            tests {
+                test "hi" { given { name: "Alice" } expect { output.result: contains("Alice") } }
+            }
+        }
+    "#;
+
+    const SKILL_NO_TESTS: &str = r#"
+        skill "greeter" {
+            input { name: string }
+            body { context { "You greet people." } }
+        }
+    "#;
+
+    #[test]
+    fn lint_optimization_candidate_fires_when_tests_exist_and_no_optimized_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_path = dir.path().join("greeter.agent");
+        std::fs::write(&agent_path, SKILL_WITH_TESTS).unwrap();
+
+        let diags = parse_and_lint_fs(SKILL_WITH_TESTS, &agent_path);
+        assert!(diags.iter().any(|d| d.rule == "optimization-candidate"),
+            "expected optimization-candidate, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn lint_optimization_candidate_silent_when_no_tests() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_path = dir.path().join("greeter.agent");
+        std::fs::write(&agent_path, SKILL_NO_TESTS).unwrap();
+
+        let diags = parse_and_lint_fs(SKILL_NO_TESTS, &agent_path);
+        assert!(!diags.iter().any(|d| d.rule == "optimization-candidate"),
+            "should not fire without tests: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn lint_optimization_candidate_silent_when_optimized() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_path = dir.path().join("greeter.agent");
+        std::fs::write(&agent_path, SKILL_WITH_TESTS).unwrap();
+
+        let opt_dir = dir.path().join("greeter.optimized");
+        std::fs::create_dir_all(&opt_dir).unwrap();
+        std::fs::write(opt_dir.join("best_skill.md"), "# optimized").unwrap();
+
+        let diags = parse_and_lint_fs(SKILL_WITH_TESTS, &agent_path);
+        assert!(!diags.iter().any(|d| d.rule == "optimization-candidate"),
+            "should not fire when best_skill.md exists: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn lint_stale_optimization_fires_when_source_newer() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let opt_dir = dir.path().join("greeter.optimized");
+        std::fs::create_dir_all(&opt_dir).unwrap();
+        std::fs::write(opt_dir.join("best_skill.md"), "# old optimization").unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let agent_path = dir.path().join("greeter.agent");
+        std::fs::write(&agent_path, SKILL_WITH_TESTS).unwrap();
+
+        let diags = parse_and_lint_fs(SKILL_WITH_TESTS, &agent_path);
+        assert!(diags.iter().any(|d| d.rule == "stale-optimization"),
+            "expected stale-optimization, got: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn lint_stale_optimization_silent_when_optimization_newer() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let agent_path = dir.path().join("greeter.agent");
+        std::fs::write(&agent_path, SKILL_WITH_TESTS).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let opt_dir = dir.path().join("greeter.optimized");
+        std::fs::create_dir_all(&opt_dir).unwrap();
+        std::fs::write(opt_dir.join("best_skill.md"), "# fresh optimization").unwrap();
+
+        let diags = parse_and_lint_fs(SKILL_WITH_TESTS, &agent_path);
+        assert!(!diags.iter().any(|d| d.rule == "stale-optimization"),
+            "should not fire when optimization is fresh: {:?}", diags.iter().map(|d| &d.rule).collect::<Vec<_>>());
     }
 }
