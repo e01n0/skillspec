@@ -9,26 +9,26 @@ skill "report-generator" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Generate a report from the provided data.
             """
         }
 
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Use professional language and clear headings.
             """
         }
 
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Include an executive summary at the top.
             """
         }
 
         step collect {
-            context(priority: 100) {
+            context(priority: critical) {
                 """
                 Gather all data points and organise them by category.
                 """
@@ -38,7 +38,7 @@ skill "report-generator" {
         step analyse {
             requires collect
 
-            context(priority: 100) {
+            context(priority: critical) {
                 """
                 Identify trends and outliers in the collected data.
                 """
@@ -48,7 +48,7 @@ skill "report-generator" {
         step format_report {
             requires analyse
 
-            context(priority: 100) {
+            context(priority: critical) {
                 """
                 Structure the report with sections, charts descriptions,
                 and key takeaways.
@@ -60,7 +60,7 @@ skill "report-generator" {
             requires format_report
             emit output
 
-            context(priority: 100) {
+            context(priority: critical) {
                 """
                 Produce the final report string. Ensure all sections
                 are present and the executive summary is accurate.

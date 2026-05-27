@@ -72,13 +72,13 @@ parameters:
 
 ## References (lazy-loaded)
 
-- **skillspec-principles** (priority: 90): The three core SkillSpec design principles and how to evaluate against them.
+- **skillspec-principles** (priority: important): The three core SkillSpec design principles and how to evaluate against them.
   - **functions-not-documents**: Skills should have typed signatures, composable steps, and testable contracts. → `./references/principle-functions.md`
   - **prose-first-class**: Natural language instructions are embraced, not escaped. Structure surrounds prose. → `./references/principle-prose.md`
   - **progressive-disclosure**: Minimal skills are 5 lines. Complexity is opt-in. No syntax tax for unused features. → `./references/principle-progressive.md`
-- **common-antipatterns** (priority: 60): Known antipatterns in SkillSpec files and how to fix them. → `./references/antipatterns.md`
+- **common-antipatterns** (priority: supplementary): Known antipatterns in SkillSpec files and how to fix them. → `./references/antipatterns.md`
 
-Review a SkillSpec .agent file for quality, correctness, and
+> **CRITICAL:** Review a SkillSpec .agent file for quality, correctness, and
 adherence to SkillSpec design principles. Produce a structured
 SkillReview with actionable feedback.
 
@@ -107,7 +107,7 @@ SkillReview with actionable feedback.
 
 *Loads reference: skillspec-principles*
 
-Read the source .agent file. Understand its purpose, structure,
+> **CRITICAL:** Read the source .agent file. Understand its purpose, structure,
 and intent. Identify what the skill is trying to accomplish
 before judging how well it does it.
 
@@ -118,7 +118,7 @@ Check:
 
 ## Step: review_context_management
 
-Evaluate how the skill manages its context budget:
+> **IMPORTANT:** Evaluate how the skill manages its context budget:
 - Are priorities meaningful (not all 100)?
 - Are conditional contexts used where appropriate?
 - Is lazy loading used for large reference material?
@@ -130,7 +130,7 @@ without lazy loading.
 
 ## Step: review_types_and_contracts
 
-Evaluate the type system usage:
+> **IMPORTANT:** Evaluate the type system usage:
 - Are custom types used where a primitive would suffice (over-engineering)?
 - Are there fields that should be typed but aren't?
 - Do pre/post contracts catch meaningful invariants?
@@ -140,7 +140,7 @@ Evaluate the type system usage:
 
 *Loads reference: common-antipatterns*
 
-Evaluate structural quality:
+> **IMPORTANT:** Evaluate structural quality:
 - Could any steps be extracted into reusable skills?
 - Are there repeated patterns that should be mixins?
 - Is the skill doing too much (should it be a pipeline instead)?
@@ -152,7 +152,7 @@ Evaluate test coverage:
 - Does the skill have tests at all?
 - Do tests cover the happy path AND edge cases?
 - Are LLM-judged assertions (resembles, satisfies) used
-  appropriately with confidence thresholds?
+appropriately with confidence thresholds?
 - Are tool mocks realistic?
 
 ## Step: review_compiled_output
@@ -168,7 +168,7 @@ the source .agent file:
 
 *Produces final output.*
 
-Synthesise all review findings into a SkillReview.
+> **IMPORTANT:** Synthesise all review findings into a SkillReview.
 
 Scoring guide:
 - 90-100: Exemplary — follows all principles, well-tested, clean

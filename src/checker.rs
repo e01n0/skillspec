@@ -368,6 +368,21 @@ impl Checker {
             }
         }
 
+        let step_names: HashSet<&str> = body.steps.iter()
+            .map(|s| s.name.as_str())
+            .chain(inherited_steps.iter().map(|s| s.as_str()))
+            .collect();
+        for ctx in &body.contexts {
+            if let Some(until) = &ctx.until {
+                if !step_names.contains(until.as_str()) {
+                    self.errors.push(SkillSpecError::UnknownStep {
+                        name: until.clone(),
+                        span: ctx.span,
+                    });
+                }
+            }
+        }
+
         if let Some(observe) = &body.observe {
             let mut seen_metrics: HashMap<String, Span> = HashMap::new();
             for metric in &observe.metrics {
@@ -1020,7 +1035,7 @@ mod tests {
         let result = check(r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API docs."
                         ref "./api.md"
                     }
@@ -1244,7 +1259,7 @@ mod tests {
         let result = check(r#"
             skill "base" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API docs."
                         ref "./api.md"
                     }
@@ -1423,7 +1438,7 @@ mod tests {
         let result = check_with_base(r#"
             skill "x" {
                 body {
-                    lazy context "ghost" (priority: 50) {
+                    lazy context "ghost" (priority: supplementary) {
                         summary "Points to nothing."
                         ref "./does-not-exist.md"
                     }
@@ -1445,7 +1460,7 @@ mod tests {
         let result = check_with_base(r#"
             skill "x" {
                 body {
-                    lazy context "catalog" (priority: 50) {
+                    lazy context "catalog" (priority: supplementary) {
                         summary "Indexed sections."
                         index {
                             section "missing" {
@@ -1592,7 +1607,7 @@ mod tests {
         let result = check(r#"
             skill "x" {
                 body {
-                    lazy context "ghost" (priority: 50) {
+                    lazy context "ghost" (priority: supplementary) {
                         summary "No base dir, no check."
                         ref "./does-not-exist.md"
                     }

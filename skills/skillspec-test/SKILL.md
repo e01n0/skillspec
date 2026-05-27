@@ -90,13 +90,13 @@ parameters:
 
 ## References (lazy-loaded)
 
-- **assertion-reference** (priority: 80): How to evaluate each assertion type — deterministic vs LLM-judged.
+- **assertion-reference** (priority: important): How to evaluate each assertion type — deterministic vs LLM-judged.
   - **deterministic**: equals, matches, >=, <=, between — evaluate mechanically, no judgment needed. → `./references/assertions-deterministic.md`
   - **llm-judged**: resembles, satisfies — require semantic judgment. Use reasoning to decide pass/fail. → `./references/assertions-llm-judged.md`
   - **quantifiers**: contains(where:), all(where:), none(where:) — iterate over collections and test predicates. → `./references/assertions-quantifiers.md`
-- **mock-reference** (priority: 60): How to apply mock declarations — fake responses, unavailable tools, simulated failures. → `./references/mock-application.md`
+- **mock-reference** (priority: supplementary): How to apply mock declarations — fake responses, unavailable tools, simulated failures. → `./references/mock-application.md`
 
-Execute test blocks from a SkillSpec .agent file. For each
+> **CRITICAL:** Execute test blocks from a SkillSpec .agent file. For each
 test case: set up the given inputs, apply mocks, simulate the
 skill's behaviour, and evaluate every assertion in the expect
 block. Report structured results.
@@ -128,7 +128,7 @@ block. Report structured results.
 
 ## Step: parse_tests
 
-Read the source .agent file. Extract all test blocks.
+> **CRITICAL:** Read the source .agent file. Extract all test blocks.
 If a specific test_name is provided, filter to just that
 test. For each test, identify:
 - given: the input values
@@ -146,30 +146,30 @@ what the skill DOES to simulate its behaviour.
 
 *Loads reference: mock-reference*
 
-For each test case, execute it:
+> **IMPORTANT:** For each test case, execute it:
 
 1. SET UP: Apply the given inputs. Apply mock declarations
-   (substitute tool responses, mark tools as unavailable).
+(substitute tool responses, mark tools as unavailable).
 
 2. SIMULATE: Reason through what the skill would produce
-   given these inputs. Walk through each step in dependency
-   order. Apply context blocks (respecting priority and
-   when guards). Use the mocked tool responses where the
-   skill would call tools.
+given these inputs. Walk through each step in dependency
+order. Apply context blocks (respecting priority and
+when guards). Use the mocked tool responses where the
+skill would call tools.
 
 3. EVALUATE: For each assertion in the expect block:
-   - Deterministic (equals, matches, >=, between):
-     Compare the simulated output mechanically. Pass or fail.
-   - LLM-judged (resembles, satisfies):
-     Use your reasoning to determine if the simulated output
-     semantically matches the assertion. Be strict.
-   - Quantifiers (contains/all/none with where):
-     Iterate over the collection and test each element.
+- Deterministic (equals, matches, >=, between):
+Compare the simulated output mechanically. Pass or fail.
+- LLM-judged (resembles, satisfies):
+Use your reasoning to determine if the simulated output
+semantically matches the assertion. Be strict.
+- Quantifiers (contains/all/none with where):
+Iterate over the collection and test each element.
 
 4. CONFIDENCE: If the test has confidence + runs, evaluate
-   the assertion multiple times with independent reasoning
-   (don't anchor on your first judgment). Count passes.
-   The test passes only if passes/runs >= confidence.
+the assertion multiple times with independent reasoning
+(don't anchor on your first judgment). Count passes.
+The test passes only if passes/runs >= confidence.
 
 Record every assertion result with actual vs expected values.
 
@@ -177,14 +177,14 @@ Record every assertion result with actual vs expected values.
 
 *Produces final output.*
 
-Produce the TestResult:
+> **IMPORTANT:** Produce the TestResult:
 - Aggregate pass/fail counts
 - Include per-test-case results with every assertion
 - For failed assertions, include actual value, expected
-  value, and a clear explanation of why it failed
+value, and a clear explanation of why it failed
 - Write a one-line summary: "3/3 passed" or
-  "2/3 passed — 'catches injection' failed: output.findings
-  was empty (expected contains(where: .category == 'security'))"
+"2/3 passed — 'catches injection' failed: output.findings
+was empty (expected contains(where: .category == 'security'))"
 
 If verbose mode is on, include the full simulated output
 for each test case, not just the assertion results.

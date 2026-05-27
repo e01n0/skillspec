@@ -12,7 +12,7 @@ skill "greeter" {
     }
 
     body {
-        context(priority: 90) { "You generate greetings." }
+        context(priority: important) { "You generate greetings." }
 
         step greet {
             emit output

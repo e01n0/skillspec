@@ -158,24 +158,24 @@ skillspec deps greeter.agent
 
 ## Context
 
-Every context block takes an optional `priority` (0 to 100), `when` guard, and `decay` rate. Higher priority survives trimming.
+Every context block takes an optional `priority` flag (`critical`, `important`, `supplementary`, `optional`), `when` guard, `decay` rate, and `until` lifecycle. Higher priority survives trimming and gets annotated in compiled output.
 
 ```agent
-context(priority: 100) {
+context(priority: critical) {
   """
   You are a multilingual greeting assistant.
   Produce warm, culturally appropriate greetings.
   """
 }
 
-context(priority: 80, when: input.formal) {
+context(priority: important, when: input.formal) {
   """
   The user has requested a formal greeting.
   Use appropriate honorifics and register.
   """
 }
 
-context(priority: 60, decay: 0.1) {
+context(priority: supplementary, decay: 0.1) {
   """
   Remember: the user's name is provided in the input.
   Use it naturally. Do not repeat it excessively.
@@ -188,12 +188,12 @@ context(priority: 60, decay: 0.1) {
 For large reference material. Stays on disk until a step pulls it in with `load`.
 
 ```agent
-lazy context "style-guide" (priority: 40) {
+lazy context "style-guide" (priority: supplementary) {
   summary "Tone and vocabulary conventions for greetings."
   ref "./references/style-guide.md"
 }
 
-lazy context "language-phrases" (priority: 35) {
+lazy context "language-phrases" (priority: supplementary) {
   summary "Common greeting phrases by language."
   index {
     section "romance" {
@@ -222,14 +222,14 @@ skillspec budget greeter.agent
 
 ### Priority ranges
 
-| Priority | Use for |
+| Flag | Use for |
 |---|---|
-| 90-100 | Core instructions, never drop |
-| 70-89 | Constraints and focus areas |
-| 40-69 | Reference material, style guides |
-| 10-39 | Nice-to-have background |
+| `critical` | Core identity instructions — never trimmed, annotated in output. Max 2 per skill. |
+| `important` | Key constraints and focus areas — annotated, survives most trimming. |
+| `supplementary` | Reference material, style guides — default tier, no annotation. |
+| `optional` | Nice-to-have background — first to be trimmed, marked as optional in output. |
 
-Don't assign everything `priority: 100`. It defeats the system.
+Don't mark everything `priority: critical`. It defeats the system — emphasis loses effect when overused. The `critical-overuse` lint warns if more than 2 blocks share the `critical` flag.
 
 ---
 

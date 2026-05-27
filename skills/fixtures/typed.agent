@@ -38,7 +38,7 @@ skill "health-checker" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Check the health of a service by collecting the specified
             metrics and producing a structured health report.
@@ -46,7 +46,7 @@ skill "health-checker" {
         }
 
         step probe {
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Send a health check request to the service URL.
                 Collect each requested metric. Respect the timeout.
@@ -57,7 +57,7 @@ skill "health-checker" {
         step evaluate {
             requires probe
 
-            context(priority: 80) {
+            context(priority: important) {
                 """
                 Compare each collected metric against its threshold.
                 Determine the overall service status:

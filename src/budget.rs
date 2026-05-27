@@ -136,7 +136,7 @@ pub fn estimate_budget(file: &SourceFile) -> String {
 
 #[derive(Debug, Clone)]
 pub struct TrimmedContext {
-    pub priority: Option<u8>,
+    pub priority: Option<Priority>,
     pub snippet: String,
     pub estimated_tokens: usize,
 }
@@ -151,9 +151,11 @@ pub fn trim_to_budget(contexts: &mut Vec<ContextBlock>, budget: usize) -> Vec<Tr
     while total_tokens(contexts) > budget && !contexts.is_empty() {
         let lowest_idx = contexts.iter()
             .enumerate()
-            .min_by_key(|(_, c)| c.priority.unwrap_or(0))
-            .map(|(i, _)| i)
-            .unwrap();
+            .filter(|(_, c)| c.priority != Some(Priority::Critical))
+            .min_by_key(|(_, c)| c.priority.unwrap_or(Priority::Supplementary).rank())
+            .map(|(i, _)| i);
+
+        let Some(lowest_idx) = lowest_idx else { break };
 
         let removed = contexts.remove(lowest_idx);
         let snippet = if removed.text.len() > 60 {
@@ -204,7 +206,7 @@ mod tests {
         let source = r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API reference documentation."
                         ref "./api.md"
                     }
@@ -221,11 +223,12 @@ mod tests {
         assert!(report.contains("on demand"));
     }
 
-    fn make_context(text: &str, priority: Option<u8>) -> ContextBlock {
+    fn make_context(text: &str, priority: Option<Priority>) -> ContextBlock {
         ContextBlock {
             priority,
             when: None,
             decay: None,
+            until: None,
             text: text.to_string(),
             span: crate::token::Span { start: 0, end: 0, line: 0, col: 0 },
         }
@@ -234,35 +237,35 @@ mod tests {
     #[test]
     fn trim_drops_lowest_priority_first() {
         let mut contexts = vec![
-            make_context(&"h".repeat(80), Some(100)),  // 20 tokens
-            make_context(&"m".repeat(800), Some(50)),   // 200 tokens
-            make_context(&"l".repeat(800), Some(30)),   // 200 tokens
+            make_context(&"h".repeat(80), Some(Priority::Critical)),      // 20 tokens
+            make_context(&"m".repeat(800), Some(Priority::Supplementary)), // 200 tokens
+            make_context(&"l".repeat(800), Some(Priority::Optional)),      // 200 tokens
         ];
         let trimmed = trim_to_budget(&mut contexts, 250);
         assert_eq!(contexts.len(), 2, "should keep 2 contexts");
-        assert!(contexts.iter().all(|c| c.priority != Some(30)), "priority 30 should be dropped");
+        assert!(contexts.iter().all(|c| c.priority != Some(Priority::Optional)), "optional should be dropped");
         assert_eq!(trimmed.len(), 1);
-        assert_eq!(trimmed[0].priority, Some(30));
+        assert_eq!(trimmed[0].priority, Some(Priority::Optional));
     }
 
     #[test]
     fn trim_drops_multiple_until_budget_met() {
         let mut contexts = vec![
-            make_context(&"a".repeat(400), Some(100)),  // 100 tokens
-            make_context(&"b".repeat(400), Some(80)),   // 100 tokens
-            make_context(&"c".repeat(400), Some(60)),   // 100 tokens
-            make_context(&"d".repeat(400), Some(40)),   // 100 tokens
+            make_context(&"a".repeat(400), Some(Priority::Critical)),       // 100 tokens
+            make_context(&"b".repeat(400), Some(Priority::Important)),      // 100 tokens
+            make_context(&"c".repeat(400), Some(Priority::Supplementary)),  // 100 tokens
+            make_context(&"d".repeat(400), Some(Priority::Optional)),       // 100 tokens
         ];
         let trimmed = trim_to_budget(&mut contexts, 100);
         assert!(estimate_context_tokens(&contexts) <= 100);
-        assert!(trimmed.len() >= 3, "should drop at least 3 to reach 100 tokens");
+        assert!(trimmed.len() >= 2, "should drop at least 2 to reach 100 tokens (critical is protected)");
     }
 
     #[test]
     fn trim_reports_what_was_dropped() {
         let mut contexts = vec![
-            make_context(&"keep".repeat(20), Some(90)),
-            make_context(&"drop-me", Some(10)),
+            make_context(&"keep".repeat(20), Some(Priority::Important)),
+            make_context(&"drop-me", Some(Priority::Optional)),
         ];
         let trimmed = trim_to_budget(&mut contexts, 10);
         assert!(!trimmed.is_empty());
@@ -273,11 +276,22 @@ mod tests {
     #[test]
     fn trim_under_budget_no_changes() {
         let mut contexts = vec![
-            make_context("short", Some(90)),
+            make_context("short", Some(Priority::Important)),
         ];
         let trimmed = trim_to_budget(&mut contexts, 1000);
         assert!(trimmed.is_empty());
         assert_eq!(contexts.len(), 1);
+    }
+
+    #[test]
+    fn trim_never_drops_critical() {
+        let mut contexts = vec![
+            make_context(&"a".repeat(800), Some(Priority::Critical)),  // 200 tokens
+            make_context(&"b".repeat(800), Some(Priority::Critical)),  // 200 tokens
+        ];
+        let trimmed = trim_to_budget(&mut contexts, 50);
+        assert_eq!(contexts.len(), 2, "critical contexts should never be trimmed");
+        assert!(trimmed.is_empty());
     }
 
     #[test]

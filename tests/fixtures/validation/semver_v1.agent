@@ -12,7 +12,7 @@ skill "api-skill" {
     }
 
     body {
-        context(priority: 90) { "You are a search engine." }
+        context(priority: important) { "You are a search engine." }
 
         step search {
             context { "Search for the query." }

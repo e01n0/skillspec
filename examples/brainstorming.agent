@@ -68,30 +68,30 @@ skill "brainstorming" {
         note: "Simple features get simple designs — no over-architecting"
       }
     }
-    context(priority: 100) {
+    context(priority: critical) {
       """
       Help the user turn a raw idea into a well-formed design.
       Explore the problem space before jumping to solutions.
       Ask clarifying questions one at a time.
       """
     }
-    context(priority: 75, when: input.constraints) {
+    context(priority: important, when: input.constraints) {
       """
       The user has specified constraints. Respect these as hard
       boundaries — do not propose solutions that violate them.
       """
     }
-    context(priority: 70, when: input.audience) {
+    context(priority: supplementary, when: input.audience) {
       """
       Consider the target audience when making design decisions.
       A tool for developers needs different UX than one for end users.
       """
     }
-    lazy context "patterns-catalog" (priority: 40) {
+    lazy context "patterns-catalog" (priority: supplementary) {
       summary "Common design patterns and when to use them."
       ref "./references/design-patterns.md"
     }
-    lazy context "past-decisions" (priority: 35) {
+    lazy context "past-decisions" (priority: supplementary) {
       summary "Previous design decisions and their outcomes."
       index {
         section "architecture" {
@@ -105,7 +105,7 @@ skill "brainstorming" {
       }
     }
     step explore {
-      context(priority: 90) {
+      context(priority: important) {
         """
         First, understand the problem deeply. Ask one clarifying
         question at a time. Do not propose solutions yet.
@@ -117,7 +117,7 @@ skill "brainstorming" {
     step propose {
       requires explore
       load "patterns-catalog"
-      context(priority: 80) {
+      context(priority: important) {
         """
         Now propose 2-3 approaches with clear tradeoffs.
         Lead with your recommendation and explain why.
@@ -128,7 +128,7 @@ skill "brainstorming" {
     step refine {
       requires propose
       load "past-decisions"
-      context(priority: 70) {
+      context(priority: supplementary) {
         """
         Refine the chosen approach. Check it against past decisions
         for consistency. Identify open questions that need answers

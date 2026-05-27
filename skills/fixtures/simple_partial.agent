@@ -13,7 +13,7 @@ skill "data-summary" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Summarise the provided data records. Iterate over each record,
             extract key metrics, and produce a total count alongside a

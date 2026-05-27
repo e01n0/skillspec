@@ -93,11 +93,46 @@ pub struct Body {
     pub source_order: Vec<BodyItemRef>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum Priority {
+    Optional,
+    Supplementary,
+    Important,
+    Critical,
+}
+
+impl Priority {
+    pub fn rank(self) -> u8 {
+        match self {
+            Priority::Optional => 10,
+            Priority::Supplementary => 40,
+            Priority::Important => 75,
+            Priority::Critical => 100,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Priority::Optional => "optional",
+            Priority::Supplementary => "supplementary",
+            Priority::Important => "important",
+            Priority::Critical => "critical",
+        }
+    }
+}
+
+impl std::fmt::Display for Priority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ContextBlock {
-    pub priority: Option<u8>,
+    pub priority: Option<Priority>,
     pub when: Option<Expr>,
     pub decay: Option<f64>,
+    pub until: Option<String>,
     pub text: String,
     pub span: Span,
 }
@@ -178,7 +213,7 @@ pub enum BinOp {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LazyContext {
     pub name: String,
-    pub priority: Option<u8>,
+    pub priority: Option<Priority>,
     pub summary: String,
     pub content: LazyContent,
     pub span: Span,

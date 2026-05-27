@@ -180,8 +180,8 @@ impl SkillMdCompiler {
             all_contexts.extend(mixin.contexts.iter());
         }
         all_contexts.sort_by(|a, b| {
-            let pa = a.priority.unwrap_or(0);
-            let pb = b.priority.unwrap_or(0);
+            let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+            let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
             pb.cmp(&pa)
         });
 
@@ -232,6 +232,19 @@ impl SkillMdCompiler {
         for step in sorted_steps {
             out.push_str(&format!("## Step: {}\n\n", step.name));
 
+            let expired: Vec<&&ContextBlock> = all_contexts.iter()
+                .filter(|c| c.until.as_deref() == Some(step.name.as_str()))
+                .collect();
+            if !expired.is_empty() {
+                out.push_str("*The following setup context is no longer active after this step:*\n\n");
+                for ctx in &expired {
+                    let snippet = ctx.text.trim();
+                    let snippet = if snippet.len() > 80 { &snippet[..80] } else { snippet };
+                    out.push_str(&format!("- ~{}~\n", snippet));
+                }
+                out.push('\n');
+            }
+
             if let Some(use_call) = &step.use_call {
                 out.push_str(&format!("*Uses: {}*\n\n", use_call.skill_name));
                 out.push_str(&self.expand_use_target(use_call, source, &mut visited));
@@ -247,8 +260,8 @@ impl SkillMdCompiler {
 
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
             step_contexts.sort_by(|a, b| {
-                let pa = a.priority.unwrap_or(0);
-                let pb = b.priority.unwrap_or(0);
+                let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+                let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
                 pb.cmp(&pa)
             });
 
@@ -446,8 +459,31 @@ impl SkillMdCompiler {
             out.push_str(&format!("*Decay: {}*\n\n", decay));
         }
 
-        out.push_str(&self.dedent(&ctx.text));
-        out.push_str("\n\n");
+        if let Some(until) = &ctx.until {
+            out.push_str(&format!("*Active until step `{}` is complete.*\n\n", until));
+        }
+
+        match ctx.priority {
+            Some(Priority::Critical) => {
+                out.push_str("> **CRITICAL:** ");
+                out.push_str(&self.dedent(&ctx.text));
+                out.push_str("\n\n");
+            }
+            Some(Priority::Important) => {
+                out.push_str("> **IMPORTANT:** ");
+                out.push_str(&self.dedent(&ctx.text));
+                out.push_str("\n\n");
+            }
+            Some(Priority::Optional) => {
+                out.push_str("*Optional context:* ");
+                out.push_str(&self.dedent(&ctx.text));
+                out.push_str("\n\n");
+            }
+            _ => {
+                out.push_str(&self.dedent(&ctx.text));
+                out.push_str("\n\n");
+            }
+        }
 
         out
     }
@@ -480,7 +516,7 @@ impl SkillMdCompiler {
         // Inline target's body-level contexts
         let mut body_ctxs: Vec<&ContextBlock> = target.body.contexts.iter().collect();
         body_ctxs.sort_by(|a, b| {
-            b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+            b.priority.unwrap_or(Priority::Supplementary).rank().cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
         });
         for ctx in &body_ctxs {
             out.push_str(&self.emit_context_with_binding(ctx, &binding));
@@ -506,7 +542,7 @@ impl SkillMdCompiler {
 
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
             step_contexts.sort_by(|a, b| {
-                b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0))
+                b.priority.unwrap_or(Priority::Supplementary).rank().cmp(&a.priority.unwrap_or(Priority::Supplementary).rank())
             });
             for ctx in &step_contexts {
                 out.push_str(&self.emit_context_with_binding(ctx, &binding));
@@ -696,8 +732,8 @@ impl SkillMdCompiler {
         // Sort by priority desc
         let mut sorted: Vec<&LazyContext> = lazy_contexts.iter().collect();
         sorted.sort_by(|a, b| {
-            let pa = a.priority.unwrap_or(0);
-            let pb = b.priority.unwrap_or(0);
+            let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
+            let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
             pb.cmp(&pa)
         });
 
@@ -1187,7 +1223,7 @@ impl SkillMdCompiler {
 
         let ctx = all_contexts
             .iter()
-            .max_by_key(|c| c.priority.unwrap_or(0))
+            .max_by_key(|c| c.priority.unwrap_or(Priority::Supplementary).rank())
             .copied()
             .or_else(|| {
                 ancestors
@@ -1195,7 +1231,7 @@ impl SkillMdCompiler {
                     .flat_map(|a| a.body.steps.iter())
                     .chain(skill.body.steps.iter())
                     .flat_map(|s| s.contexts.iter())
-                    .max_by_key(|c| c.priority.unwrap_or(0))
+                    .max_by_key(|c| c.priority.unwrap_or(Priority::Supplementary).rank())
             })?;
 
         let dedented = self.dedent(&ctx.text);
@@ -1340,7 +1376,7 @@ mod tests {
         let md = compile(r#"
             skill "test" {
                 body {
-                    context(priority: 100) { "You are a reviewer." }
+                    context(priority: critical) { "You are a reviewer." }
                     step analyze {
                         context { "Analyze the code." }
                     }
@@ -1364,8 +1400,8 @@ mod tests {
         let md = compile(r#"
             skill "test" {
                 body {
-                    context(priority: 50) { "Low priority." }
-                    context(priority: 90) { "High priority." }
+                    context(priority: supplementary) { "Low priority." }
+                    context(priority: important) { "High priority." }
                 }
             }
         "#);
@@ -1379,7 +1415,7 @@ mod tests {
         let md = compile(r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API reference."
                         ref "./api.md"
                     }
@@ -1550,7 +1586,7 @@ mod tests {
         let md = compile(r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API docs."
                         ref "./api.md"
                     }
@@ -1577,8 +1613,8 @@ mod tests {
             skill "x" {
                 input { focus?: string }
                 body {
-                    context(priority: 100) { "Always included." }
-                    context(priority: 80, when: input.focus) {
+                    context(priority: critical) { "Always included." }
+                    context(priority: important, when: input.focus) {
                         "Focus on the requested area."
                     }
                 }
@@ -1603,7 +1639,7 @@ mod tests {
         let md = compile(r#"
             skill "x" {
                 body {
-                    context(priority: 90, decay: 0.5) { "Fading instruction." }
+                    context(priority: important, decay: 0.5) { "Fading instruction." }
                 }
             }
         "#);
@@ -1625,7 +1661,7 @@ mod tests {
                     assert input.files != [] message "No files"
                 }
                 body {
-                    context(priority: 100) { "Base instructions." }
+                    context(priority: critical) { "Base instructions." }
                     step analyze {
                         context { "Analyze." }
                     }
@@ -1634,7 +1670,7 @@ mod tests {
             skill "child" extends "base" {
                 input { severity?: string }
                 body {
-                    context(priority: 90) { "Child-specific." }
+                    context(priority: important) { "Child-specific." }
                     step report {
                         requires analyze
                         emit output
@@ -1665,7 +1701,7 @@ mod tests {
             skill "grandparent" {
                 input { x: string }
                 body {
-                    context(priority: 100) { "Grandparent context." }
+                    context(priority: critical) { "Grandparent context." }
                     step gp_step {
                         context { "GP step." }
                     }
@@ -1674,7 +1710,7 @@ mod tests {
             skill "parent" extends "grandparent" {
                 input { y: string }
                 body {
-                    context(priority: 90) { "Parent context." }
+                    context(priority: important) { "Parent context." }
                     step p_step {
                         context { "Parent step." }
                     }
@@ -1683,7 +1719,7 @@ mod tests {
             skill "child" extends "parent" {
                 input { z: string }
                 body {
-                    context(priority: 80) { "Child context." }
+                    context(priority: important) { "Child context." }
                     step c_step {
                         requires gp_step
                         context { "Child step." }
@@ -1778,7 +1814,7 @@ mod tests {
         let input = r#"
             skill "base" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "Base docs."
                         ref "./base-api.md"
                     }
@@ -1787,7 +1823,7 @@ mod tests {
             }
             skill "child" extends "base" {
                 body {
-                    lazy context "docs" (priority: 80) {
+                    lazy context "docs" (priority: important) {
                         summary "Child docs."
                         ref "./child-api.md"
                     }
@@ -1974,12 +2010,12 @@ mod tests {
     fn mixin_include_injects_contexts() {
         let input = r#"
             mixin safety {
-                context(priority: 95) { "Always check for safety issues." }
+                context(priority: critical) { "Always check for safety issues." }
             }
             skill "x" {
                 include safety
                 body {
-                    context(priority: 80) { "Review code." }
+                    context(priority: important) { "Review code." }
                 }
             }
         "#;
@@ -2039,14 +2075,14 @@ mod tests {
         let md = compile_named(r#"
             skill "base" {
                 body {
-                    context(priority: 100) {
+                    context(priority: critical) {
                         "Review code for bugs and security issues."
                     }
                 }
             }
             skill "child" extends "base" {
                 body {
-                    context(priority: 60, when: input.focus) {
+                    context(priority: supplementary, when: input.focus) {
                         "Focus on the specified severity."
                     }
                 }
@@ -2068,11 +2104,11 @@ mod tests {
             skill "sub-skill" {
                 body {
                     step alpha {
-                        context(priority: 90) { "Alpha instruction." }
+                        context(priority: important) { "Alpha instruction." }
                     }
                     step beta {
                         requires alpha
-                        context(priority: 80) { "Beta instruction." }
+                        context(priority: important) { "Beta instruction." }
                     }
                 }
             }
@@ -2133,7 +2169,7 @@ mod tests {
                 }
                 body {
                     step scan {
-                        context(priority: 80, when: input.paths) {
+                        context(priority: important, when: input.paths) {
                             "Scan the provided paths for issues."
                         }
                     }
@@ -2170,7 +2206,7 @@ mod tests {
                 }
                 body {
                     step scan {
-                        context(priority: 80, when: input.files) {
+                        context(priority: important, when: input.files) {
                             "Scan input.files for issues."
                         }
                     }
@@ -2306,8 +2342,8 @@ mod tests {
             skill "target" {
                 body {
                     step work {
-                        context(priority: 70) { "Low priority." }
-                        context(priority: 90) { "High priority." }
+                        context(priority: supplementary) { "Low priority." }
+                        context(priority: important) { "High priority." }
                     }
                 }
             }

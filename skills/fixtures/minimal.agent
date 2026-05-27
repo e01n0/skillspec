@@ -8,7 +8,7 @@ skill "greet" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             "Produce a warm, friendly greeting for the given name."
         }
 

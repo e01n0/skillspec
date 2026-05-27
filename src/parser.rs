@@ -299,6 +299,30 @@ impl Parser {
 
     // ── Context block ─────────────────────────────────────────────────
 
+    fn parse_priority_flag(&mut self) -> Result<Priority> {
+        let span = self.peek_span();
+        if matches!(self.peek_kind(), TokenKind::IntLit(_)) {
+            let val = self.expect_int_lit()?;
+            return Err(SkillSpecError::UnexpectedToken {
+                found: val.to_string(),
+                expected: "priority flag (critical, important, supplementary, or optional) — numeric priorities are no longer supported".to_string(),
+                span,
+            });
+        }
+        let flag = self.expect_ident()?;
+        match flag.as_str() {
+            "critical" => Ok(Priority::Critical),
+            "important" => Ok(Priority::Important),
+            "supplementary" => Ok(Priority::Supplementary),
+            "optional" => Ok(Priority::Optional),
+            _ => Err(SkillSpecError::UnexpectedToken {
+                found: flag,
+                expected: "critical, important, supplementary, or optional".to_string(),
+                span,
+            }),
+        }
+    }
+
     fn parse_context_block(&mut self) -> Result<ContextBlock> {
         let span = self.peek_span();
         self.expect(TokenKind::Context)?;
@@ -306,8 +330,9 @@ impl Parser {
         let mut priority = None;
         let mut when = None;
         let mut decay = None;
+        let mut until = None;
 
-        // Optional parameters in parens: context(priority: N, when: expr, decay: N)
+        // Optional parameters in parens: context(priority: flag, when: expr, decay: N, until: step)
         if self.peek_kind() == TokenKind::LParen {
             self.advance();
             while self.peek_kind() != TokenKind::RParen {
@@ -315,7 +340,7 @@ impl Parser {
                 self.expect(TokenKind::Colon)?;
                 match param_name.as_str() {
                     "priority" => {
-                        priority = Some(self.expect_int_lit()? as u8);
+                        priority = Some(self.parse_priority_flag()?);
                     }
                     "when" => {
                         when = Some(self.parse_expr()?);
@@ -323,10 +348,13 @@ impl Parser {
                     "decay" => {
                         decay = Some(self.expect_float_lit()?);
                     }
+                    "until" => {
+                        until = Some(self.expect_ident()?);
+                    }
                     _ => {
                         return Err(SkillSpecError::UnexpectedToken {
                             found: param_name,
-                            expected: "priority, when, or decay".to_string(),
+                            expected: "priority, when, decay, or until".to_string(),
                             span,
                         });
                     }
@@ -346,6 +374,7 @@ impl Parser {
             priority,
             when,
             decay,
+            until,
             text,
             span,
         })
@@ -836,7 +865,7 @@ impl Parser {
                 self.expect(TokenKind::Colon)?;
                 match param_name.as_str() {
                     "priority" => {
-                        priority = Some(self.expect_int_lit()? as u8);
+                        priority = Some(self.parse_priority_flag()?);
                     }
                     _ => {
                         return Err(SkillSpecError::UnexpectedToken {
@@ -2429,7 +2458,7 @@ mod tests {
         let file = parse(r#"
             skill "x" {
                 body {
-                    context(priority: 80, decay: 0.5) {
+                    context(priority: important, decay: 0.5) {
                         """
                         You are an expert reviewer.
                         Focus on security issues.
@@ -2439,7 +2468,7 @@ mod tests {
             }
         "#);
         let ctx = &file.skills[0].body.contexts[0];
-        assert_eq!(ctx.priority, Some(80));
+        assert_eq!(ctx.priority, Some(Priority::Important));
         assert_eq!(ctx.decay, Some(0.5));
     }
 
@@ -2487,7 +2516,7 @@ mod tests {
         let file = parse(r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API docs."
                         ref "./api.md"
                     }

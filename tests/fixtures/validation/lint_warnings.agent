@@ -9,15 +9,15 @@ skill "lint-target" {
 
     body {
         // Rule 1: uniform-priority — all 3 contexts at same priority
-        context(priority: 50) { "First context block." }
-        context(priority: 50) { "Second context block." }
-        context(priority: 50) { "Third context block." }
+        context(priority: supplementary) { "First context block." }
+        context(priority: supplementary) { "Second context block." }
+        context(priority: supplementary) { "Third context block." }
 
         // Rule 3: when-guard-always-true — guard on required field 'files'
         context(when: input.files) { "This guard is always true." }
 
         // Rule 6: unused-lazy-context — declared but never loaded
-        lazy context "unused-docs" (priority: 40) {
+        lazy context "unused-docs" (priority: supplementary) {
             summary "These docs are never loaded."
             "Inline content that goes to waste."
         }

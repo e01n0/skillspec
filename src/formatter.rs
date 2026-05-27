@@ -417,13 +417,16 @@ impl Formatter {
     fn emit_context_block(&mut self, ctx: &ContextBlock) {
         let mut params = Vec::new();
         if let Some(p) = ctx.priority {
-            params.push(format!("priority: {}", p));
+            params.push(format!("priority: {}", p.label()));
         }
         if let Some(when) = &ctx.when {
             params.push(format!("when: {}", expr_to_string(when)));
         }
         if let Some(decay) = ctx.decay {
             params.push(format!("decay: {}", format_f64(decay)));
+        }
+        if let Some(until) = &ctx.until {
+            params.push(format!("until: {}", until));
         }
 
         let params_str = if params.is_empty() {
@@ -441,7 +444,7 @@ impl Formatter {
 
     fn emit_lazy_context(&mut self, lc: &LazyContext) {
         let priority = if let Some(p) = lc.priority {
-            format!(" (priority: {})", p)
+            format!(" (priority: {})", p.label())
         } else {
             String::new()
         };
@@ -889,7 +892,7 @@ mod tests {
                 input { query: string }
                 output { result: string }
                 body {
-                    context(priority: 80) { "You are helpful." }
+                    context(priority: important) { "You are helpful." }
                     step main {
                         emit output
                         context { "Answer the query." }
@@ -1044,11 +1047,11 @@ mod tests {
         let input = r#"
             skill "x" {
                 body {
-                    context(priority: 100) { "Top-level instruction." }
+                    context(priority: critical) { "Top-level instruction." }
                     step explore {
                         context { "Explore." }
                     }
-                    context(priority: 75, when: input.constraints) { "Constraint context." }
+                    context(priority: important, when: input.constraints) { "Constraint context." }
                     step propose {
                         context { "Propose." }
                     }

@@ -101,9 +101,9 @@ fn priority_ordering_in_output() {
     let md = full_pipeline(r#"
         skill "test" {
             body {
-                context(priority: 30) { "Low." }
-                context(priority: 95) { "High." }
-                context(priority: 60) { "Medium." }
+                context(priority: optional) { "Low." }
+                context(priority: critical) { "High." }
+                context(priority: supplementary) { "Medium." }
             }
         }
     "#);
@@ -119,8 +119,8 @@ fn conditional_context_preserved() {
         skill "test" {
             input { focus?: string }
             body {
-                context(priority: 90) { "Always here." }
-                context(priority: 70, when: input.focus) { "Only when focused." }
+                context(priority: important) { "Always here." }
+                context(priority: supplementary, when: input.focus) { "Only when focused." }
             }
         }
     "#);
@@ -517,7 +517,7 @@ fn extends_with_inherited_requires_full_pipeline() {
         skill "base" {
             input { files: string[] }
             body {
-                lazy context "docs" (priority: 50) {
+                lazy context "docs" (priority: supplementary) {
                     summary "API docs."
                     ref "./api.md"
                 }
@@ -638,9 +638,9 @@ fn budget_flag_trims_output() {
     let source = r#"
         skill "big" {
             body {
-                context(priority: 100) { "High priority context that must survive the trim." }
-                context(priority: 50) { "Medium priority text that might get cut depending on budget." }
-                context(priority: 10) { "Low priority filler that should be the first to go when budget is tight." }
+                context(priority: critical) { "High priority context that must survive the trim." }
+                context(priority: supplementary) { "Medium priority text that might get cut depending on budget." }
+                context(priority: optional) { "Low priority filler that should be the first to go when budget is tight." }
             }
         }
     "#;
@@ -653,7 +653,7 @@ fn budget_flag_trims_output() {
 
     assert!(!trimmed.is_empty(), "should have trimmed at least one context");
     assert!(after <= before / 2, "after trimming should be within budget: {} <= {}", after, before / 2);
-    assert!(trimmed[0].priority == Some(10), "lowest priority should be trimmed first");
+    assert!(trimmed[0].priority == Some(skillspec_core::ast::Priority::Optional), "lowest priority should be trimmed first");
 }
 
 #[test]
@@ -661,7 +661,7 @@ fn budget_does_not_trim_step_contexts() {
     let source = r#"
         skill "x" {
             body {
-                context(priority: 50) { "Body context that can be trimmed." }
+                context(priority: supplementary) { "Body context that can be trimmed." }
                 step main {
                     context { "Step context that should not be trimmed by budget." }
                 }

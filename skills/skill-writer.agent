@@ -78,14 +78,14 @@ skill "skill-writer" {
         note: "Flag violations of progressive disclosure"
       }
     }
-    context(priority: 100) {
+    context(priority: critical) {
       """
       Review a SkillSpec .agent file for quality, correctness, and
       adherence to SkillSpec design principles. Produce a structured
       SkillReview with actionable feedback.
       """
     }
-    lazy context "skillspec-principles" (priority: 90) {
+    lazy context "skillspec-principles" (priority: important) {
       summary "The three core SkillSpec design principles and how to evaluate against them."
       index {
         section "functions-not-documents" {
@@ -102,13 +102,13 @@ skill "skill-writer" {
         }
       }
     }
-    lazy context "common-antipatterns" (priority: 60) {
+    lazy context "common-antipatterns" (priority: supplementary) {
       summary "Known antipatterns in SkillSpec files and how to fix them."
       ref "./references/antipatterns.md"
     }
     step parse_and_understand {
       load "skillspec-principles"
-      context(priority: 95) {
+      context(priority: critical) {
         """
         Read the source .agent file. Understand its purpose, structure,
         and intent. Identify what the skill is trying to accomplish
@@ -124,7 +124,7 @@ skill "skill-writer" {
     step review_context_management {
       requires parse_and_understand
       when input.review_focus == "all" || input.review_focus == "context-management"
-      context(priority: 85) {
+      context(priority: important) {
         """
         Evaluate how the skill manages its context budget:
         - Are priorities meaningful (not all 100)?
@@ -141,7 +141,7 @@ skill "skill-writer" {
     step review_types_and_contracts {
       requires parse_and_understand
       when input.review_focus == "all" || input.review_focus == "types"
-      context(priority: 80) {
+      context(priority: important) {
         """
         Evaluate the type system usage:
         - Are custom types used where a primitive would suffice (over-engineering)?
@@ -155,7 +155,7 @@ skill "skill-writer" {
       requires parse_and_understand
       when input.review_focus == "all" || input.review_focus == "structure"
       load "common-antipatterns"
-      context(priority: 75) {
+      context(priority: important) {
         """
         Evaluate structural quality:
         - Could any steps be extracted into reusable skills?
@@ -168,7 +168,7 @@ skill "skill-writer" {
     step review_testing {
       requires parse_and_understand
       when input.review_focus == "all" || input.review_focus == "testing"
-      context(priority: 70) {
+      context(priority: supplementary) {
         """
         Evaluate test coverage:
         - Does the skill have tests at all?
@@ -182,7 +182,7 @@ skill "skill-writer" {
     step review_compiled_output {
       requires parse_and_understand
       when input.compiled_output
-      context(priority: 65) {
+      context(priority: supplementary) {
         """
         If compiled SKILL.md output is provided, compare it against
         the source .agent file:
@@ -196,7 +196,7 @@ skill "skill-writer" {
     step synthesise_review {
       requires review_context_management | review_types_and_contracts | review_composition | review_testing | review_compiled_output
       emit output
-      context(priority: 90) {
+      context(priority: important) {
         """
         Synthesise all review findings into a SkillReview.
         

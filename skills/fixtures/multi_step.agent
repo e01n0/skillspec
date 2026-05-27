@@ -15,7 +15,7 @@ skill "research-report" {
     }
 
     body {
-        context(priority: 100) {
+        context(priority: critical) {
             """
             Research the given topic and produce a structured report
             with multiple sections and a conclusion.
@@ -23,7 +23,7 @@ skill "research-report" {
         }
 
         step gather {
-            context(priority: 90) {
+            context(priority: important) {
                 """
                 Collect information and key facts about the topic.
                 Breadth of research should match the requested depth.
@@ -34,7 +34,7 @@ skill "research-report" {
         step organise {
             requires gather
 
-            context(priority: 80) {
+            context(priority: important) {
                 """
                 Structure the gathered information into logical sections.
                 Each section should cover one aspect of the topic.
@@ -46,7 +46,7 @@ skill "research-report" {
             requires organise
             emit output
 
-            context(priority: 70) {
+            context(priority: supplementary) {
                 """
                 Write the conclusion by synthesising the organised sections.
                 The conclusion should answer the original research question.

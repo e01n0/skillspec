@@ -14,7 +14,7 @@ skill "api-skill" {
     }
 
     body {
-        context(priority: 90) { "You are an advanced search engine with ranking." }
+        context(priority: important) { "You are an advanced search engine with ranking." }
 
         step search {
             context { "Search for the query with filters." }

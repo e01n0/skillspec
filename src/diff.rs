@@ -313,16 +313,18 @@ fn diff_contexts(
         let ca = &a_ctxs[i];
         let cb = &b_ctxs[i];
         let when_changed = !expr_eq(&ca.when, &cb.when);
-        if ca.text != cb.text || ca.priority != cb.priority || ca.decay != cb.decay || when_changed
+        if ca.text != cb.text || ca.priority != cb.priority || ca.decay != cb.decay || ca.until != cb.until || when_changed
         {
             report.add(
                 ChangeKind::Modified,
                 format!("{}.context[{}]", path_prefix, i),
                 format!(
-                    "context block {} changed (priority: {:?}→{:?}, text changed: {}, when changed: {})",
+                    "context block {} changed (priority: {:?}→{:?}, until: {:?}→{:?}, text changed: {}, when changed: {})",
                     i,
                     ca.priority,
                     cb.priority,
+                    ca.until,
+                    cb.until,
                     ca.text != cb.text,
                     when_changed
                 ),
@@ -1133,8 +1135,8 @@ mod tests {
 
     #[test]
     fn detects_modified_context() {
-        let a = parse(r#"skill "x" { body { context(priority: 90) { "Original." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 50) { "Changed." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important) { "Original." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: supplementary) { "Changed." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(report
             .changes
@@ -1340,8 +1342,8 @@ mod tests {
 
     #[test]
     fn detects_when_guard_removed() {
-        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 80) { "Focus area." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: important) { "Focus area." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(
             report.changes.iter().any(|c|
@@ -1353,8 +1355,8 @@ mod tests {
 
     #[test]
     fn detects_when_guard_added() {
-        let a = parse(r#"skill "x" { body { context(priority: 80) { "Focus area." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: important, when: input.focus) { "Focus area." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(
             report.changes.iter().any(|c|
@@ -1366,8 +1368,8 @@ mod tests {
 
     #[test]
     fn detects_when_guard_changed() {
-        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.strict_mode) { "Focus area." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: important, when: input.strict_mode) { "Focus area." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(
             report.changes.iter().any(|c|
@@ -1379,8 +1381,8 @@ mod tests {
 
     #[test]
     fn identical_when_guard_no_change() {
-        let a = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 80, when: input.focus) { "Focus area." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important, when: input.focus) { "Focus area." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: important, when: input.focus) { "Focus area." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(report.is_empty(), "identical when guard should produce no diff: {}", report.display());
     }
@@ -1389,8 +1391,8 @@ mod tests {
 
     #[test]
     fn detects_priority_change() {
-        let a = parse(r#"skill "x" { body { context(priority: 80) { "Same text." } } }"#);
-        let b = parse(r#"skill "x" { body { context(priority: 95) { "Same text." } } }"#);
+        let a = parse(r#"skill "x" { body { context(priority: important) { "Same text." } } }"#);
+        let b = parse(r#"skill "x" { body { context(priority: critical) { "Same text." } } }"#);
         let report = structural_diff(&a, &b);
         assert!(
             report.changes.iter().any(|c|
@@ -1423,11 +1425,11 @@ mod tests {
             skill "main" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate records." }
+                        context(priority: important) { "Validate records." }
                     }
                     step transform {
                         requires validate
-                        context(priority: 80) { "Transform records." }
+                        context(priority: important) { "Transform records." }
                     }
                     step export {
                         requires transform
@@ -1441,11 +1443,11 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate records." }
+                        context(priority: important) { "Validate records." }
                     }
                     step transform {
                         requires validate
-                        context(priority: 80) { "Transform records." }
+                        context(priority: important) { "Transform records." }
                     }
                 }
             }
@@ -1488,7 +1490,7 @@ mod tests {
             skill "main" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate records." }
+                        context(priority: important) { "Validate records." }
                     }
                 }
             }
@@ -1497,7 +1499,7 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 60) { "Validate records." }
+                        context(priority: supplementary) { "Validate records." }
                     }
                 }
             }
@@ -1527,7 +1529,7 @@ mod tests {
             skill "main" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                     step legacy {
                         context { "Legacy code." }
@@ -1543,7 +1545,7 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                 }
             }
@@ -1631,7 +1633,7 @@ mod tests {
             skill "main" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                 }
             }
@@ -1640,7 +1642,7 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 60) { "Validate." }
+                        context(priority: supplementary) { "Validate." }
                     }
                 }
             }
@@ -1761,7 +1763,7 @@ mod tests {
             skill "main" {
                 body {
                     step validate {
-                        context(priority: 85, when: input.strict_mode) { "Validate." }
+                        context(priority: important, when: input.strict_mode) { "Validate." }
                     }
                 }
             }
@@ -1770,7 +1772,7 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                 }
             }
@@ -1809,11 +1811,11 @@ mod tests {
                     step ingest { context { "Ingest." } }
                     step validate {
                         requires ingest
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                     step transform {
                         requires validate
-                        context(priority: 80) { "Transform." }
+                        context(priority: important) { "Transform." }
                     }
                 }
             }
@@ -1822,11 +1824,11 @@ mod tests {
             skill "vt" {
                 body {
                     step validate {
-                        context(priority: 85) { "Validate." }
+                        context(priority: important) { "Validate." }
                     }
                     step transform {
                         requires validate
-                        context(priority: 80) { "Transform." }
+                        context(priority: important) { "Transform." }
                     }
                 }
             }

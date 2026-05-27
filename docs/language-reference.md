@@ -162,18 +162,33 @@ skill "hello" {
 
 ```agent
 context { "prose" }
-context(priority: 80) { "prose" }
-context(priority: 75, when: input.formal) { "prose" }
-context(priority: 60, decay: 0.1) { "prose" }
+context(priority: critical) { "prose" }
+context(priority: important, when: input.formal) { "prose" }
+context(priority: supplementary, decay: 0.1) { "prose" }
+context(priority: critical, until: discover) { "prose" }
 ```
 
 Parameters (all optional, any combination):
 
 | Parameter | Type | Description |
 |---|---|---|
-| `priority` | integer 0-100 | Higher priority is retained when context is trimmed |
+| `priority` | `critical` \| `important` \| `supplementary` \| `optional` | Controls ordering, trimming, and output annotations (see below) |
 | `when` | expression | Only inject if expression is truthy |
 | `decay` | float | Rate at which this context fades from the window over time |
+| `until` | step name | Context is active until the named step completes; compiled output marks it as expired after that step |
+
+**Priority flags:**
+
+| Flag | Compiled annotation | Trimming behaviour |
+|---|---|---|
+| `critical` | `> **CRITICAL:**` prefix | Never trimmed |
+| `important` | `> **IMPORTANT:**` prefix | Trimmed only under severe budget pressure |
+| `supplementary` | No annotation | Default tier; trimmed before `important` |
+| `optional` | `*Optional context:*` prefix | First to be trimmed |
+
+When no priority is specified, the context is treated as `supplementary`. Higher priority contexts appear first in compiled output. The `critical-overuse` lint warns if more than 2 blocks are marked `critical` in a single skill.
+
+**Lifecycle (`until`):** Body-level context blocks can declare `until: step_name`. The compiled output annotates the block with its lifecycle scope, and after that step heading, a note tells the agent the context is no longer active. This lets the agent mentally deprioritise setup instructions once they've been acted upon. The `until` target is validated by `skillspec check`.
 
 Prose content is either a double-quoted string `"..."` or a triple-quoted
 string `"""..."""`.
@@ -183,7 +198,7 @@ string `"""..."""`.
 Declared at the body level. Loaded on demand via `load` inside a step.
 
 ```agent
-lazy context "name" (priority: 40) {
+lazy context "name" (priority: supplementary) {
   summary "One-line description shown to the model instead of the full content."
   ref "./path/to/file.md"
 }
@@ -193,7 +208,7 @@ Content variants:
 
 **ref** loads a file path:
 ```agent
-lazy context "patterns" (priority: 40) {
+lazy context "patterns" (priority: supplementary) {
   summary "Design patterns reference."
   ref "./references/patterns.md"
 }
@@ -201,7 +216,7 @@ lazy context "patterns" (priority: 40) {
 
 **index** loads one of several named sections:
 ```agent
-lazy context "catalog" (priority: 35) {
+lazy context "catalog" (priority: supplementary) {
   summary "Error pattern catalog."
   index {
     section "security" {
@@ -220,7 +235,7 @@ lazy context "catalog" (priority: 35) {
 
 **inline** embeds prose directly:
 ```agent
-lazy context "note" (priority: 20) {
+lazy context "note" (priority: optional) {
   summary "A reminder."
   "Only activate when the user seems confused."
 }

@@ -75,7 +75,7 @@ impl LintRule for UniformPriority {
     fn check(&self, file: &SourceFile) -> Vec<LintDiagnostic> {
         let mut out = Vec::new();
         for skill in &file.skills {
-            let priorities: Vec<u8> = skill.body.contexts.iter()
+            let priorities: Vec<Priority> = skill.body.contexts.iter()
                 .filter_map(|c| c.priority)
                 .collect();
             if priorities.len() >= 2 && priorities.iter().all(|p| *p == priorities[0]) {
@@ -83,8 +83,20 @@ impl LintRule for UniformPriority {
                     rule: self.name().to_string(),
                     severity: Severity::Warning,
                     message: format!(
-                        "skill '{}': all {} context blocks share priority {}; differentiate so the model knows what to emphasise",
+                        "skill '{}': all {} context blocks share priority '{}'; differentiate so the model knows what to emphasise",
                         skill.name, priorities.len(), priorities[0]
+                    ),
+                    span: Some(skill.span),
+                });
+            }
+            let critical_count = priorities.iter().filter(|p| **p == Priority::Critical).count();
+            if critical_count > 2 {
+                out.push(LintDiagnostic {
+                    rule: "critical-overuse".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "skill '{}': {} context blocks marked critical; emphasis loses effect beyond 2 — consider downgrading some to important",
+                        skill.name, critical_count
                     ),
                     span: Some(skill.span),
                 });
@@ -316,9 +328,9 @@ mod tests {
         let diags = lint(r#"
             skill "x" {
                 body {
-                    context(priority: 50) { "A" }
-                    context(priority: 50) { "B" }
-                    context(priority: 50) { "C" }
+                    context(priority: supplementary) { "A" }
+                    context(priority: supplementary) { "B" }
+                    context(priority: supplementary) { "C" }
                 }
             }
         "#);
@@ -400,7 +412,7 @@ mod tests {
         let diags = lint(r#"
             skill "x" {
                 body {
-                    lazy context "docs" (priority: 50) {
+                    lazy context "docs" (priority: supplementary) {
                         summary "API docs."
                         "Inline content."
                     }
@@ -424,15 +436,15 @@ mod tests {
                     summary: string
                 }
                 body {
-                    context(priority: 100) { "You are a reviewer." }
-                    context(priority: 80, when: input.focus) { "Focus area." }
+                    context(priority: critical) { "You are a reviewer." }
+                    context(priority: important, when: input.focus) { "Focus area." }
                     step analyze {
-                        context(priority: 70) { "Analyze." }
+                        context(priority: supplementary) { "Analyze." }
                     }
                     step report {
                         requires analyze
                         emit output
-                        context(priority: 60) { "Report findings." }
+                        context(priority: supplementary) { "Report findings." }
                     }
                 }
             }

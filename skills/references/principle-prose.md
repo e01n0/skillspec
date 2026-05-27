@@ -12,7 +12,7 @@ directly. It is not a comment, not metadata, not a template. It IS the
 instruction:
 
 ```agent
-context(priority: 90) {
+context(priority: important) {
   """
   Review the code for security vulnerabilities. Focus on injection
   attacks, authentication bypass, and data exposure. For each finding,
@@ -88,17 +88,17 @@ many tiny context blocks that the flow is destroyed.
 
 Bad:
 ```agent
-context(priority: 90) { "Review the code." }
-context(priority: 89) { "Look for security issues." }
-context(priority: 88) { "Look for performance issues." }
-context(priority: 87) { "Look for maintainability issues." }
-context(priority: 86) { "For each finding, explain the risk." }
-context(priority: 85) { "For each finding, suggest a fix." }
+context(priority: important) { "Review the code." }
+context(priority: important) { "Look for security issues." }
+context(priority: important) { "Look for performance issues." }
+context(priority: important) { "Look for maintainability issues." }
+context(priority: important) { "For each finding, explain the risk." }
+context(priority: important) { "For each finding, suggest a fix." }
 ```
 
 Good:
 ```agent
-context(priority: 90) {
+context(priority: important) {
   """
   Review the code for security, performance, and maintainability
   issues. For each finding, explain the risk and suggest a fix.
