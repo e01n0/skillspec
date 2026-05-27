@@ -447,7 +447,8 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
                     )
                 })?;
 
-                println!("✓ {} → {}", path, out_path.display());
+                let display_path = out_path.canonicalize().unwrap_or(out_path.clone());
+                println!("✓ {} → {}", path, display_path.display());
             }
             Ok(())
         }
@@ -466,7 +467,8 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
             let pkg_dir = Path::new(out_dir).join(format!("{stem}.agentpkg"));
             compiler.write_to_dir(&pkg, &pkg_dir)
                 .map_err(|e| miette::miette!("Failed to write native package: {e}"))?;
-            eprintln!("✓ {path} → {}", pkg_dir.display());
+            let display_path = pkg_dir.canonicalize().unwrap_or(pkg_dir.clone());
+            eprintln!("✓ {path} → {}", display_path.display());
             Ok(())
         }
         "system-prompt" | "cursor" | "clinerules" => {
@@ -488,7 +490,8 @@ fn cmd_build(path: &str, target: &str, output: Option<&str>, token_budget: Optio
                 fs::write(&out_path, &content).map_err(|e| {
                     miette::miette!("Failed to write '{}': {}", out_path.display(), e)
                 })?;
-                println!("✓ {} → {}", path, out_path.display());
+                let display_path = out_path.canonicalize().unwrap_or(out_path.clone());
+                println!("✓ {} → {}", path, display_path.display());
             }
             Ok(())
         }
