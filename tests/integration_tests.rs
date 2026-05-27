@@ -279,6 +279,10 @@ fn all_example_skills_pass_check() {
         "skills/skillspec-backport.agent",
         "skills/skillspec-test.agent",
         "examples/brainstorming.agent",
+        "examples/pipeline.agent",
+        "examples/orchestration.agent",
+        "examples/tested-skill.agent",
+        "examples/composition.agent",
     ] {
         let source = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path));
@@ -305,6 +309,10 @@ fn all_example_skills_compile_to_skillmd() {
         "skills/skillspec-backport.agent",
         "skills/skillspec-test.agent",
         "examples/brainstorming.agent",
+        "examples/pipeline.agent",
+        "examples/orchestration.agent",
+        "examples/tested-skill.agent",
+        "examples/composition.agent",
     ] {
         let source = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path));

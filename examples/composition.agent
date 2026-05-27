@@ -1,0 +1,40 @@
+type Summary {
+  title: string
+  key_points: string[]
+}
+
+skill "summariser" {
+  input {
+    text: string
+    max_points?: int = 5
+  }
+  output {
+    summary: Summary
+  }
+  body {
+    context { "Summarise the input text." }
+    step extract {
+      context { "Identify the key points, up to the max." }
+    }
+    step format {
+      requires extract
+      emit output
+      context { "Produce the Summary output." }
+    }
+  }
+}
+
+skill "executive-summariser" extends "summariser" {
+  input {
+    text: string
+    max_points?: int = 3
+  }
+  body {
+    persona { "You write for C-level executives. Be concise." }
+    step format {
+      requires extract
+      emit output
+      context { "Produce the Summary. Keep language executive-friendly." }
+    }
+  }
+}

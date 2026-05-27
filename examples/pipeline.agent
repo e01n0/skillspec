@@ -1,0 +1,51 @@
+skill "lint-check" {
+  input {
+    files: string[]
+  }
+  output {
+    issues: string[]
+  }
+  body {
+    context { "Run lint checks on the provided files." }
+    step run {
+      emit output
+      context { "List any lint issues found." }
+    }
+  }
+}
+
+skill "security-scan" {
+  input {
+    files: string[]
+  }
+  output {
+    vulnerabilities: string[]
+  }
+  body {
+    context { "Scan for security vulnerabilities." }
+    step run {
+      emit output
+      context { "Report any vulnerabilities found." }
+    }
+  }
+}
+
+pipeline "ci-checks" {
+  input {
+    files: string[]
+  }
+  output {
+    passed: bool
+  }
+  stage lint {
+    use lint_check(files: input.files)
+  }
+  stage security {
+    use security_scan(files: input.files)
+  }
+  stage approve {
+    requires lint & security
+    use final_decision(lint: lint.result, security: security.result)
+  }
+  timeout 10m
+}
