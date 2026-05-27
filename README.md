@@ -305,7 +305,6 @@ Designed but not shipped.
 
 - **Runtime composition.** `use`, `pipeline`, `orchestration` currently compile to prose the LLM interprets. Real dispatch needs `.agentpkg` and runtimes that support it.
 - **Test execution.** Test blocks parse and type-check; `skillspec test --prepare` generates execution skills. Full LLM-driven execution available via `skillspec optimize`.
-- **Optimization writeback.** `skillspec optimize --writeback` to apply SkillOpt improvements back to `.agent` source (priorities, sampling, context text).
 - **Remote registry.** `publish` / `install` from a central registry.
 - **Language server.** LSP for highlighting, completion, diagnostics.
 
