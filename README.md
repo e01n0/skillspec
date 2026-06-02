@@ -1,5 +1,5 @@
 # SkillSpec
-
+ this is the best line ever
 There's a growing trend of encoding complex workflows into agent skills (SKILL.md, Cursor rules, etc). Works great until you try to merge them, version them, collaborate on them, or run any kind of CI. Markdown is a brilliant authoring format. As a production system format it's pretty brittle.
 
 SkillSpec is a DSL that adds types, contracts, composition, and tests around agent skills, then compiles back down to the same SKILL.md that existing runtimes already understand. Once a skill works and you want to make it production-ready, you codify it into a `.agent` file and get versioning, structural diffs, type checking, and a path to CI/CD.
