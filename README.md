@@ -231,11 +231,13 @@ Deploy straight to your runtime:
 skillspec build my-skill.agent --to claude           # → ~/.claude/skills/my-skill/SKILL.md
 skillspec build my-skill.agent --to claude-project    # → .claude/skills/my-skill/SKILL.md
 skillspec build my-skill.agent --to cursor            # → .cursor/rules/my-skill.cursorrules
+skillspec build my-skill.agent --to cline             # → ./my-skill.clinerules
+skillspec build my-skill.agent --to codex             # → .codex/my-skill.txt
 skillspec build my-skill.agent --to /custom/path      # → any directory
 skillspec build my-skill.agent --to                   # interactive menu
 ```
 
-`--to` auto-selects the right build target for each runtime. Combine with `--watch` to redeploy on every save.
+`--to` auto-selects the right build target for each runtime. Claude Code targets use SKILL.md, Cursor uses `.cursorrules`, Cline uses `.clinerules`, and Codex uses a system prompt text file. Combine with `--watch` to redeploy on every save.
 
 See `examples/` for more: [pipelines](examples/pipeline.agent), [orchestrations](examples/orchestration.agent), [tests](examples/tested-skill.agent), [composition](examples/composition.agent).
 
