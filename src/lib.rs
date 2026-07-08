@@ -2,6 +2,7 @@ pub mod ast;
 pub mod budget;
 pub mod checker;
 pub mod compiler;
+pub mod compiler_agentsmd;
 pub mod compiler_clinerules;
 pub mod compiler_cursor;
 pub mod compiler_ir;

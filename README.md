@@ -231,11 +231,31 @@ Deploy straight to your runtime:
 skillspec build my-skill.agent --to claude           # → ~/.claude/skills/my-skill/SKILL.md
 skillspec build my-skill.agent --to claude-project    # → .claude/skills/my-skill/SKILL.md
 skillspec build my-skill.agent --to cursor            # → .cursor/rules/my-skill.cursorrules
+skillspec build my-skill.agent --to agents            # → ./AGENTS.md (cross-tool convention)
+skillspec build my-skill.agent --to copilot           # → .github/copilot-instructions.md
 skillspec build my-skill.agent --to /custom/path      # → any directory
 skillspec build my-skill.agent --to                   # interactive menu
 ```
 
 `--to` auto-selects the right build target for each runtime. Combine with `--watch` to redeploy on every save.
+
+### CI
+
+`build --check` verifies the deployed output matches the source without writing anything — it exits non-zero when the SKILL.md (or other target) is stale or missing:
+
+```bash
+skillspec check my-skill.agent
+skillspec lint my-skill.agent
+skillspec build my-skill.agent --check --output deployed/
+```
+
+Or use the bundled GitHub Action, which runs `check` and `lint` on every `.agent` file in a PR:
+
+```yaml
+- uses: e01n0/skillspec@main
+  with:
+    files: 'skills/**/*.agent'
+```
 
 See `examples/` for more: [pipelines](examples/pipeline.agent), [orchestrations](examples/orchestration.agent), [tests](examples/tested-skill.agent), [composition](examples/composition.agent).
 
@@ -290,16 +310,17 @@ You don't need to migrate everything at once. Start with the skills that break m
 | Command   | Does |
 |-----------|------|
 | `check`   | Type-check and validate |
-| `build`   | Compile to `SKILL.md` or `.agentpkg`. `--to` deploys to a runtime |
+| `build`   | Compile to `SKILL.md` or `.agentpkg`. `--to` deploys to a runtime; `--check` verifies deployed output is current |
 | `grammar` | Print formal EBNF grammar for `.agent` |
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
 | `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps) |
 | `deps`    | Step dependency graph |
-| `init`    | Scaffold a new `.agent` file |
+| `init`    | Scaffold a new `.agent` file. `--template` starts from a bundled example |
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
-| `pack` / `install` | Bundle and install `.skillpkg` archives |
+| `pack` / `install` | Bundle and install `.skillpkg` archives. `install github:owner/repo[/dir][@ref]` installs straight from a repository |
+| `completions` | Generate shell completions (bash, zsh, fish, elvish, powershell) |
 | `test`    | List test blocks (doesn't run them) |
 | `optimize` | Iterative skill improvement via [SkillOpt](https://github.com/microsoft/SkillOpt). `--writeback` applies changes to `.agent` source. [Guide](docs/optimize-guide.md) |
 

@@ -22,6 +22,61 @@ pub fn emit_mermaid(ast: &SourceFile) -> String {
     out
 }
 
+pub fn emit_dot(ast: &SourceFile) -> String {
+    let mut out = String::from("digraph deps {\n    rankdir=TD;\n");
+    let all_nodes = collect_all_node_names(ast);
+
+    for &node in &all_nodes {
+        out.push_str(&format!("    \"{}\";\n", node));
+    }
+    for skill in &ast.skills {
+        for step in &skill.body.steps {
+            emit_dot_edges(&mut out, &step.name, &step.requires, &all_nodes);
+        }
+    }
+    for pipeline in &ast.pipelines {
+        for stage in &pipeline.stages {
+            emit_dot_edges(&mut out, &stage.name, &stage.requires, &all_nodes);
+        }
+    }
+    for orch in &ast.orchestrations {
+        for phase in &orch.phases {
+            emit_dot_edges(&mut out, &phase.name, &phase.requires, &all_nodes);
+        }
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn emit_dot_edges(out: &mut String, name: &str, dep: &Option<Dependency>, all_nodes: &[&str]) {
+    match dep {
+        None => {}
+        Some(Dependency::Single(from)) => {
+            out.push_str(&format!("    \"{}\" -> \"{}\";\n", from, name));
+        }
+        Some(Dependency::All(froms)) => {
+            for from in froms {
+                out.push_str(&format!("    \"{}\" -> \"{}\";\n", from, name));
+            }
+        }
+        Some(Dependency::Any(froms)) => {
+            for from in froms {
+                out.push_str(&format!(
+                    "    \"{}\" -> \"{}\" [style=dashed];\n",
+                    from, name
+                ));
+            }
+        }
+        Some(Dependency::AllSteps) => {
+            for &node in all_nodes {
+                if node != name {
+                    out.push_str(&format!("    \"{}\" -> \"{}\";\n", node, name));
+                }
+            }
+        }
+    }
+}
+
 fn collect_all_node_names(ast: &SourceFile) -> Vec<&str> {
     let mut names = Vec::new();
     for skill in &ast.skills {
@@ -157,6 +212,27 @@ mod tests {
             !out.contains("final --> final"),
             "should not self-reference"
         );
+    }
+
+    #[test]
+    fn dot_linear_steps() {
+        let ast = parse(
+            r#"
+            skill "x" {
+                body {
+                    step a { context { "a" } }
+                    step b { requires a context { "b" } }
+                    step c { requires a | b context { "c" } }
+                }
+            }
+        "#,
+        );
+        let out = emit_dot(&ast);
+        assert!(out.starts_with("digraph deps {"));
+        assert!(out.trim_end().ends_with('}'));
+        assert!(out.contains("\"a\" -> \"b\";"));
+        assert!(out.contains("\"a\" -> \"c\" [style=dashed];"));
+        assert!(out.contains("\"b\" -> \"c\" [style=dashed];"));
     }
 
     #[test]

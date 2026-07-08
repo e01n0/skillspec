@@ -10,6 +10,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`--check` flag on `build`** — verify the deployed output matches the compiled source without writing; exits non-zero when stale or missing. A one-line CI gate that enforces the `.agent` file as source of truth.
+- **AGENTS.md compile target** — `--target agentsmd` compiles all skills into a single `AGENTS.md` (the cross-tool convention read by Codex, Cursor, and others). `--to agents` deploys to `./AGENTS.md`; `--to copilot` deploys to `.github/copilot-instructions.md`.
+- **`skillspec completions <shell>`** — generate shell completions for bash, zsh, fish, elvish, and powershell.
+- **`deps --format dot`** — emit the dependency graph as Graphviz DOT, alongside the existing text and Mermaid formats.
+- **`init --template <name>`** — scaffold from a bundled example: `pipeline`, `orchestration`, `tested`, `composition`, or `brainstorming`.
+- **Git-based install** — `skillspec install github:owner/repo[/subdir][@ref]` shallow-clones the repository and installs the `.skillpkg` or packaged `.agent` file it finds.
+- **GitHub Action** — a composite `action.yml` so any repository can run `skillspec check` and `lint` on `.agent` files in CI with `uses: e01n0/skillspec@main`.
+- **CI workflow** — fmt, clippy, tests, and a dogfood pass that type-checks all bundled examples and skills.
+
+### Fixed
+
+- `skills/skillspec-optimize.agent` used numeric context priorities, which the language no longer accepts; converted to priority flags.
+
 - **`--to` flag on `build`** — deploy compiled skills directly to a runtime. Accepts named targets (`claude`, `claude-project`, `cursor`, `cline`, `codex`) or any custom path. Use `--to` without a value for an interactive picker. Auto-selects the correct build target per runtime (e.g. `--to cursor` implies `--target cursor`). Works with `--watch` for auto-redeploy on save. Mutually exclusive with `--output`.
 
 ---

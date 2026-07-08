@@ -1,0 +1,43 @@
+name: 'SkillSpec Check'
+description: 'Type-check, lint, and verify .agent skill files with SkillSpec'
+author: 'e01n0'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  files:
+    description: 'Glob of .agent files to check (bash globstar syntax)'
+    required: false
+    default: '**/*.agent'
+  lint:
+    description: 'Also run skillspec lint on each file'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install skillspec
+      shell: bash
+      run: cargo install --path "${{ github.action_path }}" --locked
+
+    - name: Check skills
+      shell: bash
+      run: |
+        shopt -s globstar nullglob
+        status=0
+        found=0
+        for f in ${{ inputs.files }}; do
+          found=1
+          echo "::group::${f}"
+          skillspec check "$f" || status=1
+          if [ "${{ inputs.lint }}" = "true" ]; then
+            skillspec lint "$f" || status=1
+          fi
+          echo "::endgroup::"
+        done
+        if [ "$found" = "0" ]; then
+          echo "No files matched '${{ inputs.files }}'"
+        fi
+        exit $status

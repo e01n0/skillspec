@@ -68,7 +68,7 @@ skill "skillspec-optimize" {
       temperature: 0.3
     }
 
-    context(priority: 100) {
+    context(priority: critical) {
       """
       Drive the SkillOpt optimization loop for a .agent skill file.
       The loop uses a checkpoint-resume protocol: each call to
@@ -79,7 +79,7 @@ skill "skillspec-optimize" {
       """
     }
 
-    context(priority: 95) {
+    context(priority: critical) {
       """
       IMPORTANT: You are both the target model (executing skills
       during rollout) and the optimizer model (analysing failures,
@@ -97,7 +97,7 @@ skill "skillspec-optimize" {
     }
 
     step setup {
-      context(priority: 90) {
+      context(priority: important) {
         """
         Check prerequisites and prepare the optimization environment:
 
@@ -120,7 +120,7 @@ skill "skillspec-optimize" {
 
     step optimize_loop {
       requires setup
-      context(priority: 85) {
+      context(priority: important) {
         """
         Run the checkpoint-resume training loop:
 
@@ -157,7 +157,7 @@ skill "skillspec-optimize" {
 
     step handle_request {
       requires setup
-      context(priority: 80) {
+      context(priority: important) {
         """
         When processing an LLM request from the training loop:
 
@@ -186,7 +186,7 @@ skill "skillspec-optimize" {
     step report {
       requires optimize_loop
       emit output
-      context(priority: 75) {
+      context(priority: supplementary) {
         """
         After the training loop completes:
 

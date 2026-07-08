@@ -1,15 +1,17 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 use miette::Result;
 use skillspec_core::ast::{Dependency, SourceFile};
 use skillspec_core::budget;
 use skillspec_core::checker::Checker;
 use skillspec_core::compiler::TargetCompiler;
+use skillspec_core::compiler_agentsmd::AgentsMdCompiler;
 use skillspec_core::compiler_clinerules::ClineRulesCompiler;
 use skillspec_core::compiler_cursor::CursorCompiler;
 use skillspec_core::compiler_ir::IrCompiler;
 use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
-use skillspec_core::deps::emit_mermaid;
+use skillspec_core::deps::{emit_dot, emit_mermaid};
 use skillspec_core::diff::{classify_semver, skillmd_diff, structural_diff};
 use skillspec_core::formatter::Formatter;
 use skillspec_core::lexer::Lexer;
@@ -43,7 +45,7 @@ enum Commands {
         target: String,
         #[arg(short, long)]
         output: Option<String>,
-        /// Deploy to a runtime: claude, claude-project, cursor, cline, codex, or a custom path. Use --to without a value for an interactive menu.
+        /// Deploy to a runtime: claude, claude-project, cursor, cline, codex, agents, copilot, or a custom path. Use --to without a value for an interactive menu.
         #[arg(long, num_args = 0..=1, default_missing_value = "menu")]
         to: Option<String>,
         /// Watch for file changes and rebuild automatically
@@ -55,9 +57,17 @@ enum Commands {
         /// Emit a JSON schema of all declared telemetry events and metrics
         #[arg(long)]
         emit_telemetry_schema: bool,
+        /// Verify the deployed output is up to date without writing; exits non-zero when stale
+        #[arg(long)]
+        check: bool,
     },
     /// Scaffold a new .agent skill file
-    Init { name: String },
+    Init {
+        name: String,
+        /// Start from a template: basic, pipeline, orchestration, tested, composition, brainstorming
+        #[arg(long, default_value = "basic")]
+        template: String,
+    },
     /// Format an .agent file with canonical style
     Fmt { file: String },
     /// Estimate token budget for skills in an .agent file
@@ -65,7 +75,7 @@ enum Commands {
     /// Print dependency graph of steps/stages/phases
     Deps {
         file: String,
-        /// Output format: "text" (default) or "mermaid"
+        /// Output format: "text" (default), "mermaid", or "dot"
         #[arg(long, default_value = "text")]
         format: String,
     },
@@ -79,8 +89,14 @@ enum Commands {
     },
     /// Install a .skillpkg directory (or .agent file with package declaration) into .skillspec/packages/
     Install {
-        /// Path to a .skillpkg directory or an .agent file with a package declaration
+        /// Path to a .skillpkg directory, an .agent file with a package declaration,
+        /// or a git source: github:owner/repo[/subdir][@ref]
         path: String,
+    },
+    /// Generate shell completions (bash, zsh, fish, elvish, powershell)
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
     },
     /// List, prepare, or evaluate tests in an .agent file
     Test {
@@ -165,6 +181,7 @@ fn main() -> Result<()> {
             watch,
             budget,
             emit_telemetry_schema,
+            check,
         } => {
             if output.is_some() && to.is_some() {
                 return Err(miette::miette!(
@@ -180,7 +197,9 @@ fn main() -> Result<()> {
                 (target, output)
             };
 
-            if watch {
+            if check {
+                cmd_build_check(&file, &effective_target, effective_output.as_deref())
+            } else if watch {
                 cmd_build_watch(&file, &effective_target, effective_output.as_deref())
             } else if emit_telemetry_schema {
                 cmd_emit_telemetry(&file)
@@ -193,13 +212,18 @@ fn main() -> Result<()> {
                 )
             }
         }
-        Commands::Init { name } => cmd_init(&name),
+        Commands::Init { name, template } => cmd_init(&name, &template),
         Commands::Fmt { file } => cmd_fmt(&file),
         Commands::Budget { file } => cmd_budget(&file),
         Commands::Deps { file, format } => cmd_deps(&file, &format),
         Commands::Migrate { path } => cmd_migrate(&path),
         Commands::Pack { file, output } => cmd_pack(&file, output.as_deref()),
         Commands::Install { path } => cmd_install(&path),
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "skillspec", &mut io::stdout());
+            Ok(())
+        }
         Commands::Test {
             file,
             prepare,
@@ -391,6 +415,14 @@ fn resolve_deploy_target(value: &str) -> Result<DeployTarget> {
             path: ".codex".to_string(),
             target_override: Some("system-prompt".to_string()),
         }),
+        "agents" => Ok(DeployTarget {
+            path: ".".to_string(),
+            target_override: Some("agentsmd".to_string()),
+        }),
+        "copilot" => Ok(DeployTarget {
+            path: ".github/copilot-instructions.md".to_string(),
+            target_override: Some("agentsmd".to_string()),
+        }),
         custom => Ok(DeployTarget {
             path: custom.to_string(),
             target_override: None,
@@ -407,8 +439,10 @@ fn show_deploy_menu() -> Result<DeployTarget> {
     eprintln!("  3) Cursor                 → .cursor/rules/");
     eprintln!("  4) Cline                  → ./");
     eprintln!("  5) Codex                  → .codex/");
-    eprintln!("  6) Custom path");
-    eprint!("Pick a target [1-6]: ");
+    eprintln!("  6) AGENTS.md              → ./AGENTS.md");
+    eprintln!("  7) GitHub Copilot         → .github/copilot-instructions.md");
+    eprintln!("  8) Custom path");
+    eprint!("Pick a target [1-8]: ");
     io::stderr()
         .flush()
         .map_err(|e| miette::miette!("flush: {e}"))?;
@@ -425,7 +459,9 @@ fn show_deploy_menu() -> Result<DeployTarget> {
         "3" => resolve_deploy_target("cursor"),
         "4" => resolve_deploy_target("cline"),
         "5" => resolve_deploy_target("codex"),
-        "6" => {
+        "6" => resolve_deploy_target("agents"),
+        "7" => resolve_deploy_target("copilot"),
+        "8" => {
             eprint!("Path: ");
             io::stderr()
                 .flush()
@@ -444,7 +480,7 @@ fn show_deploy_menu() -> Result<DeployTarget> {
                 target_override: None,
             })
         }
-        other => Err(miette::miette!("Invalid choice: '{}'; expected 1-6", other)),
+        other => Err(miette::miette!("Invalid choice: '{}'; expected 1-8", other)),
     }
 }
 
@@ -529,14 +565,36 @@ fn cmd_build(
             eprintln!("✓ {path} → {}", display_path.display());
             Ok(())
         }
+        "agentsmd" => {
+            let ast = read_and_parse(path)?;
+            let compiler = AgentsMdCompiler;
+            let sections: Vec<String> = ast
+                .skills
+                .iter()
+                .map(|s| compiler.compile_skill(s, &ast))
+                .collect();
+            let content = sections.join("\n\n---\n\n") + "\n";
+            let out_path = agentsmd_out_path(output);
+            if let Some(parent) = out_path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent).map_err(|e| {
+                    miette::miette!(
+                        "Failed to create output directory '{}': {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
+            }
+            fs::write(&out_path, &content)
+                .map_err(|e| miette::miette!("Failed to write '{}': {}", out_path.display(), e))?;
+            let display_path = out_path.canonicalize().unwrap_or(out_path.clone());
+            println!("✓ {} → {}", path, display_path.display());
+            Ok(())
+        }
         "system-prompt" | "cursor" | "clinerules" => {
             let ast = read_and_parse(path)?;
-            let compiler: Box<dyn TargetCompiler> = match target {
-                "system-prompt" => Box::new(SystemPromptCompiler),
-                "cursor" => Box::new(CursorCompiler),
-                "clinerules" => Box::new(ClineRulesCompiler),
-                _ => unreachable!(),
-            };
+            let compiler = target_compiler(target);
             let out_base = output.unwrap_or(".");
             fs::create_dir_all(out_base).map_err(|e| {
                 miette::miette!("Failed to create output directory '{}': {}", out_base, e)
@@ -554,9 +612,124 @@ fn cmd_build(
             Ok(())
         }
         other => Err(miette::miette!(
-            "unknown target '{}'; supported: skillmd, native, system-prompt, cursor, clinerules",
+            "unknown target '{}'; supported: skillmd, native, system-prompt, cursor, clinerules, agentsmd",
             other
         )),
+    }
+}
+
+fn target_compiler(target: &str) -> Box<dyn TargetCompiler> {
+    match target {
+        "system-prompt" => Box::new(SystemPromptCompiler),
+        "cursor" => Box::new(CursorCompiler),
+        "clinerules" => Box::new(ClineRulesCompiler),
+        "agentsmd" => Box::new(AgentsMdCompiler),
+        other => unreachable!("target '{other}' has no TargetCompiler"),
+    }
+}
+
+/// The agentsmd target writes a single document. An output path ending in .md
+/// is used verbatim (e.g. .github/copilot-instructions.md); anything else is
+/// treated as a directory that receives AGENTS.md.
+fn agentsmd_out_path(output: Option<&str>) -> std::path::PathBuf {
+    match output {
+        Some(o) if o.ends_with(".md") => std::path::PathBuf::from(o),
+        Some(o) => Path::new(o).join("AGENTS.md"),
+        None => std::path::PathBuf::from("AGENTS.md"),
+    }
+}
+
+/// Compile in memory and compare against what's on disk. Reports each missing
+/// or stale output and exits non-zero if any drift is found — a CI gate that
+/// enforces "the .agent file is the source of truth".
+fn cmd_build_check(path: &str, target: &str, output: Option<&str>) -> Result<()> {
+    let ast = read_and_parse(path)?;
+    let base_dir = Path::new(path)
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let mut checker = Checker::with_base_dir(base_dir);
+    if let Err(errors) = checker.check(&ast) {
+        for err in &errors {
+            eprintln!("error: {}", err);
+        }
+        return Err(miette::miette!(
+            "{} error(s) found in '{}'; fix them before checking outputs",
+            errors.len(),
+            path
+        ));
+    }
+
+    let out_base = output.unwrap_or(".");
+    let mut expected: Vec<(std::path::PathBuf, String)> = Vec::new();
+
+    match target {
+        "skillmd" => {
+            let compiler = SkillMdCompiler::new();
+            for skill in &ast.skills {
+                let out_path = Path::new(out_base).join(&skill.name).join("SKILL.md");
+                expected.push((out_path, compiler.compile(skill, &ast)));
+            }
+        }
+        "agentsmd" => {
+            let compiler = AgentsMdCompiler;
+            let sections: Vec<String> = ast
+                .skills
+                .iter()
+                .map(|s| compiler.compile_skill(s, &ast))
+                .collect();
+            let content = sections.join("\n\n---\n\n") + "\n";
+            expected.push((agentsmd_out_path(output), content));
+        }
+        "system-prompt" | "cursor" | "clinerules" => {
+            let compiler = target_compiler(target);
+            for skill in &ast.skills {
+                let ext = compiler.file_extension();
+                let out_path = Path::new(out_base).join(format!("{}.{}", skill.name, ext));
+                expected.push((out_path, compiler.compile_skill(skill, &ast)));
+            }
+        }
+        other => {
+            return Err(miette::miette!(
+                "--check is not supported for target '{}'; supported: skillmd, system-prompt, cursor, clinerules, agentsmd",
+                other
+            ));
+        }
+    }
+
+    let mut stale = 0;
+    for (out_path, content) in &expected {
+        match fs::read_to_string(out_path) {
+            Ok(actual) if &actual == content => {
+                println!("✓ {} is up to date", out_path.display());
+            }
+            Ok(_) => {
+                eprintln!(
+                    "✗ {} is stale (differs from compiled '{}')",
+                    out_path.display(),
+                    path
+                );
+                stale += 1;
+            }
+            Err(_) => {
+                eprintln!("✗ {} is missing (never deployed?)", out_path.display());
+                stale += 1;
+            }
+        }
+    }
+
+    if stale > 0 {
+        Err(miette::miette!(
+            "{} output(s) out of date; run: skillspec build {} --target {}{}",
+            stale,
+            path,
+            target,
+            output
+                .map(|o| format!(" --output {}", o))
+                .unwrap_or_default()
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -647,10 +820,38 @@ fn chrono_now() -> String {
     )
 }
 
-fn cmd_init(name: &str) -> Result<()> {
+fn cmd_init(name: &str, template: &str) -> Result<()> {
     let filename = format!("{}.agent", name);
     if Path::new(&filename).exists() {
         return Err(miette::miette!("File '{}' already exists", filename));
+    }
+
+    // Example-based templates ship embedded so init works anywhere,
+    // not just inside a checkout of this repository.
+    let example: Option<&str> = match template {
+        "basic" => None,
+        "pipeline" => Some(include_str!("../examples/pipeline.agent")),
+        "orchestration" => Some(include_str!("../examples/orchestration.agent")),
+        "tested" => Some(include_str!("../examples/tested-skill.agent")),
+        "composition" => Some(include_str!("../examples/composition.agent")),
+        "brainstorming" => Some(include_str!("../examples/brainstorming.agent")),
+        other => {
+            return Err(miette::miette!(
+                "unknown template '{}'; available: basic, pipeline, orchestration, tested, composition, brainstorming",
+                other
+            ));
+        }
+    };
+
+    if let Some(content) = example {
+        fs::write(&filename, content)
+            .map_err(|e| miette::miette!("Failed to write '{}': {}", filename, e))?;
+        println!("✓ created {} from the '{}' template", filename, template);
+        println!(
+            "  Rename the skill(s) inside, then: skillspec check {}",
+            filename
+        );
+        return Ok(());
     }
 
     let template = format!(
@@ -704,6 +905,10 @@ fn cmd_deps(path: &str, format: &str) -> Result<()> {
             print!("{}", emit_mermaid(&ast));
             Ok(())
         }
+        "dot" => {
+            print!("{}", emit_dot(&ast));
+            Ok(())
+        }
         "text" => {
             for skill in &ast.skills {
                 println!("Skill: {}", skill.name);
@@ -747,7 +952,7 @@ fn cmd_deps(path: &str, format: &str) -> Result<()> {
             Ok(())
         }
         other => Err(miette::miette!(
-            "unknown format '{}'; supported: text, mermaid",
+            "unknown format '{}'; supported: text, mermaid, dot",
             other
         )),
     }
@@ -1240,7 +1445,157 @@ fn cmd_pack(path: &str, output: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// A parsed `github:owner/repo[/subdir][@ref]` install source.
+struct GitSource {
+    owner: String,
+    repo: String,
+    subdir: Option<String>,
+    git_ref: Option<String>,
+}
+
+fn parse_git_source(spec: &str) -> Result<GitSource> {
+    let rest = spec
+        .strip_prefix("github:")
+        .ok_or_else(|| miette::miette!("git source must start with 'github:'"))?;
+
+    let (path_part, git_ref) = match rest.rsplit_once('@') {
+        Some((p, r)) if !r.contains('/') => (p, Some(r.to_string())),
+        _ => (rest, None),
+    };
+
+    let mut segments = path_part.splitn(3, '/');
+    let owner = segments.next().unwrap_or_default();
+    let repo = segments.next().unwrap_or_default();
+    let subdir = segments.next().map(|s| s.to_string());
+
+    if owner.is_empty() || repo.is_empty() {
+        return Err(miette::miette!(
+            "invalid git source '{}'; expected github:owner/repo[/subdir][@ref]",
+            spec
+        ));
+    }
+
+    Ok(GitSource {
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        subdir,
+        git_ref,
+    })
+}
+
+/// Clone a github: source shallowly and return the local path to install from.
+fn fetch_git_source(source: &GitSource) -> Result<std::path::PathBuf> {
+    let url = format!("https://github.com/{}/{}.git", source.owner, source.repo);
+    let clone_dir = std::env::temp_dir().join(format!(
+        "skillspec_install_{}_{}_{}",
+        source.owner,
+        source.repo,
+        std::process::id()
+    ));
+    if clone_dir.exists() {
+        fs::remove_dir_all(&clone_dir)
+            .map_err(|e| miette::miette!("Failed to clear '{}': {}", clone_dir.display(), e))?;
+    }
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["clone", "--depth", "1"]);
+    if let Some(r) = &source.git_ref {
+        cmd.args(["--branch", r]);
+    }
+    cmd.arg(&url).arg(&clone_dir);
+
+    let status = cmd
+        .status()
+        .map_err(|e| miette::miette!("Failed to run git: {}", e))?;
+    if !status.success() {
+        return Err(miette::miette!(
+            "git clone of '{}' failed{}",
+            url,
+            source
+                .git_ref
+                .as_ref()
+                .map(|r| format!(" (ref '{}')", r))
+                .unwrap_or_default()
+        ));
+    }
+
+    let install_root = match &source.subdir {
+        Some(sub) => clone_dir.join(sub),
+        None => clone_dir.clone(),
+    };
+    if !install_root.exists() {
+        return Err(miette::miette!(
+            "'{}' not found in {}/{}",
+            source.subdir.as_deref().unwrap_or(""),
+            source.owner,
+            source.repo
+        ));
+    }
+    Ok(install_root)
+}
+
+/// Find what to install inside a cloned directory: a .skillpkg dir, or an
+/// .agent file with a package declaration.
+fn find_installable(root: &Path) -> Result<std::path::PathBuf> {
+    if root.is_file() {
+        return Ok(root.to_path_buf());
+    }
+    if root.join("package.json").exists() {
+        return Ok(root.to_path_buf());
+    }
+
+    let entries: Vec<_> = fs::read_dir(root)
+        .map_err(|e| miette::miette!("Failed to read '{}': {}", root.display(), e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+
+    if let Some(pkg) = entries.iter().find(|p| {
+        p.is_dir()
+            && p.extension().is_some_and(|e| e == "skillpkg")
+            && p.join("package.json").exists()
+    }) {
+        return Ok(pkg.clone());
+    }
+
+    let mut agent_files: Vec<_> = entries
+        .iter()
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "agent"))
+        .cloned()
+        .collect();
+    agent_files.sort();
+
+    for agent in &agent_files {
+        if let Ok(source) = fs::read_to_string(agent)
+            && source.contains("package ")
+        {
+            return Ok(agent.clone());
+        }
+    }
+
+    Err(miette::miette!(
+        "nothing installable in '{}'; expected a .skillpkg directory or an .agent file with a package declaration",
+        root.display()
+    ))
+}
+
 fn cmd_install(path: &str) -> Result<()> {
+    if path.starts_with("github:") {
+        let source = parse_git_source(path)?;
+        let root = fetch_git_source(&source)?;
+        let installable = find_installable(&root)?;
+        let result = cmd_install(installable.to_str().unwrap());
+        // Best-effort cleanup of the shallow clone; the install already copied
+        // everything it needs.
+        let _ = fs::remove_dir_all(std::env::temp_dir().join(format!(
+            "skillspec_install_{}_{}_{}",
+            source.owner,
+            source.repo,
+            std::process::id()
+        )));
+        return result;
+    }
+
     // Determine whether path is a .skillpkg dir or an .agent file
     let pkg_source = Path::new(path);
 
