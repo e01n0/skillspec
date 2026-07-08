@@ -295,6 +295,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
+| `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps) |
 | `deps`    | Step dependency graph |
 | `init`    | Scaffold a new `.agent` file |
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |
