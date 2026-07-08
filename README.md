@@ -84,6 +84,27 @@ lazy context "reference-docs" (priority: optional) {
 
 `skillspec budget my-skill.agent` estimates token usage across all contexts.
 
+### Cross-skill conflict detection
+
+The failure mode that no per-file check catches: rule 47 in one skill quietly contradicting rule 212 in another, or a rule you fixed in one place surviving stale in two others. `rules` extracts every atomic imperative rule across a whole skill tree — from `.agent` sources *and* plain `SKILL.md` files, no migration needed — and detects duplicates, drifted near-duplicates, polarity clashes on shared subjects, and priority mismatches:
+
+```bash
+skillspec rules .claude/skills/
+# polarity-conflict [cross-skill]
+#   A review/SKILL.md:41 [review] "Always run the linter before committing"
+#   B codegen/SKILL.md:12 [codegen] "Never run the linter on generated files"
+#   shared subject: linter, run
+```
+
+Pin the current state as a baseline, then gate CI on *new* findings only:
+
+```bash
+skillspec rules .claude/skills/ --baseline   # writes rules.lock
+skillspec rules .claude/skills/ --check      # exits non-zero on NEW conflicts
+```
+
+Fully deterministic — no models, no network, reproducible in CI. Design and thresholds are grounded in the requirements-engineering and contradiction-detection literature; see [docs/research-conflict-detection.md](docs/research-conflict-detection.md).
+
 ### Structural diff
 
 `diff` compares two skills semantically, not textually:
@@ -334,6 +355,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `grammar` | Print formal EBNF grammar for `.agent` |
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
 | `version` | Show skill versions; `--against old.agent` computes the semver bump, `--bump` applies it |
+| `rules`   | Extract atomic rules across a skill tree; detect duplicates, drift, and polarity conflicts. `--baseline`/`--check` gate CI on new findings |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
 | `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps). `--fix` applies the mechanically-safe ones |

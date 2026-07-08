@@ -16,6 +16,9 @@ Also shipped:
 
 ## Near-term
 
+- **Rules engine tiers 2–3** — `skillspec rules` currently runs the deterministic tiers (dedup, drift, polarity clash, priority mismatch). Next: embedding-based candidate pairing and a local NLI cross-encoder behind a `--semantic` flag (local ONNX models, still no API calls), benchmarked against a hand-labeled set of real skill conflicts first — see docs/research-conflict-detection.md for why off-the-shelf NLI accuracy on imperative text must be measured, not assumed.
+- **Trigger-based co-activation analysis** — derive which skills can be loaded simultaneously from their descriptions/triggers, so conflict checks only run within genuinely co-active sets.
+
 - **Remote package registry** — `skillspec install <name>` pulling from a hosted registry rather than local `.skillpkg` directories
 - **LLM-powered test execution** (`skillspec-test` skill) — run the `tests {}` blocks against a live model and report pass/fail
 - **Language server (LSP)** — IDE integration: go-to-definition, hover docs, inline diagnostics

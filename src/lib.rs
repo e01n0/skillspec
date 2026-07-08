@@ -18,6 +18,7 @@ pub mod migrate;
 pub mod optimize;
 pub mod parser;
 pub mod resolve;
+pub mod rules;
 pub mod test_harness;
 pub mod token;
 pub mod types;

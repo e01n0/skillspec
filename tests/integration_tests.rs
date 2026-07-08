@@ -1220,3 +1220,71 @@ fn build_check_detects_stale_output() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ── Rules engine: cross-skill conflict detection lifecycle ──────────────────
+
+#[test]
+fn rules_detects_conflicts_and_gates_on_baseline() {
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let dir = std::env::temp_dir().join("skillspec_rules_cli_test");
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+
+    std::fs::write(
+        dir.join("a/SKILL.md"),
+        "---\nname: skill-a\n---\n# A\n- Always run the linter before committing.\n- Prefer small focused diffs.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b/SKILL.md"),
+        "---\nname: skill-b\n---\n# B\n- Never run the linter on generated files.\n- Prefer small focused diffs.\n",
+    )
+    .unwrap();
+
+    // Report mode finds the polarity conflict and the duplicate
+    let report = std::process::Command::new(bin)
+        .args(["rules", dir.to_str().unwrap()])
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&report.stdout);
+    assert!(stdout.contains("polarity-conflict"), "stdout: {}", stdout);
+    assert!(stdout.contains("duplicate-rule"), "stdout: {}", stdout);
+
+    // Baseline accepts current findings; check then passes
+    let baseline = std::process::Command::new(bin)
+        .args(["rules", dir.to_str().unwrap(), "--baseline"])
+        .output()
+        .expect("failed to run");
+    assert!(baseline.status.success());
+    assert!(dir.join("rules.lock").exists());
+
+    let clean = std::process::Command::new(bin)
+        .args(["rules", dir.to_str().unwrap(), "--check"])
+        .output()
+        .expect("failed to run");
+    assert!(
+        clean.status.success(),
+        "check must pass right after baseline: {}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+
+    // A new conflicting rule fails the gate
+    let mut b = std::fs::read_to_string(dir.join("b/SKILL.md")).unwrap();
+    b.push_str("- Never write focused diffs, always large ones.\n");
+    std::fs::write(dir.join("b/SKILL.md"), b).unwrap();
+
+    let stale = std::process::Command::new(bin)
+        .args(["rules", dir.to_str().unwrap(), "--check"])
+        .output()
+        .expect("failed to run");
+    assert!(!stale.status.success(), "new conflict must fail --check");
+    let stderr = String::from_utf8_lossy(&stale.stderr);
+    assert!(
+        stderr.contains("polarity-conflict"),
+        "stderr must name the new conflict: {}",
+        stderr
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

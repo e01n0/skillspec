@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Checked `{input.field}` placeholders** — context prose referencing `{input.x}` or `{output.x}` is validated against declared fields, so renaming a field can't silently strand a reference in the instructions.
 
 #### Tooling
+- **`skillspec rules` — cross-skill conflict detection.** Extracts atomic imperative rules from every `.agent` and plain `SKILL.md` in a tree (format-agnostic, no migration required) and detects exact duplicates, drifted near-duplicates, polarity conflicts on shared subjects, and priority mismatches. Scope-aware: contexts pinned to different compile targets and complementary `if`/`if not` branches are never flagged against each other. `--baseline` pins findings in `rules.lock`; `--check` fails CI only on findings not in the baseline, so fixed conflicts stay fixed. Fully deterministic. Design grounded in a verified literature survey (`docs/research-conflict-detection.md`).
 - **Source-snippet diagnostics** — checker errors now print the offending line with a caret underline, and unknown step/skill/mixin/lazy-context references get "did you mean 'x'?" suggestions.
 - **`lint --fix`** — applies the mechanically-safe lint fixes: drops always-true `when` guards, removes never-loaded lazy contexts, and deletes empty steps that nothing references (rewrites the file in canonical format).
 

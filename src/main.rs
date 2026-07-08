@@ -128,6 +128,23 @@ enum Commands {
         #[arg(long)]
         semver: bool,
     },
+    /// Extract atomic rules across all skills in a tree and detect conflicts and drift
+    Rules {
+        /// Directory (or file) containing .agent and SKILL.md files
+        path: String,
+        /// Write current findings to rules.lock as the accepted baseline
+        #[arg(long)]
+        baseline: bool,
+        /// Fail if findings not in the rules.lock baseline are present
+        #[arg(long, conflicts_with = "baseline")]
+        check: bool,
+        /// Print the extracted rule inventory
+        #[arg(long)]
+        list: bool,
+        /// Lockfile path (default: <path>/rules.lock)
+        #[arg(long)]
+        lock: Option<String>,
+    },
     /// Show declared skill versions, or compute/apply a semver bump from the structural diff
     #[command(name = "version")]
     SkillVersion {
@@ -258,6 +275,13 @@ fn main() -> Result<()> {
             against,
             bump,
         } => cmd_version(&file, against.as_deref(), bump),
+        Commands::Rules {
+            path,
+            baseline,
+            check,
+            list,
+            lock,
+        } => cmd_rules(&path, baseline, check, list, lock.as_deref()),
         Commands::Optimize {
             file,
             setup,
@@ -1886,6 +1910,130 @@ fn navigate_json(value: &serde_json::Value, path: &str) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null);
     }
     current
+}
+
+fn cmd_rules(
+    path: &str,
+    baseline: bool,
+    check: bool,
+    list: bool,
+    lock_path: Option<&str>,
+) -> Result<()> {
+    use skillspec_core::rules;
+
+    let root = Path::new(path);
+    let set = rules::extract_tree(root).map_err(|e| miette::miette!("{}", e))?;
+    for warning in &set.warnings {
+        eprintln!("⚠ {}", warning);
+    }
+
+    let skill_count = set
+        .rules
+        .iter()
+        .map(|r| r.skill.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    eprintln!(
+        "extracted {} rule(s) from {} skill(s) across {} file(s)",
+        set.rules.len(),
+        skill_count,
+        set.files_scanned
+    );
+
+    if list {
+        let mut by_skill: std::collections::BTreeMap<&str, Vec<&skillspec_core::rules::Rule>> =
+            std::collections::BTreeMap::new();
+        for rule in &set.rules {
+            by_skill.entry(&rule.skill).or_default().push(rule);
+        }
+        for (skill, rules) in &by_skill {
+            println!("\n[{}] ({} rules)", skill, rules.len());
+            for r in rules {
+                let marker = match r.polarity {
+                    skillspec_core::rules::Polarity::Negative => "−",
+                    skillspec_core::rules::Polarity::Positive => "+",
+                };
+                println!("  {} {}:{} {}", marker, r.file, r.line, r.text);
+            }
+        }
+        println!();
+    }
+
+    let findings = rules::detect(&set.rules);
+    let default_lock = if root.is_dir() {
+        root.join("rules.lock")
+    } else {
+        root.with_file_name("rules.lock")
+    };
+    let lock_file = lock_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or(default_lock);
+
+    if baseline {
+        rules::write_lock(&lock_file, &set.rules, &findings)
+            .map_err(|e| miette::miette!("{}", e))?;
+        println!(
+            "✓ baseline written to {} ({} accepted finding(s))",
+            lock_file.display(),
+            findings.len()
+        );
+        if !findings.is_empty() {
+            eprintln!(
+                "note: the baseline accepts all current findings; fix real conflicts first or triage them later — --check will only fail on NEW findings"
+            );
+        }
+        return Ok(());
+    }
+
+    if check {
+        let lock = rules::read_lock(&lock_file).map_err(|e| {
+            miette::miette!(
+                "{}; run 'skillspec rules {} --baseline' to create the baseline first",
+                e,
+                path
+            )
+        })?;
+        let outcome = rules::check_against_lock(&lock, &findings);
+        for resolved in &outcome.resolved {
+            eprintln!("resolved (no longer detected): {}", resolved);
+        }
+        if outcome.new.is_empty() {
+            println!(
+                "✓ no new conflicts ({} known finding(s) in baseline{})",
+                outcome.known,
+                if outcome.resolved.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ", {} resolved — consider re-running --baseline",
+                        outcome.resolved.len()
+                    )
+                }
+            );
+            return Ok(());
+        }
+        eprintln!("\nNEW findings not in baseline:\n");
+        eprint!("{}", rules::render_findings(&outcome.new, &set.rules));
+        return Err(miette::miette!(
+            "{} new finding(s): {}; fix them or accept intentionally with --baseline",
+            outcome.new.len(),
+            rules::summarize(&outcome.new)
+        ));
+    }
+
+    // Plain report mode
+    if findings.is_empty() {
+        println!("✓ no conflicts or drift detected");
+    } else {
+        println!();
+        print!("{}", rules::render_findings(&findings, &set.rules));
+        println!(
+            "{} finding(s): {}",
+            findings.len(),
+            rules::summarize(&findings)
+        );
+    }
+    Ok(())
 }
 
 fn cmd_version(path: &str, against: Option<&str>, bump: bool) -> Result<()> {
