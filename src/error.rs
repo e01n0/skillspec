@@ -118,6 +118,42 @@ pub enum SkillSpecError {
     #[error("Invalid name '{name}': must not contain path separators or '..' at {span}")]
     InvalidName { name: String, span: Span },
 
+    #[error(
+        "Skill '{skill_name}' exceeds its token budget: ~{estimated} estimated vs {max_tokens} declared at {span}"
+    )]
+    BudgetExceeded {
+        skill_name: String,
+        estimated: usize,
+        max_tokens: i64,
+        span: Span,
+    },
+
+    #[error("Budget max_tokens must be positive, got {max_tokens} at {span}")]
+    InvalidBudget { max_tokens: i64, span: Span },
+
+    #[error("Unknown compile target '{name}' in context at {span}, expected one of: {known}")]
+    UnknownTargetName {
+        name: String,
+        known: String,
+        span: Span,
+    },
+
+    #[error(
+        "Context references '{{{placeholder}}}' but '{field}' is not a declared {section} field at {span}"
+    )]
+    UnknownPlaceholder {
+        placeholder: String,
+        field: String,
+        section: String,
+        span: Span,
+    },
+
+    #[error("Invalid version '{version}' at {span}: expected MAJOR.MINOR.PATCH")]
+    InvalidVersion { version: String, span: Span },
+
+    #[error("on_fail retry count must be at least 1, got {count} at {span}")]
+    InvalidRetryCount { count: i64, span: Span },
+
     #[error("Lexer error: {message} at {span}")]
     LexerError { message: String, span: Span },
 

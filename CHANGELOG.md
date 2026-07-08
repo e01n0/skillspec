@@ -10,6 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+#### Language
+- **`version "x.y.z"` skill declaration** — compiled into SKILL.md frontmatter and validated as MAJOR.MINOR.PATCH. Paired with the new `skillspec version` command: `--against old.agent` classifies the structural diff as a semver bump and `--bump` rewrites the declaration.
+- **`budget { max_tokens: N }` skill block** — an enforceable token contract: `check` and `build` fail when the skill's estimated eager context tokens exceed the ceiling.
+- **`on_fail` step policies** — `on_fail retry N`, `on_fail escalate ["message"]`, or `on_fail abort`; compiled to failure-handling prose in every target.
+- **`context(target: cursor)`** — restrict a context block to one compile target (skillmd, cursor, clinerules, "system-prompt", agentsmd) so a single `.agent` file can carry runtime-specific instructions.
+- **Checked `{input.field}` placeholders** — context prose referencing `{input.x}` or `{output.x}` is validated against declared fields, so renaming a field can't silently strand a reference in the instructions.
+
+#### Tooling
+
 - **`--check` flag on `build`** — verify the deployed output matches the compiled source without writing; exits non-zero when stale or missing. A one-line CI gate that enforces the `.agent` file as source of truth.
 - **AGENTS.md compile target** — `--target agentsmd` compiles all skills into a single `AGENTS.md` (the cross-tool convention read by Codex, Cursor, and others). `--to agents` deploys to `./AGENTS.md`; `--to copilot` deploys to `.github/copilot-instructions.md`.
 - **`skillspec completions <shell>`** — generate shell completions for bash, zsh, fish, elvish, and powershell.

@@ -1047,6 +1047,7 @@ fn apply_context_mutations(optimized: &[ParsedContext], source_contexts: &mut Ve
                 when: None,
                 decay: None,
                 until: None,
+                target: None,
                 text: opt_ctx.text.clone(),
                 span: Span {
                     start: 0,
@@ -1745,6 +1746,7 @@ Answer warmly.
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: "You generate greetings.".to_string(),
             span: Span {
                 start: 0,
@@ -1769,6 +1771,7 @@ Answer warmly.
                 when: None,
                 decay: None,
                 until: None,
+                target: None,
                 text: "Generate a greeting for the given name.".to_string(),
                 span: Span {
                     start: 0,
@@ -1782,6 +1785,7 @@ Answer warmly.
                 when: None,
                 decay: None,
                 until: None,
+                target: None,
                 text: "You are a greeting specialist.".to_string(),
                 span: Span {
                     start: 0,
@@ -1807,6 +1811,7 @@ Answer warmly.
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: "Short.".to_string(),
             span: Span {
                 start: 0,
@@ -1832,6 +1837,7 @@ Answer warmly.
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: "You generate greetings.".to_string(),
             span: Span {
                 start: 0,
@@ -1859,6 +1865,7 @@ Answer warmly.
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: "You generate greetings.".to_string(),
             span: Span {
                 start: 0,
@@ -1891,6 +1898,7 @@ Answer warmly.
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: "Be concise in your greetings.".to_string(),
             span: Span {
                 start: 0,

@@ -110,6 +110,11 @@ impl Checker {
                 &file.mixins,
             );
             self.check_use_calls(skill, &skill_sigs);
+            self.check_version(skill);
+            self.check_budget_contract(skill);
+            self.check_context_targets(skill);
+            self.check_placeholders(skill);
+            self.check_on_fail(skill);
         }
 
         // Check for extends cycles across all skills
@@ -136,6 +141,124 @@ impl Checker {
             Ok(())
         } else {
             Err(std::mem::take(&mut self.errors))
+        }
+    }
+
+    fn check_version(&mut self, skill: &Skill) {
+        if let Some(version) = &skill.version {
+            let mut parts = version.split('.');
+            let valid = parts.clone().count() == 3
+                && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+            if !valid {
+                self.errors.push(SkillSpecError::InvalidVersion {
+                    version: version.clone(),
+                    span: skill.span,
+                });
+            }
+        }
+    }
+
+    fn check_budget_contract(&mut self, skill: &Skill) {
+        let Some(budget) = &skill.budget else { return };
+        if budget.max_tokens <= 0 {
+            self.errors.push(SkillSpecError::InvalidBudget {
+                max_tokens: budget.max_tokens,
+                span: budget.span,
+            });
+            return;
+        }
+        let estimated = crate::budget::estimate_skill_budget(skill).total_eager();
+        if estimated > budget.max_tokens as usize {
+            self.errors.push(SkillSpecError::BudgetExceeded {
+                skill_name: skill.name.clone(),
+                estimated,
+                max_tokens: budget.max_tokens,
+                span: budget.span,
+            });
+        }
+    }
+
+    fn check_context_targets(&mut self, skill: &Skill) {
+        let check_ctx = |errors: &mut Vec<SkillSpecError>, ctx: &ContextBlock| {
+            if let Some(target) = &ctx.target
+                && !KNOWN_TARGETS.contains(&target.as_str())
+            {
+                errors.push(SkillSpecError::UnknownTargetName {
+                    name: target.clone(),
+                    known: KNOWN_TARGETS.join(", "),
+                    span: ctx.span,
+                });
+            }
+        };
+        for ctx in &skill.body.contexts {
+            check_ctx(&mut self.errors, ctx);
+        }
+        for step in &skill.body.steps {
+            for ctx in &step.contexts {
+                check_ctx(&mut self.errors, ctx);
+            }
+        }
+    }
+
+    /// Validate `{input.field}` / `{output.field}` placeholders in context
+    /// prose against the skill's declared fields, so renaming a field can't
+    /// silently strand a reference in the instructions.
+    fn check_placeholders(&mut self, skill: &Skill) {
+        let input_names: HashSet<&str> = skill
+            .input
+            .iter()
+            .flatten()
+            .map(|f| f.name.as_str())
+            .collect();
+        let output_names: HashSet<&str> = skill
+            .output
+            .iter()
+            .flatten()
+            .map(|f| f.name.as_str())
+            .collect();
+
+        let re = regex::Regex::new(r"\{(input|output)\.([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+
+        let check_text = |errors: &mut Vec<SkillSpecError>, text: &str, span: Span| {
+            for cap in re.captures_iter(text) {
+                let section = &cap[1];
+                let field = &cap[2];
+                let known = if section == "input" {
+                    &input_names
+                } else {
+                    &output_names
+                };
+                if !known.contains(field) {
+                    errors.push(SkillSpecError::UnknownPlaceholder {
+                        placeholder: format!("{}.{}", section, field),
+                        field: field.to_string(),
+                        section: section.to_string(),
+                        span,
+                    });
+                }
+            }
+        };
+
+        for ctx in &skill.body.contexts {
+            check_text(&mut self.errors, &ctx.text, ctx.span);
+        }
+        for step in &skill.body.steps {
+            for ctx in &step.contexts {
+                check_text(&mut self.errors, &ctx.text, ctx.span);
+            }
+        }
+    }
+
+    fn check_on_fail(&mut self, skill: &Skill) {
+        for step in &skill.body.steps {
+            if let Some(OnFailPolicy::Retry(count)) = &step.on_fail
+                && *count < 1
+            {
+                self.errors.push(SkillSpecError::InvalidRetryCount {
+                    count: *count,
+                    span: step.span,
+                });
+            }
         }
     }
 
@@ -2355,6 +2478,153 @@ mod tests {
             skill "x" {
                 body { context { "ok" } }
                 tests { }
+            }
+        "#,
+        );
+        assert!(result.is_ok());
+    }
+
+    // ── Version / budget / target / placeholder / on_fail checks ───────────
+
+    #[test]
+    fn valid_version_passes() {
+        let result = check(r#"skill "x" { version "1.2.3" body { context { "ok" } } }"#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn invalid_version_rejected() {
+        for bad in ["1.2", "v1.2.3", "1.2.3-beta", "a.b.c"] {
+            let src = format!(
+                r#"skill "x" {{ version "{}" body {{ context {{ "ok" }} }} }}"#,
+                bad
+            );
+            let errors = check(&src).unwrap_err();
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| matches!(e, SkillSpecError::InvalidVersion { .. })),
+                "expected InvalidVersion for '{}'",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn budget_within_limit_passes() {
+        let result =
+            check(r#"skill "x" { budget { max_tokens: 10000 } body { context { "short" } } }"#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn budget_exceeded_rejected() {
+        let errors = check(
+            r#"skill "x" { budget { max_tokens: 3 } body { context { "this context is definitely longer than three tokens worth of text" } } }"#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SkillSpecError::BudgetExceeded { .. }))
+        );
+    }
+
+    #[test]
+    fn budget_zero_rejected() {
+        let errors = check(r#"skill "x" { budget { max_tokens: 0 } body { context { "ok" } } }"#)
+            .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SkillSpecError::InvalidBudget { .. }))
+        );
+    }
+
+    #[test]
+    fn known_context_target_passes() {
+        let result = check(
+            r#"skill "x" { body { context(target: cursor) { "ok" } context(target: "system-prompt") { "ok" } } }"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unknown_context_target_rejected() {
+        let errors =
+            check(r#"skill "x" { body { context(target: vscode) { "ok" } } }"#).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownTargetName { .. }))
+        );
+    }
+
+    #[test]
+    fn declared_placeholder_passes() {
+        let result = check(
+            r#"
+            skill "x" {
+                input { file: string }
+                output { verdict: string }
+                body {
+                    context { "Review {input.file}, then set {output.verdict}." }
+                }
+            }
+        "#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn unknown_placeholder_rejected() {
+        let errors = check(
+            r#"
+            skill "x" {
+                input { file: string }
+                body {
+                    step go { context { "Review {input.fiel}." } }
+                }
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SkillSpecError::UnknownPlaceholder { .. }))
+        );
+    }
+
+    #[test]
+    fn json_braces_are_not_placeholders() {
+        let result =
+            check(r#"skill "x" { body { context { "Emit {\"type\":\"done\"} as JSON." } } }"#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn on_fail_retry_zero_rejected() {
+        let errors =
+            check(r#"skill "x" { body { step go { on_fail retry 0 context { "go" } } } }"#)
+                .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SkillSpecError::InvalidRetryCount { .. }))
+        );
+    }
+
+    #[test]
+    fn on_fail_variants_pass() {
+        let result = check(
+            r#"
+            skill "x" {
+                body {
+                    step a { on_fail retry 2 context { "a" } }
+                    step b { requires a on_fail escalate "help" context { "b" } }
+                    step c { requires b on_fail abort context { "c" } }
+                }
             }
         "#,
         );

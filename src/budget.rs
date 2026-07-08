@@ -262,6 +262,7 @@ mod tests {
             when: None,
             decay: None,
             until: None,
+            target: None,
             text: text.to_string(),
             span: crate::token::Span {
                 start: 0,

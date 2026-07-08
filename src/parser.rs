@@ -122,9 +122,18 @@ impl Parser {
         let mut permissions = None;
         let mut includes = Vec::new();
         let mut tests = Vec::new();
+        let mut version = None;
+        let mut budget = None;
 
         while self.peek_kind() != TokenKind::RBrace {
             match self.peek_kind() {
+                TokenKind::Version => {
+                    self.advance();
+                    version = Some(self.expect_string_lit()?);
+                }
+                TokenKind::Budget => {
+                    budget = Some(self.parse_budget_block()?);
+                }
                 TokenKind::Input => {
                     self.advance();
                     self.expect(TokenKind::LBrace)?;
@@ -178,7 +187,7 @@ impl Parser {
                     return Err(SkillSpecError::UnexpectedToken {
                         found: text,
                         expected:
-                            "input, output, pre, post, body, context, tools, permissions, include, or tests"
+                            "input, output, pre, post, body, context, tools, permissions, include, tests, version, or budget"
                                 .to_string(),
                         span,
                     });
@@ -201,7 +210,43 @@ impl Parser {
             permissions,
             includes,
             tests,
+            version,
+            budget,
         })
+    }
+
+    fn parse_budget_block(&mut self) -> Result<BudgetBlock> {
+        let span = self.peek_span();
+        self.expect(TokenKind::Budget)?;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut max_tokens = None;
+        while self.peek_kind() != TokenKind::RBrace {
+            let key_span = self.peek_span();
+            let key = self.expect_ident()?;
+            self.expect(TokenKind::Colon)?;
+            match key.as_str() {
+                "max_tokens" => {
+                    max_tokens = Some(self.expect_int_lit()?);
+                }
+                other => {
+                    return Err(SkillSpecError::UnexpectedToken {
+                        found: other.to_string(),
+                        expected: "max_tokens".to_string(),
+                        span: key_span,
+                    });
+                }
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+
+        let max_tokens = max_tokens.ok_or_else(|| SkillSpecError::UnexpectedToken {
+            found: "}".to_string(),
+            expected: "max_tokens in budget block".to_string(),
+            span,
+        })?;
+
+        Ok(BudgetBlock { max_tokens, span })
     }
 
     // ── Body ──────────────────────────────────────────────────────────
@@ -332,8 +377,9 @@ impl Parser {
         let mut when = None;
         let mut decay = None;
         let mut until = None;
+        let mut target = None;
 
-        // Optional parameters in parens: context(priority: flag, when: expr, decay: N, until: step)
+        // Optional parameters in parens: context(priority: flag, when: expr, decay: N, until: step, target: name)
         if self.peek_kind() == TokenKind::LParen {
             self.advance();
             while self.peek_kind() != TokenKind::RParen {
@@ -352,10 +398,19 @@ impl Parser {
                     "until" => {
                         until = Some(self.expect_ident()?);
                     }
+                    "target" => {
+                        // Bare ident for simple names (cursor, agentsmd);
+                        // string literal for hyphenated ones ("system-prompt").
+                        target = Some(if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+                            self.expect_string_lit()?
+                        } else {
+                            self.expect_ident()?
+                        });
+                    }
                     _ => {
                         return Err(SkillSpecError::UnexpectedToken {
                             found: param_name,
-                            expected: "priority, when, decay, or until".to_string(),
+                            expected: "priority, when, decay, until, or target".to_string(),
                             span,
                         });
                     }
@@ -376,6 +431,7 @@ impl Parser {
             when,
             decay,
             until,
+            target,
             text,
             span,
         })
@@ -396,12 +452,16 @@ impl Parser {
         let mut emit = false;
         let mut contexts = Vec::new();
         let mut loads = Vec::new();
+        let mut on_fail = None;
 
         while self.peek_kind() != TokenKind::RBrace {
             match self.peek_kind() {
                 TokenKind::Requires => {
                     self.advance();
                     requires = Some(self.parse_dependency()?);
+                }
+                TokenKind::OnFail => {
+                    on_fail = Some(self.parse_on_fail()?);
                 }
                 TokenKind::When => {
                     self.advance();
@@ -432,7 +492,8 @@ impl Parser {
                     let text = self.peek_text();
                     return Err(SkillSpecError::UnexpectedToken {
                         found: text,
-                        expected: "requires, when, use, let, emit, load, or context".to_string(),
+                        expected: "requires, when, use, let, emit, load, on_fail, or context"
+                            .to_string(),
                         span: s,
                     });
                 }
@@ -451,7 +512,39 @@ impl Parser {
             contexts,
             span,
             loads,
+            on_fail,
         })
+    }
+
+    /// `on_fail retry N` | `on_fail escalate ["message"]` | `on_fail abort`
+    fn parse_on_fail(&mut self) -> Result<OnFailPolicy> {
+        self.expect(TokenKind::OnFail)?;
+        let span = self.peek_span();
+        match self.peek_kind() {
+            TokenKind::Retry => {
+                self.advance();
+                let count = self.expect_int_lit()?;
+                Ok(OnFailPolicy::Retry(count))
+            }
+            TokenKind::Ident(ref name) if name == "escalate" => {
+                self.advance();
+                let message = if matches!(self.peek_kind(), TokenKind::StringLit(_)) {
+                    Some(self.expect_string_lit()?)
+                } else {
+                    None
+                };
+                Ok(OnFailPolicy::Escalate(message))
+            }
+            TokenKind::Ident(ref name) if name == "abort" => {
+                self.advance();
+                Ok(OnFailPolicy::Abort)
+            }
+            _ => Err(SkillSpecError::UnexpectedToken {
+                found: self.peek_text(),
+                expected: "retry N, escalate [\"message\"], or abort".to_string(),
+                span,
+            }),
+        }
     }
 
     // ── Dependency ────────────────────────────────────────────────────
@@ -2204,6 +2297,8 @@ impl Parser {
                 | TokenKind::If
                 | TokenKind::Retry
                 | TokenKind::Backoff
+                | TokenKind::OnFail
+                | TokenKind::Budget
                 // Phase 3 test keywords
                 | TokenKind::Tests
                 | TokenKind::Test

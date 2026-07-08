@@ -158,7 +158,17 @@ impl Formatter {
         self.line(&format!("skill \"{}\"{} {{", skill.name, extends));
         self.indent += 1;
 
-        // Canonical order: input, output, tools, permissions, include, pre, post, body, tests
+        // Canonical order: version, budget, input, output, tools, permissions, include, pre, post, body, tests
+        if let Some(version) = &skill.version {
+            self.line(&format!("version \"{}\"", version));
+        }
+        if let Some(budget) = &skill.budget {
+            self.line("budget {");
+            self.indent += 1;
+            self.line(&format!("max_tokens: {}", budget.max_tokens));
+            self.indent -= 1;
+            self.line("}");
+        }
         if let Some(input) = &skill.input {
             self.emit_fields_block("input", input);
         }
@@ -450,6 +460,14 @@ impl Formatter {
         if let Some(until) = &ctx.until {
             params.push(format!("until: {}", until));
         }
+        if let Some(target) = &ctx.target {
+            // Hyphenated target names need quoting to lex as one token
+            if target.contains('-') {
+                params.push(format!("target: \"{}\"", target));
+            } else {
+                params.push(format!("target: {}", target));
+            }
+        }
 
         let params_str = if params.is_empty() {
             String::new()
@@ -535,6 +553,16 @@ impl Formatter {
         }
         if let Some(when) = &step.when {
             self.line(&format!("when {}", expr_to_string(when)));
+        }
+        if let Some(policy) = &step.on_fail {
+            match policy {
+                OnFailPolicy::Retry(n) => self.line(&format!("on_fail retry {}", n)),
+                OnFailPolicy::Escalate(Some(msg)) => {
+                    self.line(&format!("on_fail escalate \"{}\"", escape_string(msg)))
+                }
+                OnFailPolicy::Escalate(None) => self.line("on_fail escalate"),
+                OnFailPolicy::Abort => self.line("on_fail abort"),
+            }
         }
         for load in &step.loads {
             self.line(&format!("load \"{}\"", load));
@@ -921,6 +949,35 @@ pub fn format_source(source: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_trip_version_budget_onfail_target() {
+        let input = r#"
+            skill "x" {
+                version "1.2.3"
+                budget { max_tokens: 500 }
+                input { file: string }
+                body {
+                    context(target: cursor) { "Cursor only." }
+                    context(target: "system-prompt") { "Codex only." }
+                    step a { on_fail retry 2 context { "a" } }
+                    step b { requires a on_fail escalate "help me" context { "b" } }
+                    step c { requires b on_fail abort context { "c" } }
+                }
+            }
+        "#;
+        let formatted = format_source(input).unwrap();
+        assert!(formatted.contains("version \"1.2.3\""));
+        assert!(formatted.contains("max_tokens: 500"));
+        assert!(formatted.contains("context(target: cursor)"));
+        assert!(formatted.contains("context(target: \"system-prompt\")"));
+        assert!(formatted.contains("on_fail retry 2"));
+        assert!(formatted.contains("on_fail escalate \"help me\""));
+        assert!(formatted.contains("on_fail abort"));
+        // Formatted output must parse back cleanly, and re-formatting must be stable
+        let reformatted = format_source(&formatted).unwrap();
+        assert_eq!(formatted, reformatted, "fmt must be idempotent");
+    }
 
     #[test]
     fn round_trip_minimal() {

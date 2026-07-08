@@ -39,6 +39,10 @@ impl SkillMdCompiler {
         out.push_str("---\n");
         out.push_str(&format!("name: {}\n", skill.name));
 
+        if let Some(version) = &skill.version {
+            out.push_str(&format!("version: {}\n", version));
+        }
+
         if let Some(base) = &skill.extends {
             out.push_str(&format!("extends: {}\n", base));
         }
@@ -190,6 +194,7 @@ impl SkillMdCompiler {
         for mixin in &included_mixins {
             all_contexts.extend(mixin.contexts.iter());
         }
+        all_contexts.retain(|c| c.applies_to("skillmd"));
         all_contexts.sort_by(|a, b| {
             let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
             let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
@@ -278,7 +283,12 @@ impl SkillMdCompiler {
                 out.push_str(&format!("*Loads reference: {}*\n\n", load_name));
             }
 
+            if let Some(policy) = &step.on_fail {
+                out.push_str(&format!("{}\n\n", Self::on_fail_prose(policy)));
+            }
+
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
+            step_contexts.retain(|c| c.applies_to("skillmd"));
             step_contexts.sort_by(|a, b| {
                 let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
                 let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
@@ -291,6 +301,24 @@ impl SkillMdCompiler {
         }
 
         out
+    }
+
+    fn on_fail_prose(policy: &OnFailPolicy) -> String {
+        match policy {
+            OnFailPolicy::Retry(n) => format!(
+                "*If this step fails: retry up to {} more time{} before continuing.*",
+                n,
+                if *n == 1 { "" } else { "s" }
+            ),
+            OnFailPolicy::Escalate(Some(msg)) => format!(
+                "*If this step fails: stop and escalate to the user — {}*",
+                msg
+            ),
+            OnFailPolicy::Escalate(None) => {
+                "*If this step fails: stop and escalate to the user.*".to_string()
+            }
+            OnFailPolicy::Abort => "*If this step fails: abort the skill entirely.*".to_string(),
+        }
     }
 
     // ── Pipeline compiler ─────────────────────────────────────────────────────
@@ -536,6 +564,7 @@ impl SkillMdCompiler {
 
         // Inline target's body-level contexts
         let mut body_ctxs: Vec<&ContextBlock> = target.body.contexts.iter().collect();
+        body_ctxs.retain(|c| c.applies_to("skillmd"));
         body_ctxs.sort_by(|a, b| {
             b.priority
                 .unwrap_or(Priority::Supplementary)
@@ -565,6 +594,7 @@ impl SkillMdCompiler {
             }
 
             let mut step_contexts: Vec<&ContextBlock> = step.contexts.iter().collect();
+            step_contexts.retain(|c| c.applies_to("skillmd"));
             step_contexts.sort_by(|a, b| {
                 b.priority
                     .unwrap_or(Priority::Supplementary)

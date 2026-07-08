@@ -537,6 +537,8 @@ impl Lexer {
             "if" => TokenKind::If,
             "retry" => TokenKind::Retry,
             "backoff" => TokenKind::Backoff,
+            "on_fail" => TokenKind::OnFail,
+            "budget" => TokenKind::Budget,
             // Primitives
             "string" => TokenKind::StringType,
             "int" => TokenKind::IntType,

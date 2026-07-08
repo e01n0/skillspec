@@ -126,6 +126,10 @@ pub enum TokenKind {
     If,
     Retry,
     Backoff,
+    OnFail,
+
+    // Budget contract
+    Budget,
 
     // Primitives
     StringType,

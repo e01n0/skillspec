@@ -70,6 +70,18 @@ pub struct Skill {
     pub permissions: Option<PermissionsBlock>,
     pub includes: Vec<String>,
     pub tests: Vec<TestBlock>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub budget: Option<BudgetBlock>,
+}
+
+/// In-source token budget contract: check/build fail when the skill's
+/// estimated eager context tokens exceed the declared ceiling.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BudgetBlock {
+    pub max_tokens: i64,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -135,9 +147,32 @@ pub struct ContextBlock {
     pub when: Option<Expr>,
     pub decay: Option<f64>,
     pub until: Option<String>,
+    /// Restricts this context to one compile target (e.g. "cursor").
+    /// None means the context appears in every target's output.
+    #[serde(default)]
+    pub target: Option<String>,
     pub text: String,
     pub span: Span,
 }
+
+impl ContextBlock {
+    /// Whether this context should be included when compiling for `target`.
+    pub fn applies_to(&self, target: &str) -> bool {
+        match &self.target {
+            None => true,
+            Some(t) => t == target,
+        }
+    }
+}
+
+/// Compile-target names accepted by `context(target: ...)`.
+pub const KNOWN_TARGETS: &[&str] = &[
+    "skillmd",
+    "cursor",
+    "clinerules",
+    "system-prompt",
+    "agentsmd",
+];
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Step {
@@ -150,6 +185,19 @@ pub struct Step {
     pub contexts: Vec<ContextBlock>,
     pub span: Span,
     pub loads: Vec<String>,
+    #[serde(default)]
+    pub on_fail: Option<OnFailPolicy>,
+}
+
+/// What the agent should do when a step fails.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum OnFailPolicy {
+    /// Retry the step up to N more times before continuing.
+    Retry(i64),
+    /// Stop and surface the failure to the user, optionally with a message.
+    Escalate(Option<String>),
+    /// Abandon the whole skill.
+    Abort,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

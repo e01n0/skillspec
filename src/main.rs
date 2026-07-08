@@ -12,7 +12,7 @@ use skillspec_core::compiler_ir::IrCompiler;
 use skillspec_core::compiler_skillmd::SkillMdCompiler;
 use skillspec_core::compiler_systemprompt::SystemPromptCompiler;
 use skillspec_core::deps::{emit_dot, emit_mermaid};
-use skillspec_core::diff::{classify_semver, skillmd_diff, structural_diff};
+use skillspec_core::diff::{SemverLevel, classify_semver, skillmd_diff, structural_diff};
 use skillspec_core::formatter::Formatter;
 use skillspec_core::lexer::Lexer;
 use skillspec_core::lint::LintEngine;
@@ -122,6 +122,17 @@ enum Commands {
         /// Classify changes as MAJOR/MINOR/PATCH semver bumps
         #[arg(long)]
         semver: bool,
+    },
+    /// Show declared skill versions, or compute/apply a semver bump from the structural diff
+    #[command(name = "version")]
+    SkillVersion {
+        file: String,
+        /// Previous revision of the file to classify changes against
+        #[arg(long)]
+        against: Option<String>,
+        /// Rewrite the version declaration(s) in the file with the computed bump
+        #[arg(long, requires = "against")]
+        bump: bool,
     },
     /// Optimize skills using SkillOpt — iterative LLM-driven improvement via the hosting agent
     Optimize {
@@ -237,6 +248,11 @@ fn main() -> Result<()> {
             against_skillmd,
             semver,
         } => cmd_diff(&file_a, &file_b, against_skillmd, semver),
+        Commands::SkillVersion {
+            file,
+            against,
+            bump,
+        } => cmd_version(&file, against.as_deref(), bump),
         Commands::Optimize {
             file,
             setup,
@@ -1847,6 +1863,97 @@ fn navigate_json(value: &serde_json::Value, path: &str) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null);
     }
     current
+}
+
+fn cmd_version(path: &str, against: Option<&str>, bump: bool) -> Result<()> {
+    let ast = read_and_parse(path)?;
+
+    let Some(old_path) = against else {
+        for skill in &ast.skills {
+            match &skill.version {
+                Some(v) => println!("{}: {}", skill.name, v),
+                None => println!("{}: (no version declared)", skill.name),
+            }
+        }
+        return Ok(());
+    };
+
+    let old_ast = read_and_parse(old_path)?;
+    let report = classify_semver(&old_ast, &ast);
+
+    if report.breakdown.is_empty() {
+        println!(
+            "✓ no structural changes between '{}' and '{}'",
+            old_path, path
+        );
+        return Ok(());
+    }
+
+    eprint!("{}", report.display());
+    eprintln!();
+
+    let mut replacements: Vec<(String, String)> = Vec::new();
+    for skill in &ast.skills {
+        let current = skill.version.clone().or_else(|| {
+            old_ast
+                .skills
+                .iter()
+                .find(|s| s.name == skill.name)
+                .and_then(|s| s.version.clone())
+        });
+        let Some(current) = current else {
+            eprintln!(
+                "⚠ {}: no version declared; add `version \"0.1.0\"` to the skill to track bumps",
+                skill.name
+            );
+            continue;
+        };
+        let next = bump_version(&current, report.level).ok_or_else(|| {
+            miette::miette!("cannot parse version '{}' as MAJOR.MINOR.PATCH", current)
+        })?;
+        println!("{}: {} → {} ({})", skill.name, current, next, report.level);
+        if skill.version.is_some() {
+            replacements.push((current, next));
+        } else if bump {
+            eprintln!(
+                "⚠ {}: version comes from '{}'; declare it in '{}' before using --bump",
+                skill.name, old_path, path
+            );
+        }
+    }
+
+    if bump {
+        let mut source = fs::read_to_string(path)
+            .map_err(|e| miette::miette!("Failed to read '{}': {}", path, e))?;
+        replacements.sort();
+        replacements.dedup();
+        for (old_v, new_v) in &replacements {
+            source = source.replace(
+                &format!("version \"{}\"", old_v),
+                &format!("version \"{}\"", new_v),
+            );
+        }
+        fs::write(path, &source)
+            .map_err(|e| miette::miette!("Failed to write '{}': {}", path, e))?;
+        println!("✓ updated version declaration(s) in {}", path);
+    }
+
+    Ok(())
+}
+
+fn bump_version(version: &str, level: SemverLevel) -> Option<String> {
+    let mut parts = version.split('.');
+    let major: u64 = parts.next()?.parse().ok()?;
+    let minor: u64 = parts.next()?.parse().ok()?;
+    let patch: u64 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(match level {
+        SemverLevel::Major => format!("{}.0.0", major + 1),
+        SemverLevel::Minor => format!("{}.{}.0", major, minor + 1),
+        SemverLevel::Patch => format!("{}.{}.{}", major, minor, patch + 1),
+    })
 }
 
 fn cmd_diff(path_a: &str, path_b: &str, against_skillmd: bool, semver: bool) -> Result<()> {

@@ -109,7 +109,12 @@ skill_section   = input_block
                 | tools_block
                 | permissions_block
                 | include_stmt
-                | tests_block ;
+                | tests_block
+                | version_decl
+                | budget_block ;
+
+version_decl    = "version" , string_lit ;        (* MAJOR.MINOR.PATCH *)
+budget_block    = "budget" , "{" , "max_tokens" , ":" , int_lit , "}" ;
 
 input_block     = "input" , "{" , field_list , "}" ;
 output_block    = "output" , "{" , field_list , "}" ;
@@ -146,7 +151,10 @@ context_params  = "(" , context_param , { "," , context_param } , ")" ;
 context_param   = "priority" , ":" , priority_flag
                 | "when" , ":" , expr
                 | "decay" , ":" , float_lit
-                | "until" , ":" , ident ;
+                | "until" , ":" , ident
+                | "target" , ":" , ( ident | string_lit ) ;
+                  (* compile target: skillmd, cursor, clinerules,
+                     "system-prompt", agentsmd *)
 priority_flag   = "critical" | "important" | "supplementary" | "optional" ;
 
 
@@ -181,7 +189,12 @@ step_item       = requires_clause
                 | let_binding
                 | load_stmt
                 | emit_stmt
+                | on_fail_clause
                 | context_block ;
+
+on_fail_clause  = "on_fail" , ( "retry" , int_lit
+                              | "escalate" , [ string_lit ]
+                              | "abort" ) ;
 
 requires_clause = "requires" , dependency ;
 dependency      = "all_steps"

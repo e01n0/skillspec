@@ -140,6 +140,26 @@ permissions {
 }
 ```
 
+### Versions, budgets, and failure policies
+
+Skills can declare their own version and token budget, and steps can say what happens when they fail. `check` enforces the budget; `skillspec version --against` computes the right semver bump from the structural diff and `--bump` applies it.
+
+```skillspec
+skill "reviewer" {
+  version "1.2.0"
+  budget { max_tokens: 4000 }
+  body {
+    context(target: cursor) { "Only appears in .cursorrules output." }
+    step analyse {
+      on_fail retry 2
+      context { "Review {input.file} carefully." }
+    }
+  }
+}
+```
+
+`{input.file}` placeholders in context prose are validated against declared fields — rename the field and the compiler catches the stale reference. `context(target: ...)` restricts a block to one compile target so a single `.agent` file can carry runtime-specific instructions.
+
 ### Pre/post contracts
 
 ```skillspec
@@ -313,6 +333,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `build`   | Compile to `SKILL.md` or `.agentpkg`. `--to` deploys to a runtime; `--check` verifies deployed output is current |
 | `grammar` | Print formal EBNF grammar for `.agent` |
 | `diff`    | Structural diff between `.agent` files, or source vs deployed |
+| `version` | Show skill versions; `--against old.agent` computes the semver bump, `--bump` applies it |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
 | `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps) |

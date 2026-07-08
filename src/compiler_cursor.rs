@@ -28,6 +28,7 @@ impl TargetCompiler for CursorCompiler {
             all_contexts.extend(ancestor.body.contexts.iter());
         }
         all_contexts.extend(skill.body.contexts.iter());
+        all_contexts.retain(|c| c.applies_to("cursor"));
         all_contexts.sort_by(|a, b| {
             let pa = a.priority.unwrap_or(Priority::Supplementary).rank();
             let pb = b.priority.unwrap_or(Priority::Supplementary).rank();
