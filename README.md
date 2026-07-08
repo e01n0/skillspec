@@ -336,7 +336,7 @@ You don't need to migrate everything at once. Start with the skills that break m
 | `version` | Show skill versions; `--against old.agent` computes the semver bump, `--bump` applies it |
 | `budget`  | Token estimate across contexts |
 | `fmt`     | Canonical formatting |
-| `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps) |
+| `lint`    | Quality rules beyond structural validity (priority spread, oversized contexts, dead guards, empty or unreachable steps). `--fix` applies the mechanically-safe ones |
 | `deps`    | Step dependency graph |
 | `init`    | Scaffold a new `.agent` file. `--template` starts from a bundled example |
 | `migrate` | Extract SKILL.md file, directory, or skill tree into `.agent.partial` |

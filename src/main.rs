@@ -109,7 +109,12 @@ enum Commands {
         evaluate: Option<String>,
     },
     /// Run lint rules to catch quality issues beyond structural validity
-    Lint { file: String },
+    Lint {
+        file: String,
+        /// Apply mechanically-safe fixes (rewrites the file in canonical format)
+        #[arg(long)]
+        fix: bool,
+    },
     /// Print the formal EBNF grammar for the .agent language
     Grammar,
     /// Show structural diff between two .agent files (or compiled vs SKILL.md)
@@ -241,7 +246,7 @@ fn main() -> Result<()> {
             evaluate,
         } => cmd_test(&file, prepare, evaluate.as_deref()),
         Commands::Grammar => cmd_grammar(),
-        Commands::Lint { file } => cmd_lint(&file),
+        Commands::Lint { file, fix } => cmd_lint(&file, fix),
         Commands::Diff {
             file_a,
             file_b,
@@ -306,9 +311,7 @@ fn main() -> Result<()> {
                 .to_path_buf();
             let mut checker = Checker::with_base_dir(base_dir);
             if let Err(errors) = checker.check(&ast) {
-                for err in &errors {
-                    eprintln!("error: {}", err);
-                }
+                print_errors_with_source(&file, &errors);
                 return Err(miette::miette!(
                     "{} error(s) in '{}'; fix them before optimizing",
                     errors.len(),
@@ -336,6 +339,19 @@ fn read_and_parse(path: &str) -> Result<SourceFile> {
     Ok(ast)
 }
 
+/// Print checker/parse errors with a source snippet and caret underline.
+fn print_errors_with_source(path: &str, errors: &[skillspec_core::error::SkillSpecError]) {
+    let source = fs::read_to_string(path).unwrap_or_default();
+    for err in errors {
+        eprintln!("error: {}", err);
+        if let Some(span) = err.span()
+            && let Some(snippet) = skillspec_core::error::render_snippet(&source, span)
+        {
+            eprintln!("{}", snippet);
+        }
+    }
+}
+
 fn cmd_grammar() -> Result<()> {
     print!("{}", include_str!("../docs/grammar.ebnf"));
     Ok(())
@@ -354,9 +370,7 @@ fn cmd_check(path: &str) -> Result<()> {
             Ok(())
         }
         Err(errors) => {
-            for err in &errors {
-                eprintln!("error: {}", err);
-            }
+            print_errors_with_source(path, &errors);
             Err(miette::miette!(
                 "{} error(s) found in '{}'",
                 errors.len(),
@@ -366,22 +380,35 @@ fn cmd_check(path: &str) -> Result<()> {
     }
 }
 
-fn cmd_lint(path: &str) -> Result<()> {
-    let ast = read_and_parse(path)?;
+fn cmd_lint(path: &str, fix: bool) -> Result<()> {
+    let mut ast = read_and_parse(path)?;
     let base_dir = std::path::Path::new(path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
     let mut checker = Checker::with_base_dir(base_dir);
     if let Err(errors) = checker.check(&ast) {
-        for err in &errors {
-            eprintln!("error: {}", err);
-        }
+        print_errors_with_source(path, &errors);
         return Err(miette::miette!(
             "{} error(s) found in '{}'; fix them before linting",
             errors.len(),
             path
         ));
+    }
+
+    if fix {
+        let applied = skillspec_core::lint::apply_fixes(&mut ast);
+        if applied.is_empty() {
+            println!("✓ {}: nothing to fix", path);
+        } else {
+            let formatted = Formatter::format(&ast);
+            fs::write(path, &formatted)
+                .map_err(|e| miette::miette!("Failed to write '{}': {}", path, e))?;
+            for fix_desc in &applied {
+                println!("fixed: {}", fix_desc);
+            }
+            println!("✓ applied {} fix(es) to {}", applied.len(), path);
+        }
     }
 
     let engine = LintEngine::new();
@@ -515,9 +542,7 @@ fn cmd_build(
                 .to_path_buf();
             let mut checker = Checker::with_base_dir(base_dir);
             if let Err(errors) = checker.check(&ast) {
-                for err in &errors {
-                    eprintln!("error: {}", err);
-                }
+                print_errors_with_source(path, &errors);
                 return Err(miette::miette!(
                     "{} error(s) found in '{}'; fix them before building",
                     errors.len(),
@@ -666,9 +691,7 @@ fn cmd_build_check(path: &str, target: &str, output: Option<&str>) -> Result<()>
         .to_path_buf();
     let mut checker = Checker::with_base_dir(base_dir);
     if let Err(errors) = checker.check(&ast) {
-        for err in &errors {
-            eprintln!("error: {}", err);
-        }
+        print_errors_with_source(path, &errors);
         return Err(miette::miette!(
             "{} error(s) found in '{}'; fix them before checking outputs",
             errors.len(),

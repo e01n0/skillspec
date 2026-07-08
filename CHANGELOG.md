@@ -18,6 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Checked `{input.field}` placeholders** — context prose referencing `{input.x}` or `{output.x}` is validated against declared fields, so renaming a field can't silently strand a reference in the instructions.
 
 #### Tooling
+- **Source-snippet diagnostics** — checker errors now print the offending line with a caret underline, and unknown step/skill/mixin/lazy-context references get "did you mean 'x'?" suggestions.
+- **`lint --fix`** — applies the mechanically-safe lint fixes: drops always-true `when` guards, removes never-loaded lazy contexts, and deletes empty steps that nothing references (rewrites the file in canonical format).
 
 - **`--check` flag on `build`** — verify the deployed output matches the compiled source without writing; exits non-zero when stale or missing. A one-line CI gate that enforces the `.agent` file as source of truth.
 - **AGENTS.md compile target** — `--target agentsmd` compiles all skills into a single `AGENTS.md` (the cross-tool convention read by Codex, Cursor, and others). `--to agents` deploys to `./AGENTS.md`; `--to copilot` deploys to `.github/copilot-instructions.md`.

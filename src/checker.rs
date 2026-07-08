@@ -367,6 +367,10 @@ impl Checker {
             self.errors.push(SkillSpecError::UnresolvedExtends {
                 name: base_name.clone(),
                 span: skill.span,
+                suggestion: crate::error::did_you_mean(
+                    base_name,
+                    skill_names.iter().map(|s| s.as_str()),
+                ),
             });
         }
 
@@ -390,6 +394,10 @@ impl Checker {
                 self.errors.push(SkillSpecError::UnknownMixin {
                     name: include_name.clone(),
                     span: skill.span,
+                    suggestion: crate::error::did_you_mean(
+                        include_name,
+                        mixin_names.iter().map(|s| s.as_str()),
+                    ),
                 });
             }
         }
@@ -533,6 +541,13 @@ impl Checker {
                     self.errors.push(SkillSpecError::UnknownLazyContext {
                         name: load_name.clone(),
                         span: step.span,
+                        suggestion: crate::error::did_you_mean(
+                            load_name,
+                            lazy_names
+                                .iter()
+                                .map(|s| s.as_str())
+                                .chain(inherited_lazy.iter().map(|s| s.as_str())),
+                        ),
                     });
                 }
             }
@@ -551,6 +566,7 @@ impl Checker {
                 self.errors.push(SkillSpecError::UnknownStep {
                     name: until.clone(),
                     span: ctx.span,
+                    suggestion: crate::error::did_you_mean(until, step_names.iter().copied()),
                 });
             }
         }
@@ -644,9 +660,17 @@ impl Checker {
                 let referenced = dep_names(dep);
                 for name in referenced {
                     if !own_names.contains(&name) && !inherited_steps.contains(&name) {
+                        let suggestion = crate::error::did_you_mean(
+                            &name,
+                            own_names
+                                .iter()
+                                .map(|s| s.as_str())
+                                .chain(inherited_steps.iter().map(|s| s.as_str())),
+                        );
                         self.errors.push(SkillSpecError::UnknownStep {
                             name: name.clone(),
                             span: step.span,
+                            suggestion,
                         });
                     }
                 }
@@ -704,9 +728,12 @@ impl Checker {
             if let Some(dep) = &stage.requires {
                 for name in dep_names(dep) {
                     if !all_names.contains(&name) {
+                        let suggestion =
+                            crate::error::did_you_mean(&name, all_names.iter().map(|s| s.as_str()));
                         self.errors.push(SkillSpecError::UnknownStep {
                             name: name.clone(),
                             span: stage.span,
+                            suggestion,
                         });
                     }
                 }
@@ -759,9 +786,14 @@ impl Checker {
             if let Some(dep) = &phase.requires {
                 for name in dep_names(dep) {
                     if !all_phase_names.contains(&name) {
+                        let suggestion = crate::error::did_you_mean(
+                            &name,
+                            all_phase_names.iter().map(|s| s.as_str()),
+                        );
                         self.errors.push(SkillSpecError::UnknownStep {
                             name: name.clone(),
                             span: phase.span,
+                            suggestion,
                         });
                     }
                 }

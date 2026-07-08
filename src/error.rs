@@ -23,20 +23,36 @@ pub enum SkillSpecError {
     #[error("Multiple emit statements on the same execution path at {span}")]
     MultipleEmit { span: Span },
 
-    #[error("Unknown step '{name}' in requires clause at {span}")]
-    UnknownStep { name: String, span: Span },
+    #[error("Unknown step '{name}' in requires clause at {span}{suggestion}")]
+    UnknownStep {
+        name: String,
+        span: Span,
+        suggestion: String,
+    },
 
-    #[error("Unknown lazy context '{name}' referenced in load at {span}")]
-    UnknownLazyContext { name: String, span: Span },
+    #[error("Unknown lazy context '{name}' referenced in load at {span}{suggestion}")]
+    UnknownLazyContext {
+        name: String,
+        span: Span,
+        suggestion: String,
+    },
 
-    #[error("Unknown mixin '{name}' referenced in include at {span}")]
-    UnknownMixin { name: String, span: Span },
+    #[error("Unknown mixin '{name}' referenced in include at {span}{suggestion}")]
+    UnknownMixin {
+        name: String,
+        span: Span,
+        suggestion: String,
+    },
 
     #[error("Unknown agent '{name}' referenced in phase at {span}")]
     UnknownAgent { name: String, span: Span },
 
-    #[error("Skill extends unknown skill '{name}' at {span}")]
-    UnresolvedExtends { name: String, span: Span },
+    #[error("Skill extends unknown skill '{name}' at {span}{suggestion}")]
+    UnresolvedExtends {
+        name: String,
+        span: Span,
+        suggestion: String,
+    },
 
     #[error("Import symbol '{name}' shadows local type definition at {span}")]
     ShadowedImport { name: String, span: Span },
@@ -159,6 +175,110 @@ pub enum SkillSpecError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl SkillSpecError {
+    /// The source span this error points at, when it has one.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            SkillSpecError::UnexpectedToken { span, .. }
+            | SkillSpecError::UnknownType { span, .. }
+            | SkillSpecError::DuplicateField { span, .. }
+            | SkillSpecError::MultipleEmit { span }
+            | SkillSpecError::UnknownStep { span, .. }
+            | SkillSpecError::UnknownLazyContext { span, .. }
+            | SkillSpecError::UnknownMixin { span, .. }
+            | SkillSpecError::UnknownAgent { span, .. }
+            | SkillSpecError::UnresolvedExtends { span, .. }
+            | SkillSpecError::ShadowedImport { span, .. }
+            | SkillSpecError::UnresolvedImport { span, .. }
+            | SkillSpecError::ImportParseError { span, .. }
+            | SkillSpecError::ImportSymbolNotFound { span, .. }
+            | SkillSpecError::UnresolvedRef { span, .. }
+            | SkillSpecError::UnknownSkill { span, .. }
+            | SkillSpecError::MismatchedArg { span, .. }
+            | SkillSpecError::UnresolvedFixturePath { span, .. }
+            | SkillSpecError::FixtureParseError { span, .. }
+            | SkillSpecError::UnknownGivenKey { span, .. }
+            | SkillSpecError::UnknownExpectField { span, .. }
+            | SkillSpecError::UnknownMockTool { span, .. }
+            | SkillSpecError::InvalidName { span, .. }
+            | SkillSpecError::BudgetExceeded { span, .. }
+            | SkillSpecError::InvalidBudget { span, .. }
+            | SkillSpecError::UnknownTargetName { span, .. }
+            | SkillSpecError::UnknownPlaceholder { span, .. }
+            | SkillSpecError::InvalidVersion { span, .. }
+            | SkillSpecError::InvalidRetryCount { span, .. }
+            | SkillSpecError::LexerError { span, .. } => Some(*span),
+            SkillSpecError::DependencyCycle { .. } | SkillSpecError::Io(_) => None,
+        }
+    }
+}
+
+/// Format a ", did you mean 'x'?" suffix when a close match exists among
+/// the candidates, or an empty string otherwise.
+pub fn did_you_mean<'a, I>(name: &str, candidates: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut best: Option<(usize, &str)> = None;
+    for cand in candidates {
+        let dist = edit_distance(name, cand);
+        if best.is_none_or(|(d, _)| dist < d) {
+            best = Some((dist, cand));
+        }
+    }
+    match best {
+        // Only suggest close matches — a distance beyond a third of the
+        // name's length reads as noise, not help.
+        Some((dist, cand)) if dist > 0 && dist <= (name.len() / 3).max(2) => {
+            format!(", did you mean '{}'?", cand)
+        }
+        _ => String::new(),
+    }
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Render the source line an error points at, with a caret underline:
+///
+/// ```text
+///    12 |       requires analyz
+///       |       ^
+/// ```
+pub fn render_snippet(source: &str, span: Span) -> Option<String> {
+    if span.line == 0 {
+        return None;
+    }
+    let line_text = source.lines().nth(span.line - 1)?;
+    let gutter = span.line.to_string();
+    let col = span.col.max(1);
+    let underline_len = span.end.saturating_sub(span.start).max(1);
+    let underline_len = underline_len
+        .min(line_text.chars().count().saturating_sub(col - 1))
+        .max(1);
+    Some(format!(
+        "  {} | {}\n  {} | {}{}",
+        gutter,
+        line_text,
+        " ".repeat(gutter.len()),
+        " ".repeat(col - 1),
+        "^".repeat(underline_len),
+    ))
 }
 
 pub type Result<T> = std::result::Result<T, SkillSpecError>;

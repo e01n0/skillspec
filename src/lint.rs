@@ -350,6 +350,154 @@ impl LintRule for UnusedLazyContext {
     }
 }
 
+// ── Autofix ─────────────────────────────────────────────────────────────────
+
+/// Apply the mechanically-safe subset of lint fixes to the AST in place,
+/// returning a description of each fix applied. Covered:
+/// - `when-guard-always-true`: drop the redundant guard
+/// - `unused-lazy-context`: remove the never-loaded lazy context
+/// - `empty-step`: remove the step, but only when nothing references it
+///   (no requires/until) and it carries no behaviour (no emit/lets/loads)
+pub fn apply_fixes(file: &mut SourceFile) -> Vec<String> {
+    let mut applied = Vec::new();
+
+    for skill in &mut file.skills {
+        let skill_name = skill.name.clone();
+
+        // 1. Drop always-true when guards on body contexts
+        let required: HashSet<String> = skill
+            .input
+            .as_ref()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter(|f| !f.optional)
+                    .map(|f| f.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for ctx in &mut skill.body.contexts {
+            if let Some(field) = ctx.when.as_ref().and_then(extract_input_field)
+                && required.contains(&field)
+            {
+                ctx.when = None;
+                applied.push(format!(
+                    "skill '{}': removed always-true when guard (input.{} is required)",
+                    skill_name, field
+                ));
+            }
+        }
+
+        // 2. Remove unused lazy contexts
+        let loaded: HashSet<String> = skill
+            .body
+            .steps
+            .iter()
+            .flat_map(|s| s.loads.iter().cloned())
+            .collect();
+        let removed_lazy: HashSet<usize> = skill
+            .body
+            .lazy_contexts
+            .iter()
+            .enumerate()
+            .filter(|(_, lc)| !loaded.contains(&lc.name))
+            .map(|(i, _)| i)
+            .collect();
+        for i in &removed_lazy {
+            applied.push(format!(
+                "skill '{}': removed unused lazy context '{}'",
+                skill_name, skill.body.lazy_contexts[*i].name
+            ));
+        }
+
+        // 3. Remove empty steps that nothing references and that carry no behaviour
+        let referenced: HashSet<String> = skill
+            .body
+            .steps
+            .iter()
+            .flat_map(|s| match &s.requires {
+                Some(Dependency::Single(n)) => vec![n.clone()],
+                Some(Dependency::All(ns)) | Some(Dependency::Any(ns)) => ns.clone(),
+                Some(Dependency::AllSteps) => {
+                    skill.body.steps.iter().map(|s| s.name.clone()).collect()
+                }
+                None => vec![],
+            })
+            .chain(skill.body.contexts.iter().filter_map(|c| c.until.clone()))
+            .collect();
+        let removed_steps: HashSet<usize> = skill
+            .body
+            .steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.contexts.is_empty()
+                    && s.use_call.is_none()
+                    && !s.emit
+                    && s.lets.is_empty()
+                    && s.loads.is_empty()
+                    && !referenced.contains(&s.name)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for i in &removed_steps {
+            applied.push(format!(
+                "skill '{}': removed empty step '{}'",
+                skill_name, skill.body.steps[*i].name
+            ));
+        }
+
+        if removed_lazy.is_empty() && removed_steps.is_empty() {
+            continue;
+        }
+
+        // Rebuild the vectors and remap source_order indices
+        let lazy_remap = build_remap(skill.body.lazy_contexts.len(), &removed_lazy);
+        let step_remap = build_remap(skill.body.steps.len(), &removed_steps);
+
+        let mut idx = 0;
+        skill.body.lazy_contexts.retain(|_| {
+            let keep = !removed_lazy.contains(&idx);
+            idx += 1;
+            keep
+        });
+        idx = 0;
+        skill.body.steps.retain(|_| {
+            let keep = !removed_steps.contains(&idx);
+            idx += 1;
+            keep
+        });
+
+        skill.body.source_order = skill
+            .body
+            .source_order
+            .iter()
+            .filter_map(|item| match item {
+                BodyItemRef::LazyContext(i) => lazy_remap[*i].map(BodyItemRef::LazyContext),
+                BodyItemRef::Step(i) => step_remap[*i].map(BodyItemRef::Step),
+                other => Some(other.clone()),
+            })
+            .collect();
+    }
+
+    applied
+}
+
+/// Old index → new index after removing `removed`, or None if removed.
+fn build_remap(len: usize, removed: &HashSet<usize>) -> Vec<Option<usize>> {
+    let mut remap = Vec::with_capacity(len);
+    let mut next = 0;
+    for i in 0..len {
+        if removed.contains(&i) {
+            remap.push(None);
+        } else {
+            remap.push(Some(next));
+            next += 1;
+        }
+    }
+    remap
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,6 +663,106 @@ mod tests {
                 .map(|d| (&d.rule, &d.message))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn fix_removes_always_true_guard() {
+        let mut file = parse(
+            r#"
+            skill "x" {
+                input { files: string[] }
+                body {
+                    context(when: input.files) { "Only if files." }
+                }
+            }
+        "#,
+        );
+        let applied = apply_fixes(&mut file);
+        assert_eq!(applied.len(), 1);
+        assert!(file.skills[0].body.contexts[0].when.is_none());
+        assert!(LintEngine::new().run(&file).is_empty());
+    }
+
+    #[test]
+    fn fix_removes_unused_lazy_context() {
+        let mut file = parse(
+            r#"
+            skill "x" {
+                body {
+                    lazy context "docs" (priority: supplementary) {
+                        summary "API docs."
+                        "Inline content."
+                    }
+                    step main { context { "Go." } }
+                }
+            }
+        "#,
+        );
+        let applied = apply_fixes(&mut file);
+        assert_eq!(applied.len(), 1);
+        assert!(file.skills[0].body.lazy_contexts.is_empty());
+        // source_order must no longer reference the removed lazy context
+        assert!(
+            !file.skills[0]
+                .body
+                .source_order
+                .iter()
+                .any(|i| matches!(i, BodyItemRef::LazyContext(_)))
+        );
+    }
+
+    #[test]
+    fn fix_removes_safe_empty_step_only() {
+        let mut file = parse(
+            r#"
+            skill "x" {
+                body {
+                    step a { context { "A" } }
+                    step ghost { }
+                    step b { requires a context { "B" } }
+                    step emitter { emit output }
+                }
+            }
+        "#,
+        );
+        let applied = apply_fixes(&mut file);
+        // 'ghost' is removable; 'emitter' emits output so it must survive
+        assert_eq!(applied.len(), 1, "applied: {:?}", applied);
+        let names: Vec<&str> = file.skills[0]
+            .body
+            .steps
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["a", "b", "emitter"]);
+        // remapped source_order still points at the right steps
+        let ordered: Vec<&str> = file.skills[0]
+            .body
+            .source_order
+            .iter()
+            .filter_map(|i| match i {
+                BodyItemRef::Step(idx) => Some(file.skills[0].body.steps[*idx].name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ordered, vec!["a", "b", "emitter"]);
+    }
+
+    #[test]
+    fn fix_keeps_referenced_empty_step() {
+        let mut file = parse(
+            r#"
+            skill "x" {
+                body {
+                    step gate { }
+                    step b { requires gate context { "B" } }
+                }
+            }
+        "#,
+        );
+        let applied = apply_fixes(&mut file);
+        assert!(applied.is_empty(), "referenced step must not be removed");
+        assert_eq!(file.skills[0].body.steps.len(), 2);
     }
 
     #[test]
