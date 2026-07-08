@@ -31,6 +31,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **CI workflow** — fmt, clippy, tests, and a dogfood pass that type-checks all bundled examples and skills.
 - **Editor support** — TextMate grammar and a ready-to-package VS Code extension under `editors/`, covering the full keyword set including the new `version`/`budget`/`on_fail`/`target` constructs.
 
+#### Testing
+- **Property tests** (`tests/property_tests.rs`) — proptest-generated skills verify the formatter is idempotent (`fmt(fmt(x)) == fmt(x)`) and that formatting preserves parse structure.
+- **Migrate roundtrip test** — compiles a rich skill to SKILL.md, runs `migrate` over the output, and asserts the scaffold recovers the skill's identity and prose.
+- **`build --check` lifecycle test** — missing → fresh → stale transitions each exit with the right status.
+
 ### Fixed
 
 - `skills/skillspec-optimize.agent` used numeric context priorities, which the language no longer accepts; converted to priority flags.

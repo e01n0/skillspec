@@ -793,6 +793,7 @@ fn rebuild_on_change() {
         .lines()
         .map_while(|l| l.ok())
         .collect();
+    child.wait().ok();
     let rebuild_count = output
         .iter()
         .filter(|l| l.contains("Change detected"))
@@ -1101,5 +1102,121 @@ fn test_no_tests_shows_hint() {
         "should hint about adding a tests block: {}",
         stderr
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ── Migrate roundtrip: build → migrate re-extracts what we compiled ─────────
+
+#[test]
+fn migrate_roundtrip_recovers_compiled_skill() {
+    // Compile a rich skill to SKILL.md, then run the mechanical migrate
+    // extraction over that output. The scaffold must recover the skill's
+    // identity and enough structure to be a usable starting point.
+    let source = r#"
+        skill "roundtrip-demo" {
+            input {
+                file: string
+                focus?: string
+            }
+            output {
+                verdict: string
+            }
+            body {
+                context(priority: critical) { "Review the file carefully and note every hazard." }
+                context(priority: supplementary) { "Prefer small, focused suggestions." }
+                step analyse { context { "Read the file and map its structure." } }
+                step report {
+                    requires analyse
+                    emit output
+                    context { "Summarise the findings as a verdict." }
+                }
+            }
+        }
+    "#;
+    let compiled = full_pipeline(source);
+
+    let result = skillspec_core::migrate::migrate_skillmd(&compiled, "roundtrip-demo/SKILL.md");
+
+    assert!(
+        result.output.contains("skill \"roundtrip-demo\""),
+        "migrate must recover the skill name, got:\n{}",
+        result.output
+    );
+    assert!(
+        result.output.contains("Review the file carefully"),
+        "critical context prose must survive the roundtrip:\n{}",
+        result.output
+    );
+}
+
+#[test]
+fn build_check_detects_stale_output() {
+    let bin = env!("CARGO_BIN_EXE_skillspec");
+    let dir = std::env::temp_dir().join("skillspec_build_check_test");
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let agent = dir.join("s.agent");
+    std::fs::write(&agent, r#"skill "s" { body { context { "ok" } } }"#).unwrap();
+    let out = dir.join("out");
+
+    // Never deployed → --check fails
+    let missing = std::process::Command::new(bin)
+        .args([
+            "build",
+            agent.to_str().unwrap(),
+            "--check",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run");
+    assert!(
+        !missing.status.success(),
+        "--check must fail when output is missing"
+    );
+
+    // Deploy, then --check passes
+    let build = std::process::Command::new(bin)
+        .args([
+            "build",
+            agent.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run");
+    assert!(build.status.success());
+    let fresh = std::process::Command::new(bin)
+        .args([
+            "build",
+            agent.to_str().unwrap(),
+            "--check",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run");
+    assert!(
+        fresh.status.success(),
+        "--check must pass right after deploy"
+    );
+
+    // Change the source → --check fails again
+    std::fs::write(&agent, r#"skill "s" { body { context { "changed" } } }"#).unwrap();
+    let stale = std::process::Command::new(bin)
+        .args([
+            "build",
+            agent.to_str().unwrap(),
+            "--check",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run");
+    assert!(
+        !stale.status.success(),
+        "--check must fail after source changes"
+    );
+
     std::fs::remove_dir_all(&dir).ok();
 }

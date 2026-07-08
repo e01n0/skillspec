@@ -312,7 +312,7 @@ mod tests {
     fn trim_reports_what_was_dropped() {
         let mut contexts = vec![
             make_context(&"keep".repeat(20), Some(Priority::Important)),
-            make_context(&"drop-me", Some(Priority::Optional)),
+            make_context("drop-me", Some(Priority::Optional)),
         ];
         let trimmed = trim_to_budget(&mut contexts, 10);
         assert!(!trimmed.is_empty());

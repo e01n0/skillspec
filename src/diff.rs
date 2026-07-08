@@ -1796,7 +1796,7 @@ mod tests {
             .map(|(level, _)| *level)
             .collect();
         assert!(
-            relocated_levels.iter().any(|l| *l == SemverLevel::Minor),
+            relocated_levels.contains(&SemverLevel::Minor),
             "modified relocation should be Minor: {:?}",
             report.breakdown
         );
