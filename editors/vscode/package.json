@@ -1,0 +1,33 @@
+{
+  "name": "skillspec",
+  "displayName": "SkillSpec",
+  "description": "Syntax highlighting for SkillSpec .agent files",
+  "version": "0.1.0",
+  "publisher": "e01n0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/e01n0/skillspec"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "skillspec",
+        "aliases": ["SkillSpec", "skillspec"],
+        "extensions": [".agent", ".agent.partial"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "skillspec",
+        "scopeName": "source.skillspec",
+        "path": "./syntaxes/skillspec.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -29,6 +29,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Git-based install** — `skillspec install github:owner/repo[/subdir][@ref]` shallow-clones the repository and installs the `.skillpkg` or packaged `.agent` file it finds.
 - **GitHub Action** — a composite `action.yml` so any repository can run `skillspec check` and `lint` on `.agent` files in CI with `uses: e01n0/skillspec@main`.
 - **CI workflow** — fmt, clippy, tests, and a dogfood pass that type-checks all bundled examples and skills.
+- **Editor support** — TextMate grammar and a ready-to-package VS Code extension under `editors/`, covering the full keyword set including the new `version`/`budget`/`on_fail`/`target` constructs.
 
 ### Fixed
 

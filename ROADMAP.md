@@ -19,7 +19,7 @@ Also shipped:
 - **Remote package registry** — `skillspec install <name>` pulling from a hosted registry rather than local `.skillpkg` directories
 - **LLM-powered test execution** (`skillspec-test` skill) — run the `tests {}` blocks against a live model and report pass/fail
 - **Language server (LSP)** — IDE integration: go-to-definition, hover docs, inline diagnostics
-- **Syntax highlighting** — VS Code and JetBrains grammar definitions for `.agent` files
+- **Tree-sitter grammar** — unlocks highlighting on github.com/Neovim/Zed and forms the parsing backbone for the LSP (a TextMate grammar for VS Code and other editors ships in `editors/`)
 
 ## Medium-term
 

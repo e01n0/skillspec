@@ -1,0 +1,118 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SkillSpec",
+  "scopeName": "source.skillspec",
+  "fileTypes": ["agent"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#triple-strings" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#blocks" },
+    { "include": "#step-keywords" },
+    { "include": "#directives" },
+    { "include": "#test-keywords" },
+    { "include": "#params" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.skillspec",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "triple-strings": {
+      "name": "string.quoted.triple.skillspec",
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "patterns": [{ "include": "#placeholders" }]
+    },
+    "strings": {
+      "name": "string.quoted.double.skillspec",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.skillspec", "match": "\\\\." },
+        { "include": "#placeholders" }
+      ]
+    },
+    "placeholders": {
+      "name": "variable.other.placeholder.skillspec",
+      "match": "\\{(input|output)\\.[A-Za-z_][A-Za-z0-9_]*\\}"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(skill|pipeline|orchestration|mixin|type|package)\\b(?:\\s+(\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": { "name": "keyword.declaration.skillspec" },
+            "2": { "name": "entity.name.type.skillspec" }
+          }
+        },
+        {
+          "match": "\\b(step|stage|phase)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.step.skillspec" },
+            "2": { "name": "entity.name.function.skillspec" }
+          }
+        },
+        {
+          "match": "\\b(import|from|extends|include)\\b",
+          "name": "keyword.control.import.skillspec"
+        }
+      ]
+    },
+    "blocks": {
+      "match": "\\b(input|output|body|context|pre|post|tools|permissions|tests|budget|observe|shared|rules|agents|lazy|index|section|examples|example)\\b",
+      "name": "keyword.other.block.skillspec"
+    },
+    "step-keywords": {
+      "match": "\\b(requires|when|use|let|emit|load|on_fail|on_error|retry|escalate|abort|backoff|all_steps|assert|message|version|summary|ref|timeout|cancel|every|on)\\b",
+      "name": "keyword.control.skillspec"
+    },
+    "directives": {
+      "match": "\\b(persona|reasoning|sampling|format|reinforce|note)\\b",
+      "name": "keyword.other.directive.skillspec"
+    },
+    "test-keywords": {
+      "match": "\\b(test|given|mock|expect|confidence|runs|snapshot|compare|equals|contains|matches|resembles|satisfies|between|unavailable|failing|slow|require|optional|mcp|tool|allow|deny|emit_event|metric)\\b",
+      "name": "keyword.other.test.skillspec"
+    },
+    "params": {
+      "match": "\\b(priority|decay|until|target|max_tokens|temperature|top_p)\\s*:",
+      "captures": {
+        "1": { "name": "variable.parameter.skillspec" }
+      }
+    },
+    "types": {
+      "match": "\\b(string|int|float|bool|enum|map)\\b",
+      "name": "storage.type.skillspec"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "match": "\\b(true|false)\\b",
+          "name": "constant.language.boolean.skillspec"
+        },
+        {
+          "match": "\\b(critical|important|supplementary|optional)\\b",
+          "name": "constant.language.priority.skillspec"
+        }
+      ]
+    },
+    "numbers": {
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b",
+      "name": "constant.numeric.skillspec"
+    },
+    "operators": {
+      "match": "(->|==|!=|<=|>=|&&|\\|\\||[&|!<>=?])",
+      "name": "keyword.operator.skillspec"
+    }
+  }
+}
