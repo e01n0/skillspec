@@ -9,7 +9,7 @@ probes how models actually adjudicate the tensions.
 *A tenet is a rule you hold. Tenetic makes sure your agents hold the same ones.*
 
 > Status: specification. Seeds a new repository; harvests specific modules
-> from [skillspec](https://github.com/e01n0/skillspec) (see §10). Name
+> from [skillspec](https://github.com/e01n0/skillspec) (see §11). Name
 > "Tenetic" is clear on crates.io / npm / PyPI; a media-analytics company
 > uses the bare word (different class), so run a class 9/42 trademark check
 > and secure a distinct domain (e.g. tenetic.dev) before public launch.
@@ -36,7 +36,7 @@ themselves. Three failure modes, none visible today:
 
 Every rule collection is a program with no compiler. Per-file linting exists
 (and is solved); the *cross-document semantic layer* has no tooling — the
-research survey (§11) found no paper, benchmark, or product that
+research survey (§12) found no paper, benchmark, or product that
 consistency-checks agent rule collections.
 
 ## 2. Product thesis
@@ -52,7 +52,7 @@ consistency-checks agent rule collections.
    reproducible in CI, millisecond-fast, zero API cost. Learned tiers
    (embeddings, local NLI) are opt-in and local; LLM judgment appears in
    exactly one place — behavioral probes — where the trace is evidence, not
-   opinion. Grounded in verified literature (§11): local pipelines beat
+   opinion. Grounded in verified literature (§12): local pipelines beat
    zero-shot GPT-4o on domain rule text; LLM-only conflict detection scored
    0% recall in the one published head-to-head.
 3. **State, not snapshots.** `tenetic.lock` is the Terraform move: a pinned
@@ -66,6 +66,7 @@ consistency-checks agent rule collections.
 |---|---|
 | **Tenet** | An atomic imperative rule extracted from a source document, with provenance (file, line, owning skill), polarity, subject keywords, and — where declared — priority, scope, and version. |
 | **Source** | Any document contributing tenets: SKILL.md, CLAUDE.md / AGENTS.md, `.cursorrules`/`.mdc`, system-prompt files, SkillSpec `.agent` (supported via adapter). |
+| **Role / tier** | The disclosure tier a tenet lives at: **description** (frontmatter — always in context), **body** (`SKILL.md` — loaded when the skill triggers), **reference** (sibling files — loaded on demand), or **root** (org policy). Sets how 'hot' a rule is: conflict severity and leanness budget both scale with tier. |
 | **Stratum** | The precedence level of a source. Root documents (org policy, CLAUDE.md) outrank skills; a skill tenet contradicting a root tenet is a *policy violation*, not a peer conflict. |
 | **Scenario** | A co-activation set: the sources that can be loaded into one context simultaneously (derived from triggers, targets, and path scopes). Tenets that never co-activate cannot conflict. |
 | **Rulebook** | The *effective rulebook* of a scenario: the serialized, ordered, precedence-resolved sequence of tenets the model actually sees. The unit of analysis for ordering checks. |
@@ -82,6 +83,8 @@ correlation / redundancy) plus the drift classes:
 |---|---|---|
 | `duplicate` | Identical tenet in multiple places | 0 |
 | `drifted-duplicate` | Near-identical copies that diverged | 0 |
+| `cross-tier-duplicate` | Same rule in a skill's body *and* its reference (or description) — the drift trap inside one skill; pick a tier | 0 |
+| `redundant-with-root` | A skill rule restates a root-policy rule; drop it and inherit, or it drifts from policy | 1 |
 | `unmarked-exception` | Specific tenet reverses a general absolute stated elsewhere, with no linkage between them | 1 |
 | `shadowing` | Ordering/priority makes a specific tenet unreachable behind its general rule | 1 |
 | `ambiguity` | Opposite polarity, shared subject, neither more specific — a genuine contradiction | 1 |
@@ -93,10 +96,25 @@ correlation / redundancy) plus the drift classes:
 | `erosion` | A critical-priority tenet disappeared from the fleet | 0 |
 | `behavioral-flip` | A probed tension whose verdict distribution changed since last pinned (model upgrade, fleet composition change) — text identical | probe |
 
+### Quality findings (advisory by default — see §6)
+
+| Kind | Meaning |
+|---|---|
+| `bloated-skill` | `SKILL.md` body past a token/line threshold |
+| `bloated-description` | Oversized frontmatter description (the always-on tier — worst place to waste tokens) |
+| `no-progressive-disclosure` | A long skill with zero references — monolithic |
+| `inline-reference` | Reference-grade detail (schemas, long examples, procedures) inlined in the body; demote to a reference file |
+| `orphan-reference` | A reference file nothing links to — dead weight or broken intent (flagged, not silent) |
+| `reference-is-really-a-skill` | A "reference" file with its own frontmatter/triggers; promote it |
+| `emphasis-overuse` | Density of MUST / NEVER / DO NOT / ALL-CAPS / bold above threshold — when everything is emphasized, nothing is |
+| `weak-description` | Description that doesn't say *when* to use the skill (it is the trigger) |
+| `dead-reference` | A link to a file that doesn't exist (shared with the graph tier) |
+
 ## 4. Product surface
 
 ```sh
 tenetic scan  [path]              # extract tenets + report findings (read-only)
+tenetic review [path]            # quality: leanness, disclosure, emphasis, hygiene (per-skill)
 tenetic check [path]              # CI gate: fail on findings not in tenetic.lock
 tenetic baseline [path]           # pin current findings as accepted state
 tenetic graph [path] --format dot|mermaid   # reference/artifact/ordering graph
@@ -132,7 +150,7 @@ sources (md / mdc / .agent / prompts)
    │  format adapters
    ▼
 tenet extraction  ── sentence rejoin, bullet/prose split, imperative
-   │                 filtering, polarity, keyword normalization
+   │                 filtering, polarity, keyword normalization, tier tagging
    ▼
 scenario builder  ── strata, triggers, targets → co-activation sets
    ▼                 + effective-rulebook serialization (order, priority)
@@ -150,14 +168,97 @@ probe     [on demand] hosting-agent transport: scenario rollouts + narrow
 tenetic.lock  ←→  check / diff / report
 ```
 
-Implementation: Rust core (harvested — §10), shipped as both a single
-static binary and a PyO3/maturin Python wheel (§6) from one codebase. No
+Implementation: Rust core (harvested — §11), shipped as both a single
+static binary and a PyO3/maturin Python wheel (§7) from one codebase. No
 runtime dependencies for tiers 0–2. Tier 3 models load lazily behind a
 flag. Probes require only a hosting agent session (Claude Code, Cursor) or
 a model-serving endpoint, zero API keys, via the checkpoint-resume
 request/response protocol.
 
-## 6. Distribution: uv + maturin (Python-native)
+Two deterministic detector families run over the same extracted,
+tier-tagged rules: **consistency** (between rules — conflicts, drift,
+duplication; tiers above) and **quality** (within a skill —
+best-practice review; §6). Both feed one `tenetic.lock`.
+
+## 6. Quality pillar: best-practice review
+
+Consistency (§5) checks rules *against each other*. The quality pillar
+checks each skill *against how skills should be written* — the ESLint-style
+"this is written badly" layer, complementary to the "these contradict"
+layer. It needs no fleet: it helps someone with a single skill on day one,
+which makes it the natural adoption on-ramp into the consistency features.
+
+### The disclosure ladder
+
+Every extracted rule is tagged with the tier it lives at (§3, Role). This is
+the load-bearing primitive for *both* pillars:
+
+| Tier | Loaded | Cost of a wasted/duplicated rule |
+|---|---|---|
+| description | always | highest — in every context |
+| body (`SKILL.md`) | on trigger | medium |
+| reference (sibling files) | on demand | low, but easy to orphan |
+
+Tier tells you how *hot* a rule is, which sets (a) conflict severity in the
+consistency pillar — two always-on rules clashing is a fire; an always-on
+rule vs. a rarely-loaded reference is a smoulder — and (b) the leanness
+budget in the quality pillar.
+
+### Checks
+
+**Leanness** — the always-loaded tiers should be small.
+`bloated-skill`, `bloated-description`, and padding prose ("in order to
+successfully accomplish this…").
+
+**Progressive disclosure** — lean entry point, detail on demand.
+`no-progressive-disclosure` (long skill, zero references), `inline-reference`
+(reference-grade detail in the body — demote it), `orphan-reference` (a
+reference nothing links to — flagged, not silent), `reference-is-really-a-skill`
+(a reference with its own triggers — promote it).
+
+**Emphasis discipline** — clarity over volume. `emphasis-overuse` fires on
+the *density* of MUST / NEVER / DO NOT / ALL-CAPS / bold, not any single
+use. Heavy emphasis usually means patching model failures with volume
+instead of instructing clearly, and it dilutes the emphasis that matters.
+(Opt-in: heavy negative framing — "don't do X" is weaker than "do Y".)
+
+**Placement / tier-typed duplication** — the same detection engine as the
+consistency pillar, but the verdict depends on *where* the copies live:
+`cross-tier-duplicate` (a rule in both a skill's body and its reference or
+description — the drift trap inside one skill; pick a tier) and
+`redundant-with-root` (a skill rule restating an org `CLAUDE.md` rule — drop
+it and inherit, or it drifts from policy).
+
+**Hygiene** — `weak-description` (doesn't say *when* to trigger) and
+`dead-reference` (link to a missing file).
+
+### Defaults & configuration
+
+Best practices are opinionated and runtime-specific (Anthropic skill norms
+≠ Cursor rule norms), so:
+
+- a **curated core** fires by default but is **advisory** — it warns, it
+  does not block CI (leanness, orphan/dead references, cross-tier
+  duplication, emphasis-overuse);
+- **stylistic** checks (negative framing, prose padding) are **opt-in**;
+- every check carries a rationale and a link to source guidance, lives in
+  the per-format **adapter** (each runtime brings its own norms), and is
+  individually suppressible in the lock.
+
+The consistency pillar can gate CI hard; the quality pillar advises. Both
+write to the same `tenetic.lock`, so `check` reports across both and
+`baseline` accepts across both.
+
+### Prior art
+
+Largely *harvested*, not invented: skillspec's `lint.rs` already ships
+`context-too-large` (leanness), `critical-overuse` (the
+everything-is-emphasized smell), `unused-lazy-context` (orphan reference),
+and `uniform-priority`. And SkillSpec's *lazy context* construct — summary
+always-on, detail on demand — is exactly the disclosure ladder, now read
+natively from markdown file structure instead of a DSL keyword.
+
+## 7. Distribution: uv + maturin (Python-native)
 
 The engine is Rust, but the users who most need fleet governance —
 data/ML platform teams — live in Python: Databricks notebooks and jobs,
@@ -256,7 +357,7 @@ df = pd.DataFrame(f.as_dict() for f in report.findings)
 mirroring how ruff and pydantic-core ship. The CLI binary and the wheel cut
 from the same tag, so versions never skew.
 
-## 7. The best of SkillSpec, carried over without the language
+## 8. The best of SkillSpec, carried over without the language
 
 The DSL is retired; its *semantics* survive as optional frontmatter
 annotations on plain markdown (progressive hardening — each unlocks
@@ -277,7 +378,7 @@ Explicitly left behind: the grammar, lexer/parser/formatter/LSP ambitions,
 compile targets as a product (adapters read formats; they don't own them),
 packages/registry, pipelines/orchestrations-as-syntax.
 
-## 8. Positioning
+## 9. Positioning
 
 - **One-liner:** *ESLint finds bugs in your code. Tenetic finds them in your
   agents' instructions.*
@@ -298,15 +399,18 @@ packages/registry, pipelines/orchestrations-as-syntax.
   ("agents may not contradict the org constitution"); (4) probe reports as
   the model-upgrade go/no-go artifact.
 
-## 9. Milestones
+## 10. Milestones
 
 - **M0 — Harvest (days).** New repo; port `rules.rs` engine, extraction,
   lock, CLI skeleton, CI action; rename vocabulary to tenets/findings.
   Ships `scan`/`check`/`baseline` at parity with skillspec today.
   Stand up the dual build from day one: `tenetic-core` crate + `tenetic` CLI +
   PyO3/maturin wheel with `scan`/`check` exposed to Python, published to
-  PyPI via `maturin-action` (§6). Getting packaging right early is cheaper
+  PyPI via `maturin-action` (§7). Getting packaging right early is cheaper
   than retrofitting it, and the wheel is what unlocks Databricks pilots.
+  Also port `lint.rs` as the seed of the **quality pillar** (§6) with the
+  `review` command and tier tagging — harvested and deterministic, and the
+  single-skill on-ramp that delivers value before a fleet exists.
 - **M1 — Relationships & rulebook (1–2 wk).** Specialization detection,
   `unmarked-exception`, `shadowing`, strata + `policy-violation`,
   `erosion`, effective-rulebook serialization with position warnings.
@@ -325,7 +429,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
 - **M5 — Fleet.** Multi-repo state, org dashboards, model-upgrade probe
   reports, policy packs.
 
-## 10. Harvest map (from skillspec repo)
+## 11. Harvest map (from skillspec repo)
 
 | Take | From | Becomes |
 |---|---|---|
@@ -333,13 +437,14 @@ packages/registry, pipelines/orchestrations-as-syntax.
 | `src/migrate.rs` markdown parsing | skillspec | format adapters |
 | `src/diff.rs` structural diff + semver | skillspec | `tenetic diff` |
 | `src/budget.rs` estimator | skillspec | serialization sizing |
+| `src/lint.rs` rules (context-too-large, critical-overuse, unused-lazy-context, uniform-priority) | skillspec | quality-pillar checks (§6) |
 | `optimize.rs` request/response protocol | skillspec | probe transport |
 | `docs/research-conflict-detection.md` | skillspec | design bibliography |
 | `action.yml` pattern, CI workflow | skillspec | `tenetic-action` |
 | `.agent` parser | skillspec | one adapter among several (maintenance mode) |
-| Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenet` bin + PyO3 wheel from one tree (§6) |
+| Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenet` bin + PyO3 wheel from one tree (§7) |
 
-## 11. Evidence base
+## 12. Evidence base
 
 Design decisions trace to an adversarially verified literature survey
 (`docs/research-conflict-detection.md` in the skillspec repo): FSARC
@@ -351,7 +456,7 @@ gap → benchmark before shipping tier 3; pairwise beats whole-document),
 ALICE (hybrid 60% vs LLM-only 0% recall → probes ask narrow questions of
 traces, never open-ended judgment).
 
-## 12. Risks & open questions
+## 13. Risks & open questions
 
 - **Extraction recall on messy prose.** Diffuse, paragraph-level
   instructions resist atomic extraction. Mitigation: over-extract +
@@ -381,7 +486,7 @@ traces, never open-ended judgment).
   stays clean. Tiers 0–2 have zero native deps; tier-3 ONNX models are
   downloaded at first use, not baked into the wheel.
 
-## 13. Success criteria
+## 14. Success criteria
 
 - A cold `tenetic scan` on a real >20-skill fleet surfaces ≥1 finding the
   owner confirms as real, in <5 s, with ≥50% confirmed-useful rate.
