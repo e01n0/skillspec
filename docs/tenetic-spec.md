@@ -1,16 +1,18 @@
-# Tenet — product specification
+# Tenetic — product specification
 
-**Tenet is the consistency and drift control plane for AI agent rulebooks.**
+**Tenetic is the consistency and drift control plane for AI agent rulebooks.**
 It extracts every rule your agents follow — from SKILL.md files, CLAUDE.md,
 Cursor rules, AGENTS.md, system prompts — detects conflicts, drift, and
 shadowing across the whole fleet, pins the accepted state in a lockfile, and
 probes how models actually adjudicate the tensions.
 
-*A tenet is a rule you hold. Tenet makes sure your agents hold the same ones.*
+*A tenet is a rule you hold. Tenetic makes sure your agents hold the same ones.*
 
 > Status: specification. Seeds a new repository; harvests specific modules
-> from [skillspec](https://github.com/e01n0/skillspec) (see §10). Naming
-> pending trademark search; alternates: Canon, Maxim, Concord.
+> from [skillspec](https://github.com/e01n0/skillspec) (see §10). Name
+> "Tenetic" is clear on crates.io / npm / PyPI; a media-analytics company
+> uses the bare word (different class), so run a class 9/42 trademark check
+> and secure a distinct domain (e.g. tenetic.dev) before public launch.
 
 ---
 
@@ -40,10 +42,10 @@ consistency-checks agent rule collections.
 ## 2. Product thesis
 
 1. **No new language, no migration.** Markdown stays the source of truth.
-   Tenet reads what teams already have. Adoption cost of the first scan:
-   zero. (Decision record: Tenet's predecessor, SkillSpec, was a typed DSL
+   Tenetic reads what teams already have. Adoption cost of the first scan:
+   zero. (Decision record: Tenetic's predecessor, SkillSpec, was a typed DSL
    compiling to SKILL.md. The operational loops turned out to be the value;
-   the language was the toll booth. Tenet inverts that: loops first,
+   the language was the toll booth. Tenetic inverts that: loops first,
    optional structure later — carried as frontmatter annotations, never as
    a required syntax.)
 2. **Deterministic first.** The core engine uses no models and no network:
@@ -53,7 +55,7 @@ consistency-checks agent rule collections.
    opinion. Grounded in verified literature (§11): local pipelines beat
    zero-shot GPT-4o on domain rule text; LLM-only conflict detection scored
    0% recall in the one published head-to-head.
-3. **State, not snapshots.** `tenet.lock` is the Terraform move: a pinned
+3. **State, not snapshots.** `tenetic.lock` is the Terraform move: a pinned
    record of the fleet's semantic state (known findings, accepted
    exceptions, probe verdicts). CI fails only on *changes* to that state,
    so fixed conflicts stay fixed and triaged noise stays triaged.
@@ -68,7 +70,7 @@ consistency-checks agent rule collections.
 | **Scenario** | A co-activation set: the sources that can be loaded into one context simultaneously (derived from triggers, targets, and path scopes). Tenets that never co-activate cannot conflict. |
 | **Rulebook** | The *effective rulebook* of a scenario: the serialized, ordered, precedence-resolved sequence of tenets the model actually sees. The unit of analysis for ordering checks. |
 | **Finding** | A classified relationship between tenets (taxonomy below) with a stable content-hash identity that survives line moves and reformatting. |
-| **Lock** | `tenet.lock`: accepted findings, tenet inventory fingerprint, probe verdicts. The semantic state file. |
+| **Lock** | `tenetic.lock`: accepted findings, tenet inventory fingerprint, probe verdicts. The semantic state file. |
 | **Probe** | A behavioral experiment: compose the scenario's rulebook, pose a task that forces a flagged tension, run N times, judge which tenet the model obeyed. |
 
 ### Finding taxonomy
@@ -94,22 +96,22 @@ correlation / redundancy) plus the drift classes:
 ## 4. Product surface
 
 ```sh
-tenet scan  [path]              # extract tenets + report findings (read-only)
-tenet check [path]              # CI gate: fail on findings not in tenet.lock
-tenet baseline [path]           # pin current findings as accepted state
-tenet graph [path] --format dot|mermaid   # reference/artifact/ordering graph
-tenet probe [finding-id|--new]  # behavioral probes via hosting agent session
-tenet diff <old> <new>          # semantic diff of two fleet states; semver class
-tenet explain <finding-id>      # full provenance, both tenets in context, why flagged
+tenetic scan  [path]              # extract tenets + report findings (read-only)
+tenetic check [path]              # CI gate: fail on findings not in tenetic.lock
+tenetic baseline [path]           # pin current findings as accepted state
+tenetic graph [path] --format dot|mermaid   # reference/artifact/ordering graph
+tenetic probe [finding-id|--new]  # behavioral probes via hosting agent session
+tenetic diff <old> <new>          # semantic diff of two fleet states; semver class
+tenetic explain <finding-id>      # full provenance, both tenets in context, why flagged
 ```
 
-- **CI:** a published GitHub Action (`uses: <org>/tenet@v1`) running
+- **CI:** a published GitHub Action (`uses: <org>/tenetic@v1`) running
   `check` on every PR touching rule files. This is the product's primary
   distribution channel — "the failing check that saved your weekend" is the
   growth loop.
-- **Watch mode:** `tenet check --watch` for local editing sessions.
+- **Watch mode:** `tenetic check --watch` for local editing sessions.
 - **Output contracts:** human-readable report; `--json` for editor/agent
-  integration (agents editing skills should run Tenet themselves —
+  integration (agents editing skills should run Tenetic themselves —
   a Claude Code hook recipe ships in the docs).
 
 ### Suppression & triage UX
@@ -117,7 +119,7 @@ tenet explain <finding-id>      # full provenance, both tenets in context, why f
 The literature's validated precision ceiling for deterministic detection is
 ~84%. Therefore, first-class:
 - `baseline` accepts everything current (adopt-in-anger path);
-- per-finding accept with a reason (`tenet accept <id> --reason "…"`),
+- per-finding accept with a reason (`tenetic accept <id> --reason "…"`),
   stored in the lock, surfaced by `explain`;
 - finding identity is content-hashed from the tenet texts: editing either
   side of an accepted pair re-opens it automatically. No silent decay of
@@ -145,7 +147,7 @@ tier 3    [--semantic] local models: embedding candidate pairing +
 probe     [on demand] hosting-agent transport: scenario rollouts + narrow
    │       trace-verdict judging; verdicts pinned in the lock
    ▼
-tenet.lock  ←→  check / diff / report
+tenetic.lock  ←→  check / diff / report
 ```
 
 Implementation: Rust core (harvested — §10), shipped as both a single
@@ -159,9 +161,9 @@ request/response protocol.
 
 The engine is Rust, but the users who most need fleet governance —
 data/ML platform teams — live in Python: Databricks notebooks and jobs,
-Airflow/Dagster DAGs, CI runners with a Python toolchain and no Rust. Tenet
+Airflow/Dagster DAGs, CI runners with a Python toolchain and no Rust. Tenetic
 ships as a **native Python extension module** alongside the standalone CLI,
-from a single codebase, so `pip install tenet` (or `uv add tenet`) gets you
+from a single codebase, so `pip install tenetic` (or `uv add tenetic`) gets you
 a prebuilt wheel with **no Rust toolchain, no compilation, no network calls
 at runtime**.
 
@@ -171,7 +173,7 @@ at runtime**.
 - **[maturin](https://www.maturin.rs)** — build backend (`build-system` in
   `pyproject.toml`) that compiles the Rust crate into a Python wheel.
 - **[uv](https://docs.astral.sh/uv)** — the dev and install workflow:
-  `uv run`, `uv build`, `uvx tenet` for zero-install CLI use.
+  `uv run`, `uv build`, `uvx tenetic` for zero-install CLI use.
 - **abi3 (`abi3-py39`)** — build one stable-ABI wheel per platform that
   works on CPython 3.9+, instead of one per Python minor version. Keeps the
   release matrix small.
@@ -180,9 +182,9 @@ One repo produces three artifacts:
 
 | Artifact | Consumer | How |
 |---|---|---|
-| `tenet` binary | CLI / CI / GitHub Action | `cargo build --release` (or `cargo binstall`) |
-| `tenet` wheel | Python / Databricks / notebooks | `maturin build --release`, published to PyPI |
-| `tenet-core` crate | Rust integrators | `crates.io` |
+| `tenetic` binary | CLI / CI / GitHub Action | `cargo build --release` (or `cargo binstall`) |
+| `tenetic` wheel | Python / Databricks / notebooks | `maturin build --release`, published to PyPI |
+| `tenetic-core` crate | Rust integrators | `crates.io` |
 
 ### `pyproject.toml` (sketch)
 
@@ -192,18 +194,18 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "tenet"
+name = "tenetic"
 requires-python = ">=3.9"
 dynamic = ["version"]
 
 [tool.maturin]
 features = ["pyo3/extension-module", "python"]
-module-name = "tenet._native"
+module-name = "tenetic._native"
 # bin target stays available for `cargo install`; the wheel ships the ext module
 ```
 
 The Python binding is a thin `#[cfg(feature = "python")]` layer over the
-same `tenet-core` functions the CLI calls — no logic forks between the two
+same `tenetic-core` functions the CLI calls — no logic forks between the two
 front ends.
 
 ### Python API surface
@@ -213,17 +215,17 @@ dataclasses), so they compose with pandas, Delta tables, and notebook
 display:
 
 ```python
-import tenet
+import tenetic
 
 # Scan a skills directory (local path, DBFS, or Unity Catalog volume)
-report = tenet.scan("/Volumes/main/agents/skills")
+report = tenetic.scan("/Volumes/main/agents/skills")
 
 report.summary()                      # {'duplicate': 3, 'polarity-conflict': 1, ...}
 for f in report.findings:
     print(f.kind, f.a.file, f.a.line, "<->", f.b.file, f.b.line)
 
 # CI-style gate against a pinned lock — raises on new findings
-tenet.check("/Volumes/main/agents/skills", lock="tenet.lock")
+tenetic.check("/Volumes/main/agents/skills", lock="tenetic.lock")
 
 # Findings as a DataFrame for dashboards / Delta
 import pandas as pd
@@ -232,12 +234,12 @@ df = pd.DataFrame(f.as_dict() for f in report.findings)
 
 ### Databricks usage
 
-- **Install:** `%pip install tenet` in a notebook, or add to the cluster's
+- **Install:** `%pip install tenetic` in a notebook, or add to the cluster's
   environment / a `uv`-managed job. Prebuilt manylinux wheel → no build step
   on the cluster.
 - **Where it reads:** local paths, DBFS, and Unity Catalog **Volumes** (skill
   documents governed as data). A scheduled **Databricks Job** runs
-  `tenet.check(...)` nightly and on skill-repo changes; findings land in a
+  `tenetic.check(...)` nightly and on skill-repo changes; findings land in a
   Delta table for lineage and dashboards.
 - **Probes:** the behavioral tier can route through a Databricks
   **model-serving endpoint** or Foundation Model API as the target model,
@@ -260,14 +262,14 @@ The DSL is retired; its *semantics* survive as optional frontmatter
 annotations on plain markdown (progressive hardening — each unlocks
 checks, none is required):
 
-| SkillSpec construct | Tenet form | Unlocks |
+| SkillSpec construct | Tenetic form | Unlocks |
 |---|---|---|
 | `context(priority: critical)` | `priority:` on frontmatter or per-bullet `[!critical]` marker | erosion detection, shadowing analysis, trim-order |
 | `context(target: cursor)` | `targets:` frontmatter | scenario scoping |
 | `budget { max_tokens }` | `budget:` frontmatter | fleet-serialization budget check |
-| `version "1.2.0"` + semver classification | `version:` frontmatter + `tenet diff` | derived (not declared) semver on rulebooks |
-| Structural diff engine | `tenet diff` | change classification, erosion |
-| `build --check` deploy gate | `tenet check --deployed` | source-vs-deployed drift |
+| `version "1.2.0"` + semver classification | `version:` frontmatter + `tenetic diff` | derived (not declared) semver on rulebooks |
+| Structural diff engine | `tenetic diff` | change classification, erosion |
+| `build --check` deploy gate | `tenetic check --deployed` | source-vs-deployed drift |
 | optimize's hosting-agent LLM transport | probe runner | behavioral tier with zero API cost |
 | Token budget estimator | rulebook serialization sizing | lost-in-the-middle positioning warnings |
 
@@ -277,17 +279,17 @@ packages/registry, pipelines/orchestrations-as-syntax.
 
 ## 8. Positioning
 
-- **One-liner:** *ESLint finds bugs in your code. Tenet finds them in your
+- **One-liner:** *ESLint finds bugs in your code. Tenetic finds them in your
   agents' instructions.*
 - **The Terraform claim, made precisely:** Terraform's moat was never HCL —
-  it was state + plan + drift detection over a world others own. Tenet
+  it was state + plan + drift detection over a world others own. Tenetic
   makes the same play one level up: the world is the set of rule documents
-  across every agent runtime; `tenet.lock` is the state; `check` is the
+  across every agent runtime; `tenetic.lock` is the state; `check` is the
   plan-time drift detector; probes extend state from "what the rulebook
   says" to "what the fleet does". Format-neutral the way Terraform was
   cloud-neutral.
 - **Non-competition:** eval platforms (promptfoo, Braintrust) measure task
-  quality; optimizers (SkillOpt/GEPA, DSPy) mutate single documents. Tenet
+  quality; optimizers (SkillOpt/GEPA, DSPy) mutate single documents. Tenetic
   is the static+behavioral consistency layer *between* them — and the
   safety gate on optimizers' writebacks, which can otherwise mint fresh
   cross-skill conflicts while maximizing one skill's score.
@@ -301,7 +303,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
 - **M0 — Harvest (days).** New repo; port `rules.rs` engine, extraction,
   lock, CLI skeleton, CI action; rename vocabulary to tenets/findings.
   Ships `scan`/`check`/`baseline` at parity with skillspec today.
-  Stand up the dual build from day one: `tenet-core` crate + `tenet` CLI +
+  Stand up the dual build from day one: `tenetic-core` crate + `tenetic` CLI +
   PyO3/maturin wheel with `scan`/`check` exposed to Python, published to
   PyPI via `maturin-action` (§6). Getting packaging right early is cheaper
   than retrofitting it, and the wheel is what unlocks Databricks pilots.
@@ -311,7 +313,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
   This milestone kills most false positives and adds the order dimension.
 - **M2 — Graph (1–2 wk).** Reference/artifact/ordering edges;
   `dangling-reference`, `inlined-copy`, `ordering-contradiction`;
-  `tenet graph`.
+  `tenetic graph`.
 - **M3 — Probes (2 wk).** Hosting-agent transport, probe generation from
   finding subjects (+ `tests` data when present), verdict schema, verdicts
   in lock, `behavioral-flip` detection. Side product: every probe verdict
@@ -327,15 +329,15 @@ packages/registry, pipelines/orchestrations-as-syntax.
 
 | Take | From | Becomes |
 |---|---|---|
-| `src/rules.rs` (engine, lock, tests) | skillspec | `tenet-core` (rename Rule→Tenet) |
+| `src/rules.rs` (engine, lock, tests) | skillspec | `tenetic-core` (rename Rule→Tenet) |
 | `src/migrate.rs` markdown parsing | skillspec | format adapters |
-| `src/diff.rs` structural diff + semver | skillspec | `tenet diff` |
+| `src/diff.rs` structural diff + semver | skillspec | `tenetic diff` |
 | `src/budget.rs` estimator | skillspec | serialization sizing |
 | `optimize.rs` request/response protocol | skillspec | probe transport |
 | `docs/research-conflict-detection.md` | skillspec | design bibliography |
-| `action.yml` pattern, CI workflow | skillspec | `tenet-action` |
+| `action.yml` pattern, CI workflow | skillspec | `tenetic-action` |
 | `.agent` parser | skillspec | one adapter among several (maintenance mode) |
-| Rust workspace layout, single-binary discipline | skillspec | `tenet-core` lib + `tenet` bin + PyO3 wheel from one tree (§6) |
+| Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenet` bin + PyO3 wheel from one tree (§6) |
 
 ## 11. Evidence base
 
@@ -362,8 +364,13 @@ traces, never open-ended judgment).
 - **Probe realism.** Synthetic probes may not match real task
   distributions. Prefer `tests`-derived inputs; report verdicts with
   confidence, not certainty.
-- **Name clearance.** Tenet vs. existing marks (film, healthcare co).
-  Fallbacks: Canon, Maxim, Concord.
+- **Name clearance.** "Tenetic" is free on crates.io / npm / PyPI, but a
+  funded media-analytics firm (tenetic.com, launched 2025) uses the bare
+  word. Different industry lowers confusion risk; overlap is the software/
+  SaaS class. Mitigations before public launch: trademark-class search,
+  distinct domain/handles (tenetic.dev, teneticHQ), and consistent
+  "Tenetic for agent rulebooks" framing. Registry-clear fallbacks if it
+  fails clearance: Ruleward, Canonry.
 - **Platform absorption.** Anthropic/OpenAI could ship native skill
   linting. Defense: cross-runtime neutrality and the lock/probe state
   model — the same defense Terraform ran against CloudFormation.
@@ -376,13 +383,13 @@ traces, never open-ended judgment).
 
 ## 13. Success criteria
 
-- A cold `tenet scan` on a real >20-skill fleet surfaces ≥1 finding the
+- A cold `tenetic scan` on a real >20-skill fleet surfaces ≥1 finding the
   owner confirms as real, in <5 s, with ≥50% confirmed-useful rate.
 - The origin-story test: replaying last-weekend's debugging session against
-  Tenet catches the conflicts in minutes, and `check` provably blocks their
+  Tenetic catches the conflicts in minutes, and `check` provably blocks their
   reintroduction.
 - M3 produces ≥200 labeled probe verdicts — the first public benchmark for
   imperative-rule conflict detection.
-- `%pip install tenet` in a fresh Databricks notebook to a working
-  `tenet.scan(...)` in under a minute, no cluster build step — the wheel is
+- `%pip install tenetic` in a fresh Databricks notebook to a working
+  `tenetic.scan(...)` in under a minute, no cluster build step — the wheel is
   prebuilt and dependency-light.
