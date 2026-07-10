@@ -9,7 +9,7 @@ probes how models actually adjudicate the tensions.
 *A tenet is a rule you hold. Tenet makes sure your agents hold the same ones.*
 
 > Status: specification. Seeds a new repository; harvests specific modules
-> from [skillspec](https://github.com/e01n0/skillspec) (see §9). Naming
+> from [skillspec](https://github.com/e01n0/skillspec) (see §10). Naming
 > pending trademark search; alternates: Canon, Maxim, Concord.
 
 ---
@@ -34,7 +34,7 @@ themselves. Three failure modes, none visible today:
 
 Every rule collection is a program with no compiler. Per-file linting exists
 (and is solved); the *cross-document semantic layer* has no tooling — the
-research survey (§10) found no paper, benchmark, or product that
+research survey (§11) found no paper, benchmark, or product that
 consistency-checks agent rule collections.
 
 ## 2. Product thesis
@@ -50,7 +50,7 @@ consistency-checks agent rule collections.
    reproducible in CI, millisecond-fast, zero API cost. Learned tiers
    (embeddings, local NLI) are opt-in and local; LLM judgment appears in
    exactly one place — behavioral probes — where the trace is evidence, not
-   opinion. Grounded in verified literature (§10): local pipelines beat
+   opinion. Grounded in verified literature (§11): local pipelines beat
    zero-shot GPT-4o on domain rule text; LLM-only conflict detection scored
    0% recall in the one published head-to-head.
 3. **State, not snapshots.** `tenet.lock` is the Terraform move: a pinned
@@ -148,12 +148,113 @@ probe     [on demand] hosting-agent transport: scenario rollouts + narrow
 tenet.lock  ←→  check / diff / report
 ```
 
-Implementation: Rust core (harvested — §9), single static binary, no
+Implementation: Rust core (harvested — §10), shipped as both a single
+static binary and a PyO3/maturin Python wheel (§6) from one codebase. No
 runtime dependencies for tiers 0–2. Tier 3 models load lazily behind a
-flag. Probes require only a hosting agent session (Claude Code, Cursor),
-zero API keys, via the checkpoint-resume request/response protocol.
+flag. Probes require only a hosting agent session (Claude Code, Cursor) or
+a model-serving endpoint, zero API keys, via the checkpoint-resume
+request/response protocol.
 
-## 6. The best of SkillSpec, carried over without the language
+## 6. Distribution: uv + maturin (Python-native)
+
+The engine is Rust, but the users who most need fleet governance —
+data/ML platform teams — live in Python: Databricks notebooks and jobs,
+Airflow/Dagster DAGs, CI runners with a Python toolchain and no Rust. Tenet
+ships as a **native Python extension module** alongside the standalone CLI,
+from a single codebase, so `pip install tenet` (or `uv add tenet`) gets you
+a prebuilt wheel with **no Rust toolchain, no compilation, no network calls
+at runtime**.
+
+### Build stack
+
+- **[PyO3](https://pyo3.rs)** — Rust bindings exposing the core API to Python.
+- **[maturin](https://www.maturin.rs)** — build backend (`build-system` in
+  `pyproject.toml`) that compiles the Rust crate into a Python wheel.
+- **[uv](https://docs.astral.sh/uv)** — the dev and install workflow:
+  `uv run`, `uv build`, `uvx tenet` for zero-install CLI use.
+- **abi3 (`abi3-py39`)** — build one stable-ABI wheel per platform that
+  works on CPython 3.9+, instead of one per Python minor version. Keeps the
+  release matrix small.
+
+One repo produces three artifacts:
+
+| Artifact | Consumer | How |
+|---|---|---|
+| `tenet` binary | CLI / CI / GitHub Action | `cargo build --release` (or `cargo binstall`) |
+| `tenet` wheel | Python / Databricks / notebooks | `maturin build --release`, published to PyPI |
+| `tenet-core` crate | Rust integrators | `crates.io` |
+
+### `pyproject.toml` (sketch)
+
+```toml
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tenet"
+requires-python = ">=3.9"
+dynamic = ["version"]
+
+[tool.maturin]
+features = ["pyo3/extension-module", "python"]
+module-name = "tenet._native"
+# bin target stays available for `cargo install`; the wheel ships the ext module
+```
+
+The Python binding is a thin `#[cfg(feature = "python")]` layer over the
+same `tenet-core` functions the CLI calls — no logic forks between the two
+front ends.
+
+### Python API surface
+
+The scan/check/probe loops, returned as plain Python objects (dicts /
+dataclasses), so they compose with pandas, Delta tables, and notebook
+display:
+
+```python
+import tenet
+
+# Scan a skills directory (local path, DBFS, or Unity Catalog volume)
+report = tenet.scan("/Volumes/main/agents/skills")
+
+report.summary()                      # {'duplicate': 3, 'polarity-conflict': 1, ...}
+for f in report.findings:
+    print(f.kind, f.a.file, f.a.line, "<->", f.b.file, f.b.line)
+
+# CI-style gate against a pinned lock — raises on new findings
+tenet.check("/Volumes/main/agents/skills", lock="tenet.lock")
+
+# Findings as a DataFrame for dashboards / Delta
+import pandas as pd
+df = pd.DataFrame(f.as_dict() for f in report.findings)
+```
+
+### Databricks usage
+
+- **Install:** `%pip install tenet` in a notebook, or add to the cluster's
+  environment / a `uv`-managed job. Prebuilt manylinux wheel → no build step
+  on the cluster.
+- **Where it reads:** local paths, DBFS, and Unity Catalog **Volumes** (skill
+  documents governed as data). A scheduled **Databricks Job** runs
+  `tenet.check(...)` nightly and on skill-repo changes; findings land in a
+  Delta table for lineage and dashboards.
+- **Probes:** the behavioral tier can route through a Databricks
+  **model-serving endpoint** or Foundation Model API as the target model,
+  reusing the same request/response transport (a serving-endpoint transport
+  is an adapter, parallel to the hosting-agent one).
+- **Governance fit:** rule documents become a governed asset with a semantic
+  state file, drift detection, and an audit trail — the story platform teams
+  already understand for data, applied to agent instructions.
+
+### Release automation
+
+`maturin-action` in CI builds wheels across manylinux / macOS
+(x86_64 + arm64) / Windows plus an sdist, and publishes to PyPI on tag —
+mirroring how ruff and pydantic-core ship. The CLI binary and the wheel cut
+from the same tag, so versions never skew.
+
+## 7. The best of SkillSpec, carried over without the language
 
 The DSL is retired; its *semantics* survive as optional frontmatter
 annotations on plain markdown (progressive hardening — each unlocks
@@ -174,7 +275,7 @@ Explicitly left behind: the grammar, lexer/parser/formatter/LSP ambitions,
 compile targets as a product (adapters read formats; they don't own them),
 packages/registry, pipelines/orchestrations-as-syntax.
 
-## 7. Positioning
+## 8. Positioning
 
 - **One-liner:** *ESLint finds bugs in your code. Tenet finds them in your
   agents' instructions.*
@@ -195,11 +296,15 @@ packages/registry, pipelines/orchestrations-as-syntax.
   ("agents may not contradict the org constitution"); (4) probe reports as
   the model-upgrade go/no-go artifact.
 
-## 8. Milestones
+## 9. Milestones
 
 - **M0 — Harvest (days).** New repo; port `rules.rs` engine, extraction,
   lock, CLI skeleton, CI action; rename vocabulary to tenets/findings.
   Ships `scan`/`check`/`baseline` at parity with skillspec today.
+  Stand up the dual build from day one: `tenet-core` crate + `tenet` CLI +
+  PyO3/maturin wheel with `scan`/`check` exposed to Python, published to
+  PyPI via `maturin-action` (§6). Getting packaging right early is cheaper
+  than retrofitting it, and the wheel is what unlocks Databricks pilots.
 - **M1 — Relationships & rulebook (1–2 wk).** Specialization detection,
   `unmarked-exception`, `shadowing`, strata + `policy-violation`,
   `erosion`, effective-rulebook serialization with position warnings.
@@ -218,7 +323,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
 - **M5 — Fleet.** Multi-repo state, org dashboards, model-upgrade probe
   reports, policy packs.
 
-## 9. Harvest map (from skillspec repo)
+## 10. Harvest map (from skillspec repo)
 
 | Take | From | Becomes |
 |---|---|---|
@@ -230,8 +335,9 @@ packages/registry, pipelines/orchestrations-as-syntax.
 | `docs/research-conflict-detection.md` | skillspec | design bibliography |
 | `action.yml` pattern, CI workflow | skillspec | `tenet-action` |
 | `.agent` parser | skillspec | one adapter among several (maintenance mode) |
+| Rust workspace layout, single-binary discipline | skillspec | `tenet-core` lib + `tenet` bin + PyO3 wheel from one tree (§6) |
 
-## 10. Evidence base
+## 11. Evidence base
 
 Design decisions trace to an adversarially verified literature survey
 (`docs/research-conflict-detection.md` in the skillspec repo): FSARC
@@ -243,7 +349,7 @@ gap → benchmark before shipping tier 3; pairwise beats whole-document),
 ALICE (hybrid 60% vs LLM-only 0% recall → probes ask narrow questions of
 traces, never open-ended judgment).
 
-## 11. Risks & open questions
+## 12. Risks & open questions
 
 - **Extraction recall on messy prose.** Diffuse, paragraph-level
   instructions resist atomic extraction. Mitigation: over-extract +
@@ -261,8 +367,14 @@ traces, never open-ended judgment).
 - **Platform absorption.** Anthropic/OpenAI could ship native skill
   linting. Defense: cross-runtime neutrality and the lock/probe state
   model — the same defense Terraform ran against CloudFormation.
+- **Packaging matrix cost.** Native wheels mean a build matrix (manylinux,
+  macOS x86_64/arm64, Windows) and the usual glibc-version footguns.
+  Mitigation: abi3 single-wheel-per-platform, `maturin-action`'s prebuilt
+  containers, and pure-Rust core deps (no C/OpenSSL linkage) so manylinux
+  stays clean. Tiers 0–2 have zero native deps; tier-3 ONNX models are
+  downloaded at first use, not baked into the wheel.
 
-## 12. Success criteria
+## 13. Success criteria
 
 - A cold `tenet scan` on a real >20-skill fleet surfaces ≥1 finding the
   owner confirms as real, in <5 s, with ≥50% confirmed-useful rate.
@@ -271,3 +383,6 @@ traces, never open-ended judgment).
   reintroduction.
 - M3 produces ≥200 labeled probe verdicts — the first public benchmark for
   imperative-rule conflict detection.
+- `%pip install tenet` in a fresh Databricks notebook to a working
+  `tenet.scan(...)` in under a minute, no cluster build step — the wheel is
+  prebuilt and dependency-light.
