@@ -9,7 +9,7 @@ probes how models actually adjudicate the tensions.
 *A tenet is a rule you hold. Tenetic makes sure your agents hold the same ones.*
 
 > Status: specification. Seeds a new repository; harvests specific modules
-> from [skillspec](https://github.com/e01n0/skillspec) (see §12). Name
+> from [skillspec](https://github.com/e01n0/skillspec) (see §13). Name
 > "Tenetic" is clear on crates.io / npm / PyPI; a media-analytics company
 > uses the bare word (different class), so run a class 9/42 trademark check
 > and secure a distinct domain (e.g. tenetic.dev) before public launch.
@@ -36,7 +36,7 @@ themselves. Three failure modes, none visible today:
 
 Every rule collection is a program with no compiler. Per-file linting exists
 (and is solved); the *cross-document semantic layer* has no tooling — the
-research survey (§13) found no paper, benchmark, or product that
+research survey (§14) found no paper, benchmark, or product that
 consistency-checks agent rule collections.
 
 ## 2. Product thesis
@@ -52,7 +52,7 @@ consistency-checks agent rule collections.
    reproducible in CI, millisecond-fast, zero API cost. Learned tiers
    (embeddings, local NLI) are opt-in and local; LLM judgment appears in
    exactly one place — behavioral probes — where the trace is evidence, not
-   opinion. Grounded in verified literature (§13): local pipelines beat
+   opinion. Grounded in verified literature (§14): local pipelines beat
    zero-shot GPT-4o on domain rule text; LLM-only conflict detection scored
    0% recall in the one published head-to-head.
 3. **State, not snapshots.** `tenetic.lock` is the Terraform move: a pinned
@@ -125,6 +125,10 @@ tenetic explain <finding-id>      # full provenance, both tenets in context, why
 tenetic fix   [finding-id|--all]  # propose + gate + verify a resolution, then pin it
 ```
 
+The same CLI is the agent-facing API: agents run `tenetic check --json` in
+their own shell, a hook runs it at write-time, and a plugin bundles skill +
+hook + binary — no MCP server (§9).
+
 - **CI:** a published GitHub Action (`uses: <org>/tenetic@v1`) running
   `check` on every PR touching rule files. This is the product's primary
   distribution channel — "the failing check that saved your weekend" is the
@@ -170,7 +174,7 @@ probe     [on demand] hosting-agent transport: scenario rollouts + narrow
 tenetic.lock  ←→  check / diff / report
 ```
 
-Implementation: Rust core (harvested — §12), shipped as both a single
+Implementation: Rust core (harvested — §13), shipped as both a single
 static binary and a PyO3/maturin Python wheel (§8) from one codebase. No
 runtime dependencies for tiers 0–2. Tier 3 models load lazily behind a
 flag. Probes require only a hosting agent session (Claude Code, Cursor) or
@@ -197,13 +201,13 @@ changing).
 
 This encodes the project's core principle — **evidence, not opinion**. The
 LLM is never asked the open-ended question "are these rules in conflict?"
-That framing fails: the research in §13 records LLM-only conflict detection
+That framing fails: the research in §14 records LLM-only conflict detection
 at 0% recall in the one published head-to-head, and the "just ask an LLM"
 claim was refuted under verification. Instead it is handed a concrete
 transcript and a grounded, closed question — *"given rule A, rule B, and
 this run, which did the agent follow: A, B, both reconciled, neither, or did
 it ask?"* Classification against evidence, not judgment about text. That is
-why the same machinery, harvested from SkillOpt's transport (§8, §12), can
+why the same machinery, harvested from SkillOpt's transport (§8, §13), can
 power the tier at zero API cost, and why its verdicts are trustworthy enough
 to pin in the lock and gate on.
 
@@ -306,7 +310,7 @@ makes auto-fix safe to ship:
 - **Tier B — proposed edits (native, thin LLM).** For genuine
   contradictions — where you must pick a winner or synthesise a properly
   scoped reconciling rule ("always lint **except** on generated files") — a
-  targeted proposer drives the probe transport (Tenetic's own, §8/§12); no
+  targeted proposer drives the probe transport (Tenetic's own, §8/§13); no
   SkillOpt.
 - **Tier C — score-driven optimization (SkillOpt, opt-in).** When a
   resolution must also *not hurt task performance*, SkillOpt is the right
@@ -443,7 +447,58 @@ df = pd.DataFrame(f.as_dict() for f in report.findings)
 mirroring how ruff and pydantic-core ship. The CLI binary and the wheel cut
 from the same tag, so versions never skew.
 
-## 9. The best of SkillSpec, carried over without the language
+## 9. Agent-native integration (CLI-first, no MCP)
+
+The moment a conflict is *born* is when an agent writes a rule — so the
+highest-value place for Tenetic is inside the agent loop, run by the agents
+writing the rules. This is both the main adoption channel and the earliest
+enforcement point (write-time beats the PR gate beats the nightly scan).
+
+**The CLI is the integration.** Every target consumer — Claude Code, Cursor,
+Codex — already has a shell. For them the whole API is `tenetic check --json`
+with a non-zero exit on new findings, plus `explain`/`fix` subcommands. No
+server, no protocol, no schemas to maintain: the model already knows how to
+drive a CLI, and a binary on `PATH` is a more universal door than any
+tool-protocol.
+
+**MCP is deliberately omitted.** It would wrap functionality shell-capable
+agents already reach, adding a server process and config for near-zero gain
+over a command they can already run; `--json` + exit codes give the model
+everything MCP schemas would; and Tenetic is a local binary over local files,
+so MCP's "no-install/remote" advantage does not apply. Escape hatch: all
+logic lives in `tenetic-core`, so if a genuinely shell-less consumer ever
+appears (a hosted assistant that cannot run binaries — not today's target,
+since it could not read the repo anyway), an MCP shim is a few lines to add
+later. YAGNI until then.
+
+### Three surfaces, all just the CLI wearing hats
+
+1. **CLI** — `tenetic check --json`, meaningful exit codes, `scan` / `explain`
+   / `fix`. The universal interface the agent invokes with its existing shell
+   tool.
+2. **Skill** — prose that tells the agent *when* to reach for it: "before
+   finishing a change to rule files, run `tenetic check`; on a finding, run
+   `tenetic explain`, then `tenetic fix`." Points at the CLI, nothing more.
+3. **Hook** — the enforcement core. A PostToolUse / Stop hook runs
+   `tenetic check` automatically when rule files change, surfacing or blocking
+   new conflicts. This is where write-time enforcement lives — a shell
+   command, not a protocol — and it is how "agents editing skills run Tenetic
+   themselves" and "gate the optimizer" become automatic rather than
+   remembered (a Claude Code agent's edits, or SkillOpt-Sleep's nightly
+   writebacks, hit the hook in real time).
+
+**Plugin bundle = skill + hook + the binary**, packaged per runtime (a Claude
+Code plugin; a Cursor equivalent). One binary to install, no MCP config. The
+GitHub Action (§4) is the same CLI in CI; the hook is the same CLI at
+write-time — one core, many front doors, the CLI being the most universal.
+
+### The recursion
+
+Tenetic governs agent skills *and* ships as an agent capability — the tool
+that checks skills is itself a skill/plugin, so it can check its own plugin
+docs. The dogfood is the demo.
+
+## 10. The best of SkillSpec, carried over without the language
 
 The DSL is retired; its *semantics* survive as optional frontmatter
 annotations on plain markdown (progressive hardening — each unlocks
@@ -466,7 +521,7 @@ Explicitly left behind: the grammar, lexer/parser/formatter/LSP ambitions,
 compile targets as a product (adapters read formats; they don't own them),
 packages/registry, pipelines/orchestrations-as-syntax.
 
-## 10. Positioning
+## 11. Positioning
 
 - **One-liner:** *ESLint finds bugs in your code. Tenetic finds them in your
   agents' instructions.*
@@ -490,7 +545,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
   ("agents may not contradict the org constitution"); (4) probe reports as
   the model-upgrade go/no-go artifact.
 
-## 11. Milestones
+## 12. Milestones
 
 - **M0 — Harvest (days).** New repo; port `rules.rs` engine, extraction,
   lock, CLI skeleton, CI action; rename vocabulary to tenets/findings.
@@ -519,13 +574,17 @@ packages/registry, pipelines/orchestrations-as-syntax.
   gated by re-detection + a probe before pinning. Tier C (opt-in SkillOpt
   backend) lands last. After probes deliberately: confirm a conflict before
   auto-resolving it.
-- **M5 — Semantic tier (gated).** Embedding pairing + local NLI behind
+- **M5 — Agent-native bundle (~1 wk).** `--json` everywhere, a Claude Code
+  plugin (skill + PostToolUse/Stop hook calling `tenetic check`), and a
+  Cursor equivalent. No MCP server — the CLI is the interface. This is the
+  write-time enforcement point and the main adoption channel.
+- **M6 — Semantic tier (gated).** Embedding pairing + local NLI behind
   `--semantic`, shipped **only if** it beats tiers 0–2 recall on the
   M3-generated labeled set by a margin worth the model download.
-- **M6 — Fleet.** Multi-repo state, org dashboards, model-upgrade probe
+- **M7 — Fleet.** Multi-repo state, org dashboards, model-upgrade probe
   reports, policy packs.
 
-## 12. Harvest map (from skillspec repo)
+## 13. Harvest map (from skillspec repo)
 
 | Take | From | Becomes |
 |---|---|---|
@@ -537,11 +596,12 @@ packages/registry, pipelines/orchestrations-as-syntax.
 | `optimize.rs` request/response protocol | skillspec | probe transport + Tier-B remediation proposer (§7) |
 | `optimize.rs` SkillOpt setup/loop integration | skillspec | Tier-C remediation engine — opt-in, gated by Tenetic (§7) |
 | `docs/research-conflict-detection.md` | skillspec | design bibliography |
-| `action.yml` pattern, CI workflow | skillspec | `tenetic-action` |
+| `action.yml` pattern, CI workflow | skillspec | `tenetic-action` (same CLI in CI) |
+| `session-start-hook` / hook patterns | skillspec skills | Claude Code plugin: skill + write-time hook calling the CLI (§9) |
 | `.agent` parser | skillspec | one adapter among several (maintenance mode) |
 | Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenet` bin + PyO3 wheel from one tree (§8) |
 
-## 13. Evidence base
+## 14. Evidence base
 
 Design decisions trace to an adversarially verified literature survey
 (`docs/research-conflict-detection.md` in the skillspec repo): FSARC
@@ -553,7 +613,7 @@ gap → benchmark before shipping tier 3; pairwise beats whole-document),
 ALICE (hybrid 60% vs LLM-only 0% recall → probes ask narrow questions of
 traces, never open-ended judgment).
 
-## 14. Risks & open questions
+## 15. Risks & open questions
 
 - **Extraction recall on messy prose.** Diffuse, paragraph-level
   instructions resist atomic extraction. Mitigation: over-extract +
@@ -588,7 +648,7 @@ traces, never open-ended judgment).
   stays clean. Tiers 0–2 have zero native deps; tier-3 ONNX models are
   downloaded at first use, not baked into the wheel.
 
-## 15. Success criteria
+## 16. Success criteria
 
 - A cold `tenetic scan` on a real >20-skill fleet surfaces ≥1 finding the
   owner confirms as real, in <5 s, with ≥50% confirmed-useful rate.
