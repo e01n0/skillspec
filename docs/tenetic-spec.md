@@ -94,8 +94,17 @@ correlation / redundancy) plus the drift classes:
 | `dangling-reference` | Tenet references a skill/artifact that no longer exists | 2 |
 | `inlined-copy` | One skill restates another's process inline, now stale relative to it | 2 |
 | `ordering-contradiction` | Incompatible before/after/then relations on shared actions across sources | 2 |
-| `erosion` | A critical-priority tenet disappeared from the fleet | 0 |
+| `erosion` | A critical-priority tenet disappeared from the fleet | 0 † |
 | `behavioral-flip` | A probed tension whose verdict distribution changed since last pinned (model upgrade, fleet composition change) — text identical | probe |
+
+The **Tier** column is the *detection* tier — which stage of the pipeline
+(§5) produces the finding — and is orthogonal to *enforcement* (whether it
+gates CI or advises; see §6). † `erosion` is deterministic but requires a
+`priority:` annotation (§10): it cannot fire on an unannotated fleet.
+`ambiguity` at tier 1 covers only the deterministically detectable
+contradiction types — antonymy, negation, numeric mismatch (de Marneffe's
+"easy" classes, §14); factive/modal/world-knowledge contradictions are out
+of deterministic reach and belong to the semantic tier and probes.
 
 ### Quality findings (advisory by default — see §6)
 
@@ -149,6 +158,15 @@ The literature's validated precision ceiling for deterministic detection is
   side of an accepted pair re-opens it automatically. No silent decay of
   the baseline.
 
+Because the lock lives in git and concurrent PRs will both write to it
+(two branches each running `accept` or `baseline`), the format is designed
+to merge: **line-oriented, one entry per finding/verdict/resolution, sorted
+by finding id**, with no aggregate counters or timestamps that force
+whole-file conflicts. Two branches accepting different findings merge
+cleanly; two branches touching the *same* finding conflict on exactly that
+line — which is the correct outcome. (Multi-repo/remote state is an M7
+concern; single-repo git *is* the backend until then.)
+
 ## 5. Architecture
 
 ```
@@ -165,8 +183,8 @@ tier 0/1  deterministic detectors (always on; no models, no network)
 tier 2    graph detectors: references, artifacts, ordering (deterministic)
    ▼
 tier 3    [--semantic] local models: embedding candidate pairing +
-   │       NLI cross-encoder (ONNX, CPU, offline; gated on a benchmarked
-   │       eval set of real skill conflicts — see risks)
+   │       NLI cross-encoder (ONNX, CPU, offline; gated on the M1
+   │       labeled-fleet eval — §12)
    ▼
 probe     [on demand] hosting-agent transport: scenario rollouts + narrow
    │       trace-verdict judging; verdicts pinned in the lock
@@ -210,6 +228,26 @@ it ask?"* Classification against evidence, not judgment about text. That is
 why the same machinery, harvested from SkillOpt's transport (§8, §13), can
 power the tier at zero API cost, and why its verdicts are trustworthy enough
 to pin in the lock and gate on.
+
+### Verdict statistics: gating on distributions, not point estimates
+
+Probe runs are stochastic, and a lockfile entry that gates CI must not be.
+So what gets pinned is never a single outcome but a **distribution with an
+uncertainty bound**:
+
+- A verdict is the outcome distribution over
+  `{A, B, reconciled, neither, asked}` from **N runs** (default 10,
+  configurable per probe), pinned together with a Wilson score interval on
+  the winning outcome's proportion.
+- `behavioral-flip` fires only when a re-probe's interval for the winning
+  outcome **fails to overlap** the pinned interval — never on point-estimate
+  wiggle. A 6/10 → 7/10 shift is noise; a 9/10 A → 8/10 B flip is a finding.
+- Low-N verdicts are pinned as *low-confidence* and reported as such by
+  `explain`; `check` treats them as advisory until re-probed at full N.
+- Re-probe cost scales with pinned tensions × N, so `tenetic probe --stale`
+  re-runs only verdicts invalidated by a change — model identifier, either
+  tenet's text, or the scenario's rulebook composition — rather than the
+  whole fleet on every upgrade.
 
 ## 6. Quality pillar: best-practice review
 
@@ -306,7 +344,11 @@ makes auto-fix safe to ship:
   shared root); `drifted-duplicate` → present the diff and adopt one
   canonical form; `emphasis-overuse`, `inline-reference`, and the leanness
   findings → mechanical rewrites. Harvested directly from skillspec's
-  `lint --fix`.
+  `lint --fix`. Note the boundary: the *edit* is mechanical, but choosing
+  **which copy is canonical** is not — when the copies live in skills with
+  different owners, or a deleted copy would change the skill's behavior
+  outside the current fleet (a `redundant-with-root` skill reused under a
+  different root), Tier A presents the choice rather than assuming it.
 - **Tier B — proposed edits (native, thin LLM).** For genuine
   contradictions — where you must pick a winner or synthesise a properly
   scoped reconciling rule ("always lint **except** on generated files") — a
@@ -411,7 +453,7 @@ import tenetic
 # Scan a skills directory (local path, DBFS, or Unity Catalog volume)
 report = tenetic.scan("/Volumes/main/agents/skills")
 
-report.summary()                      # {'duplicate': 3, 'polarity-conflict': 1, ...}
+report.summary()                      # {'duplicate': 3, 'ambiguity': 1, ...}
 for f in report.findings:
     print(f.kind, f.a.file, f.a.line, "<->", f.b.file, f.b.line)
 
@@ -550,20 +592,34 @@ packages/registry, pipelines/orchestrations-as-syntax.
 - **M0 — Harvest (days).** New repo; port `rules.rs` engine, extraction,
   lock, CLI skeleton, CI action; rename vocabulary to tenets/findings.
   Ships `scan`/`check`/`baseline` at parity with skillspec today.
-  Stand up the dual build from day one: `tenetic-core` crate + `tenetic` CLI +
-  PyO3/maturin wheel with `scan`/`check` exposed to Python, published to
-  PyPI via `maturin-action` (§8). Getting packaging right early is cheaper
-  than retrofitting it, and the wheel is what unlocks Databricks pilots.
+  Structure as `tenetic-core` lib crate + `tenetic` bin from day one — the
+  lib/bin split is the cheap insurance that lets the wheel (§8) bolt on
+  later without refactoring; the wheel itself waits until M2, after the
+  detector has proven itself on a real fleet (no point maintaining a
+  release matrix for an engine still churning daily).
   Also port `lint.rs` as the seed of the **quality pillar** (§6) with the
   `review` command and tier tagging — harvested and deterministic, and the
   single-skill on-ramp that delivers value before a fleet exists.
-- **M1 — Relationships & rulebook (1–2 wk).** Specialization detection,
-  `unmarked-exception`, `shadowing`, strata + `policy-violation`,
-  `erosion`, effective-rulebook serialization with position warnings.
-  This milestone kills most false positives and adds the order dimension.
-- **M2 — Graph (1–2 wk).** Reference/artifact/ordering edges;
+- **M1 — Relationships, rulebook & the quality gate (1–2 wk).**
+  Specialization detection, `unmarked-exception`, `shadowing`, strata +
+  `policy-violation`, `erosion`, effective-rulebook serialization with
+  position warnings. This milestone kills most false positives and adds
+  the order dimension. It also delivers the **labeled-fleet eval**: hand-label
+  a real >20-skill fleet (every tenet, every true conflict) and measure
+  extraction precision/recall and detection precision against it. This set
+  gates tier placement — a detector that can't clear ~70% precision on it
+  moves behind a flag rather than shipping on by default — and is the
+  standing benchmark every later tier (semantic, probes) must beat. The
+  published precision figures (§14) come from requirements documents, a far
+  more structured genre than markdown prose; this eval is where we find out
+  what survives the transfer, *before* building probes and remediation on
+  top of the detectors.
+- **M2 — Graph & packaging (1–2 wk).** Reference/artifact/ordering edges;
   `dangling-reference`, `inlined-copy`, `ordering-contradiction`;
-  `tenetic graph`.
+  `tenetic graph`. Stand up the PyO3/maturin wheel here — `scan`/`check`
+  exposed to Python, published to PyPI via `maturin-action` (§8) — now that
+  M1's eval has shown the detector is worth distributing; the wheel is what
+  unlocks Databricks pilots.
 - **M3 — Probes (2 wk).** Hosting-agent transport, probe generation from
   finding subjects (+ `tests` data when present), verdict schema, verdicts
   in lock, `behavioral-flip` detection. Side product: every probe verdict
@@ -580,7 +636,8 @@ packages/registry, pipelines/orchestrations-as-syntax.
   write-time enforcement point and the main adoption channel.
 - **M6 — Semantic tier (gated).** Embedding pairing + local NLI behind
   `--semantic`, shipped **only if** it beats tiers 0–2 recall on the
-  M3-generated labeled set by a margin worth the model download.
+  labeled sets (M1 hand-labeled fleet + M3 probe verdicts) by a margin
+  worth the model download.
 - **M7 — Fleet.** Multi-repo state, org dashboards, model-upgrade probe
   reports, policy packs.
 
@@ -599,7 +656,7 @@ packages/registry, pipelines/orchestrations-as-syntax.
 | `action.yml` pattern, CI workflow | skillspec | `tenetic-action` (same CLI in CI) |
 | `session-start-hook` / hook patterns | skillspec skills | Claude Code plugin: skill + write-time hook calling the CLI (§9) |
 | `.agent` parser | skillspec | one adapter among several (maintenance mode) |
-| Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenet` bin + PyO3 wheel from one tree (§8) |
+| Rust workspace layout, single-binary discipline | skillspec | `tenetic-core` lib + `tenetic` bin + PyO3 wheel from one tree (§8) |
 
 ## 14. Evidence base
 
@@ -617,12 +674,21 @@ traces, never open-ended judgment).
 
 - **Extraction recall on messy prose.** Diffuse, paragraph-level
   instructions resist atomic extraction. Mitigation: over-extract +
-  suppress; measure against real fleets early.
-- **Scenario inference.** Trigger/scope semantics differ per runtime
-  (Claude skills trigger by description; Cursor rules by glob). Adapters
-  must encode each runtime's co-activation model; wrong scenarios create
-  false conflicts. Start conservative (assume co-active), refine per
-  adapter.
+  suppress; the M1 labeled-fleet eval (§12) measures this directly rather
+  than trusting figures transferred from the requirements-document genre.
+- **Scenario inference — the false-positive engine.** Trigger/scope
+  semantics differ per runtime (Claude skills trigger by description;
+  Cursor rules by glob). Adapters must encode each runtime's co-activation
+  model; wrong scenarios create false conflicts. Start conservative
+  (assume co-active), refine per adapter — but note the tension this
+  creates with the wedge: conservative co-activation × pairwise detection
+  × the ~84% precision ceiling can make the *first scan* — the adoption
+  moment the whole wedge order (§11) depends on — a wall of noise, and
+  "baseline everything" then buries the real findings it was meant to
+  preserve. Mitigations: findings ranked by tier-heat and confidence, a
+  first-run cap on reported findings ("top 20, run `scan --all` for the
+  rest"), and the M1 eval as the gate that keeps sub-70%-precision
+  detectors off the default path.
 - **Probe realism.** Synthetic probes may not match real task
   distributions. Prefer `tests`-derived inputs; report verdicts with
   confidence, not certainty.
@@ -640,7 +706,8 @@ traces, never open-ended judgment).
   drift the meaning. Mitigation: every fix is re-checked by the detectors
   and a probe before it lands, defaults to a diff you approve (not a silent
   apply), and is recorded so it can be reverted; Tier A (mechanical) applies
-  more freely than Tiers B/C.
+  more freely than Tiers B/C, except where the canonical-copy choice is
+  itself semantic (§7).
 - **Packaging matrix cost.** Native wheels mean a build matrix (manylinux,
   macOS x86_64/arm64, Windows) and the usual glibc-version footguns.
   Mitigation: abi3 single-wheel-per-platform, `maturin-action`'s prebuilt
