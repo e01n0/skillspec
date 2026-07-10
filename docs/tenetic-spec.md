@@ -180,6 +180,31 @@ tier-tagged rules: **consistency** (between rules — conflicts, drift,
 duplication; tiers above) and **quality** (within a skill —
 best-practice review; §6). Both feed one `tenetic.lock`.
 
+### The probe tier: behavioral confirmation, not detection
+
+The optional probe tier is the *only* place an LLM enters the pipeline, and
+its job is deliberately narrow. Probes do not **detect** conflicts — the
+deterministic tiers do that. Probes **confirm** an already-flagged conflict,
+upgrading it from *suspected* to *confirmed live* when a trace shows the
+model actually sacrificing one rule for the other under a task that forces
+the tension. A pair the model reconciles gracefully every run is down-ranked
+to a nit; a pair whose behavior flips on phrasing is a live fault. This is
+what gives findings a *severity*, and what `behavioral-flip` re-checks over
+time (a model upgrade can turn a settled pair live without a word of text
+changing).
+
+This encodes the project's core principle — **evidence, not opinion**. The
+LLM is never asked the open-ended question "are these rules in conflict?"
+That framing fails: the research in §12 records LLM-only conflict detection
+at 0% recall in the one published head-to-head, and the "just ask an LLM"
+claim was refuted under verification. Instead it is handed a concrete
+transcript and a grounded, closed question — *"given rule A, rule B, and
+this run, which did the agent follow: A, B, both reconciled, neither, or did
+it ask?"* Classification against evidence, not judgment about text. That is
+why the same machinery, harvested from SkillOpt's transport (§7, §11), can
+power the tier at zero API cost, and why its verdicts are trustworthy enough
+to pin in the lock and gate on.
+
 ## 6. Quality pillar: best-practice review
 
 Consistency (§5) checks rules *against each other*. The quality pillar
